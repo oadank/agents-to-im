@@ -1,0 +1,70 @@
+{
+  "name": "agents-to-im",
+  "version": "0.0.1-beta.11",
+  "description": "Bridge Claude Code and Codex into Feishu/Lark with isolated group sessions, local state recovery, and streamed CardKit interactions",
+  "license": "MIT",
+  "keywords": [
+    "feishu",
+    "lark",
+    "claude-code",
+    "codex",
+    "ai-coding",
+    "im-bridge",
+    "chatbot",
+    "automation",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/francize/agents-to-im",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/francize/agents-to-im.git"
+  },
+  "bugs": {
+    "url": "https://github.com/francize/agents-to-im/issues"
+  },
+  "type": "module",
+  "bin": {
+    "agents-to-im": "dist/cli-bin.mjs"
+  },
+  "files": [
+    "dist",
+    "scripts/daemon.sh",
+    "scripts/daemon.ps1",
+    "scripts/doctor.sh",
+    "scripts/supervisor-linux.sh",
+    "scripts/supervisor-macos.sh",
+    "scripts/supervisor-windows.ps1",
+    "config.env.example",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "tag": "beta"
+  },
+  "scripts": {
+    "build": "node scripts/build.js",
+    "build:cli": "node scripts/build-cli.js",
+    "build:all": "node scripts/build.js && node scripts/build-cli.js",
+    "prepare": "npm run build:all",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/main.ts",
+    "test": "CTI_HOME=$(mktemp -d) node --test --test-concurrency=1 --import tsx --test-timeout=15000 src/__tests__/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.81",
+    "@larksuiteoapi/node-sdk": "^1.59.0",
+    "markdown-it": "^14.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "skill_name": "agents-to-im",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我配置飞书机器人，我想在私聊里用 /new:claude 开新会话",
+      "expected_output": "Should trigger the skill, identify 'setup' guidance, show the Feishu-only config flow, explain required env vars, long-connection events, and the DM-to-group session model",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "start bridge",
+      "expected_output": "Should trigger the skill, identify 'start' subcommand, check for config.env existence, and attempt to run daemon.sh start",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "桥接服务好像挂了，帮我看看怎么回事",
+      "expected_output": "Should trigger the skill, identify 'doctor' subcommand, and run doctor.sh to diagnose issues",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "查看日志 200",
+      "expected_output": "Should trigger the skill, identify 'logs' subcommand with N=200, and run daemon.sh logs 200",
+      "files": []
+    }
+  ]
+}

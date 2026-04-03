@@ -27,7 +27,7 @@
 > **卸载：** `rm -rf ~/.agents-to-im`
 
 ```bash
-npm install -g agents-to-im@beta
+npm install -g agents-to-im
 agents-to-im onboard   # 先选中文/英文，再按步骤引导权限、事件、回调和发布
 ```
 
@@ -78,7 +78,7 @@ Bot → 完成。已修复 handleCallback() 中的重定向循环。
 ### 推荐：通过 npm 安装
 
 ```bash
-npm install -g agents-to-im@beta
+npm install -g agents-to-im
 agents-to-im onboard
 ```
 

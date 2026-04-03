@@ -108,7 +108,7 @@ describe('CLI upgrade helpers', () => {
       steps: [
         {
           command: 'npm',
-          args: ['install', '-g', 'agents-to-im@beta'],
+          args: ['install', '-g', 'agents-to-im'],
           description: 'Install latest npm package globally',
         },
       ],
@@ -134,7 +134,7 @@ describe('CLI upgrade helpers', () => {
       steps: [
         {
           command: 'npm',
-          args: ['install', '-g', 'agents-to-im@beta'],
+          args: ['install', '-g', 'agents-to-im'],
           description: 'Install latest npm package globally before restarting bridge',
         },
       ],

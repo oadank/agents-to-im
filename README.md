@@ -27,7 +27,7 @@
 > **Uninstall:** `rm -rf ~/.agents-to-im`
 
 ```bash
-npm install -g agents-to-im@beta
+npm install -g agents-to-im
 agents-to-im onboard   # choose language first, then follow the guided platform setup step by step
 ```
 
@@ -78,7 +78,7 @@ You → /mode                    # switch Claude mode
 ### Recommended: Install from npm
 
 ```bash
-npm install -g agents-to-im@beta
+npm install -g agents-to-im
 agents-to-im onboard
 ```
 

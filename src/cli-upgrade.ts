@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const DEFAULT_UPGRADE_PACKAGE_SPEC = 'agents-to-im@beta';
+export const DEFAULT_UPGRADE_PACKAGE_SPEC = 'agents-to-im';
 
 export interface UpgradeStep {
   command: string;

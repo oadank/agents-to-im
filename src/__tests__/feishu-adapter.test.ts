@@ -28,6 +28,7 @@ function makeSettings(): Map<string, string> {
     ['bridge_feishu_app_id', 'app-id'],
     ['bridge_feishu_app_secret', 'app-secret'],
     ['bridge_default_work_dir', '/tmp/test-cwd'],
+    ['bridge_feishu_allowed_users', '*'],
   ]);
 }
 
@@ -71,6 +72,57 @@ describe('FeishuAdapter', () => {
     });
 
     assert.equal(adapter.validateConfig(), null);
+  });
+
+  describe('isAuthorized', () => {
+    it('rejects everyone when allowlist is empty (secure default)', () => {
+      const store = new JsonFileStore(new Map([
+        ['bridge_feishu_app_id', 'app-id'],
+        ['bridge_feishu_app_secret', 'app-secret'],
+      ]));
+      installContext(store);
+      const adapter = new FeishuAdapter();
+      assert.equal(adapter.isAuthorized('ou_anyone', 'chat-1'), false);
+    });
+
+    it('allows everyone only when allowlist is exactly the single wildcard "*"', () => {
+      const store = new JsonFileStore(new Map([
+        ['bridge_feishu_app_id', 'app-id'],
+        ['bridge_feishu_app_secret', 'app-secret'],
+        ['bridge_feishu_allowed_users', '*'],
+      ]));
+      installContext(store);
+      const adapter = new FeishuAdapter();
+      assert.equal(adapter.isAuthorized('ou_anyone', 'chat-1'), true);
+      assert.equal(adapter.isAuthorized('ou_other', 'chat-2'), true);
+    });
+
+    it('matches exact open_id when allowlist contains specific ids', () => {
+      const store = new JsonFileStore(new Map([
+        ['bridge_feishu_app_id', 'app-id'],
+        ['bridge_feishu_app_secret', 'app-secret'],
+        ['bridge_feishu_allowed_users', 'ou_alice, ou_bob'],
+      ]));
+      installContext(store);
+      const adapter = new FeishuAdapter();
+      assert.equal(adapter.isAuthorized('ou_alice', 'chat-1'), true);
+      assert.equal(adapter.isAuthorized('ou_bob', 'chat-1'), true);
+      assert.equal(adapter.isAuthorized('ou_eve', 'chat-1'), false);
+    });
+
+    it('does not treat "*" as wildcard when mixed with specific ids', () => {
+      // 防止用户写成 ['*', 'ou_alice'] 后产生歧义。明确语义：
+      // 只要列表不是单独一个 '*'，就按精确匹配处理，'*' 字面量不会命中真实 user_id。
+      const store = new JsonFileStore(new Map([
+        ['bridge_feishu_app_id', 'app-id'],
+        ['bridge_feishu_app_secret', 'app-secret'],
+        ['bridge_feishu_allowed_users', '*, ou_alice'],
+      ]));
+      installContext(store);
+      const adapter = new FeishuAdapter();
+      assert.equal(adapter.isAuthorized('ou_alice', 'chat-1'), true);
+      assert.equal(adapter.isAuthorized('ou_anyone_else', 'chat-1'), false);
+    });
   });
 
   it('sends a Claude new-session card with workspace select and existing mode buttons from /new:claude in DM', async () => {
@@ -1711,6 +1763,7 @@ describe('FeishuAdapter', () => {
       tenant_key: 'tenant',
       token: 'token',
       open_message_id: 'open-perm-1',
+      operator: { open_id: 'ou_123' },
       action: {
         value: { callback_data: 'perm:allow_session:req-perm-1' },
         tag: 'button',
@@ -2653,6 +2706,7 @@ describe('FeishuAdapter', () => {
       tenant_key: 'tenant',
       token: 'token',
       open_message_id: 'open-input-1',
+      operator: { open_id: 'ou_123' },
       action: {
         tag: 'select_static',
         value: {},
@@ -2724,6 +2778,7 @@ describe('FeishuAdapter', () => {
       tenant_key: 'tenant',
       token: 'token',
       open_message_id: 'open-submit-1',
+      operator: { open_id: 'ou_123' },
       action: {
         tag: 'button',
         value: {
@@ -2812,6 +2867,7 @@ describe('FeishuAdapter', () => {
       tenant_key: 'tenant',
       token: 'token',
       open_message_id: 'open-submit-multi',
+      operator: { open_id: 'ou_123' },
       action: {
         tag: 'button',
         value: {
@@ -3558,5 +3614,88 @@ describe('FeishuAdapter', () => {
     assert.equal((adapter as any).queue[0].bridgeMeta.planWorkflow.kind, 'plan_execute');
     assert.equal((adapter as any).queue[0].bridgeMeta.planWorkflow.permissionMode, 'bypassPermissions');
     assert.match((adapter as any).queue[0].bridgeMeta.planWorkflow.promptText, /已确认计划/);
+  });
+
+  it('rejects card actions from senders outside the allowlist', async () => {
+    const settings = makeSettings();
+    settings.set('bridge_feishu_allowed_users', 'ou_authorized');
+    const store = new JsonFileStore(settings);
+    installContext(store, {
+      ensureRuntimeAvailable: async () => {},
+    });
+
+    let chatCreateCalls = 0;
+    const adapter = new FeishuAdapter() as any;
+    adapter.restClient = {
+      im: {
+        chat: {
+          create: async () => {
+            chatCreateCalls += 1;
+            return { code: 0, data: { chat_id: 'should-not-create' } };
+          },
+        },
+        message: {
+          create: async () => ({ code: 0, data: { message_id: 'never' } }),
+          patch: async () => ({ code: 0, data: {} }),
+        },
+      },
+    };
+
+    const result = await adapter.handleCardAction({
+      open_id: 'ou_attacker',
+      tenant_key: 'tenant',
+      token: 'token',
+      open_message_id: 'open-card-attacker',
+      operator: { open_id: 'ou_attacker' },
+      context: { open_chat_id: 'chat-shared' },
+      action: {
+        tag: 'button',
+        value: { callback_data: 'new-session:codex:plan' },
+        form_value: { new_session_workdir: '/tmp/codex-plan' },
+      },
+    });
+
+    assert.equal(result.toast.type, 'warning');
+    assert.equal(chatCreateCalls, 0);
+    assert.equal(store.listChannelBindings().length, 0);
+  });
+
+  it('accepts card actions from senders inside the allowlist', async () => {
+    const settings = makeSettings();
+    settings.set('bridge_feishu_allowed_users', 'ou_authorized');
+    const store = new JsonFileStore(settings);
+    installContext(store, {
+      ensureRuntimeAvailable: async () => {},
+    });
+
+    const adapter = new FeishuAdapter() as any;
+    adapter.restClient = {
+      im: {
+        chat: {
+          create: async () => ({ code: 0, data: { chat_id: 'chat-allowed' } }),
+        },
+        message: {
+          create: async () => ({ code: 0, data: { message_id: 'group-msg-1' } }),
+          patch: async () => ({ code: 0, data: {} }),
+        },
+      },
+    };
+
+    const result = await adapter.handleCardAction({
+      open_id: 'ou_authorized',
+      tenant_key: 'tenant',
+      token: 'token',
+      open_message_id: 'open-card-allowed',
+      operator: { open_id: 'ou_authorized' },
+      context: { open_chat_id: 'chat-allowed' },
+      action: {
+        tag: 'button',
+        value: { callback_data: 'new-session:codex:plan' },
+        form_value: { new_session_workdir: '/tmp/codex-plan' },
+      },
+    });
+
+    assert.equal(result.toast.type, 'success');
+    assert.ok(store.getChannelBinding('feishu', 'chat-allowed'));
   });
 });

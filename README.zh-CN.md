@@ -5,7 +5,7 @@
 ### AI 编码代理困在你的终端里，团队却在飞书协作。这个项目把它们桥接起来 — 每个群一个会话，本地状态，流式卡片。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.6-green.svg)](https://nodejs.org/)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-已支持-purple.svg)](https://docs.anthropic.com/en/docs/claude-code)
 [![Codex](https://img.shields.io/badge/Codex-已支持-orange.svg)](https://github.com/openai/codex)
 
@@ -121,7 +121,7 @@ bash scripts/daemon.sh restart
 
 ### 前置条件
 
-- Node.js 20+
+- Node.js 20.6+（使用内置 `--env-file=` 标志安全加载 config.env）
 - 一个开启了 Bot 能力的飞书/Lark 自建应用（[配置指南](references/setup-guides.md)）
 - 本地已安装并认证 Claude Code CLI 和/或 Codex CLI
 
@@ -163,7 +163,7 @@ CTI_DEFAULT_WORKDIR=/path/to/your/project
 | `CTI_FEISHU_APP_ID` | 是 | 飞书 App ID |
 | `CTI_FEISHU_APP_SECRET` | 是 | 飞书 App Secret |
 | `CTI_FEISHU_DOMAIN` | 否 | 国际版填 `lark` |
-| `CTI_FEISHU_ALLOWED_USERS` | 否 | 逗号分隔的允许用户 ID |
+| `CTI_FEISHU_ALLOWED_USERS` | **是** | 逗号分隔的发送者 ID（open_id / user_id / union_id）。空值会拒绝所有人；填单独一个 `*` 表示放行所有（不安全，见 SECURITY.md）。 |
 | `CTI_FEISHU_SHOW_TOOL_CALL_CARDS` | 否 | 设为 `true` 后在群会话里展示 tool 调用活动卡片，包括 MCP/工具、命令执行和文件修改卡片。默认 `false`，普通助手消息卡片始终保留。 |
 | `CTI_CLAUDE_CODE_EXECUTABLE` | 否 | 显式指定 Claude CLI 路径。Windows 下接受 npm 安装出来的 `claude.cmd`，bridge 会自动映射到真实 CLI 入口。 |
 

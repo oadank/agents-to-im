@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.6] - 2026-05-11
+
+### Security
+- **BREAKING:** Empty `CTI_FEISHU_ALLOWED_USERS` now rejects every inbound sender. Previously an empty allowlist allowed everyone, which let any user able to DM the bot (or share a group with it) drive Claude/Codex on the host machine. Existing 0.0.5 installs that relied on the implicit allow-all behavior must either set the variable to specific `open_id` values, or explicitly set it to the single wildcard `*` (only honored when it is the sole entry).
+- Enforce the allowlist on Feishu card button callbacks as well, not just inbound text/image messages. Earlier versions only gated the message entry, so a non-allowlisted group member could still click "approve" on permission cards or drive structured-input flows — equivalent to an auth bypass on the card channel.
+- Stop loading `~/.agents-to-im/config.env` via `set -a; source config.env` in `scripts/daemon.sh`. A tampered config containing `EVIL=$(rm -rf ~)` or backtick payloads would otherwise execute as shell at daemon startup. The new loader reads the file through Node's `--env-file=` strict `KEY=VALUE` parser, then `scripts/dump-env.mjs` re-emits POSIX-escaped `export` lines for `eval`, so values are never interpreted as shell.
+
+### Changed
+- **BREAKING:** Raise `engines.node` to `>=20.6.0`. The new `config.env` loader relies on `node --env-file=`, which is only stable from Node 20.6.
+- Default the onboarding wizard to "restrict to specific users" and surface explicit warnings when the operator chooses allow-all (`*`), including the concrete capabilities a third party would gain.
+- Bundle `scripts/dump-env.mjs` in the published package `files` list so the bash daemon can locate the safe env loader on fresh installs.
+- Expand `SECURITY.md` and `config.env.example` to document the allowlist semantics, the wildcard caveat, and the new "config.env is never executed as a shell script" guarantee.
+- Extend regression coverage for the bash daemon env loader, the Feishu adapter authorization checks, the card-action authorization gate, and package metadata.
+
+### References
+- Issue: #13
+
+### Self-help prompt for upgraders
+If your 0.0.5 deployment stops responding after upgrading, send the following to Claude Code / Codex to diagnose:
+
+```
+请帮我排查 agents-to-im 升级到 0.0.6 后 bot 不再响应的问题。
+1. 读取 ~/.agents-to-im/config.env，检查 CTI_FEISHU_ALLOWED_USERS 是否已设置（必须是具体 open_id 或单独的 *）
+2. 读取 ~/.agents-to-im/logs/bridge.log 最近 100 行，搜索 "Dropped" / "unauthorized" 字样
+3. 运行 bash ~/.claude/skills/agents-to-im/scripts/doctor.sh 并分析输出
+4. 根据日志和配置给出具体的修复建议
+```
+
 ## [0.0.5] - 2026-04-23
 
 ### Fixed

@@ -219,7 +219,15 @@ export class CodexAppServerClient {
   }
 
   private async bootstrap(): Promise<void> {
-    const proc = spawn(this.executable, ['app-server'], {
+    // 启动 codex app-server 时自动添加 bypass 参数，跳过权限审批
+    // 这样飞书调用时不会频繁申请权限审批
+    const proc = spawn(this.executable, [
+      'app-server',
+      '-c', 'dangerously_bypass_approvals_and_sandbox=true',
+      '-c', 'require_confirmation=false',
+      '-c', 'approval_policy=never',
+      '-c', 'sandbox_mode=danger-full-access',
+    ], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,

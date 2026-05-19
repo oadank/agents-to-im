@@ -53,7 +53,7 @@ async function main(): Promise<void> {
 
   const settings = configToSettings(config);
   const store = new JsonFileStore(settings);
-  store.migrateLegacySessions();
+  store.migrateLegacySessions(config.defaultRuntime);
   const pendingPerms = new PendingPermissions();
   const pendingApprovals = new PendingApprovals();
   const pendingStructuredInputs = new PendingStructuredInputs();

@@ -2306,9 +2306,10 @@ async function handleMessage(
     // Persist the actual SDK session ID for future resume.
     // If the result has an error and no session ID was captured, clear the
     // stale ID so the next message starts fresh instead of retrying a broken resume.
+    // Exception: user abort (/stop) should preserve session for context resume.
     if (binding.id && !isCodexRuntime(binding.codepilotSessionId)) {
       try {
-        const update = computeSdkSessionUpdate(result.sdkSessionId, result.hasError);
+        const update = computeSdkSessionUpdate(result.sdkSessionId, result.hasError, taskAbort.signal.aborted);
         if (update !== null) {
           store.updateChannelBinding(binding.id, { sdkSessionId: update });
         }
@@ -2561,17 +2562,23 @@ async function handleCommand(
  *
  * Rules:
  * - If result has sdkSessionId AND no error → save the new ID
- * - If result has error (regardless of sdkSessionId) → clear to empty string
+ * - If result has error AND NOT abort → clear to empty string (broken session)
+ * - If result has error AND abort → return null (keep existing session for resume)
  * - Otherwise → no update needed
  */
 export function computeSdkSessionUpdate(
   sdkSessionId: string | null | undefined,
   hasError: boolean,
+  isAbort?: boolean,
 ): string | null {
   if (sdkSessionId && !hasError) {
     return sdkSessionId;
   }
   if (hasError) {
+    // Abort (user /stop) should preserve existing session for context resume
+    if (isAbort) {
+      return null;
+    }
     return '';
   }
   return null;

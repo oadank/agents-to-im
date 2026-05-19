@@ -93,7 +93,17 @@ export async function forwardPermissionRequest(
   suggestions?: unknown[],
   replyToMessageId?: string,
 ): Promise<void> {
-  const { store } = getBridgeContext();
+  const { store, permissions } = getBridgeContext();
+
+  // 检查自动批准配置
+  if (process.env.CTI_AUTO_APPROVE === 'true' || process.env.CTI_AUTO_APPROVE === '1') {
+    console.log(`[permission-broker] Auto-approving request: ${permissionRequestId} tool=${toolName} (CTI_AUTO_APPROVE enabled)`);
+    permissions.resolvePendingPermission(permissionRequestId, {
+      behavior: "allow",
+      scope: "session"
+    });
+    return;
+  }
 
   // Dedup: prevent duplicate forwarding of the same permission request
   const now = Date.now();

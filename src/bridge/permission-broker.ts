@@ -105,6 +105,16 @@ export async function forwardPermissionRequest(
     return;
   }
 
+  // Check if this permission request was already resolved
+  // If so, don't send a new card - just update the existing one to "handled" state
+  const existingLink = store.getPermissionLink(permissionRequestId);
+  if (existingLink?.resolved) {
+    console.log(`[permission-broker] Permission ${permissionRequestId} already resolved, skipping new card`);
+    // Don't send a new card - the existing one should already be updated to green state
+    // If SDK retries the same permission, we just ignore it
+    return;
+  }
+
   // Dedup: prevent duplicate forwarding of the same permission request
   const now = Date.now();
   if (recentPermissionForwards.has(permissionRequestId)) {

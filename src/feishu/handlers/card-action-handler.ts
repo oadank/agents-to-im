@@ -77,19 +77,22 @@ export async function handleCardAction(
         channelInstanceId: ctx.profileId,
       })
     ) {
-      // 使用 cardkit.card.update 如果有 cardToken
+      // 尝试 CardKit 更新，失败后自动 fallback 到 patch
+      const card = buildHandledPermissionCard(action || '');
+      let cardkitOk = false;
       if (updatedLink.cardToken) {
-        await patchCardViaCardkit(
+        cardkitOk = await patchCardViaCardkit(
           ctx,
           updatedLink.cardToken,
-          buildHandledPermissionCard(action || ''),
+          card,
           'permission',
         );
-      } else {
+      }
+      if (!cardkitOk) {
         await patchActionCardSafely(
           ctx,
           updatedLink.messageId,
-          buildHandledPermissionCard(action || ''),
+          card,
           'permission',
           actionMessageId || updatedLink.openMessageId,
         );
@@ -124,11 +127,11 @@ async function patchCardViaCardkit(
   cardToken: string,
   card: Record<string, unknown>,
   kind: string,
-): Promise<void> {
+): Promise<boolean> {
   const client = ctx.getLarkClient?.()?.getClient?.();
   if (!client) {
     console.warn(`[feishu-adapter] No Lark client for CardKit update, falling back to patch`);
-    return;
+    return false;
   }
   try {
     console.log(`[feishu-adapter] Updating ${kind} card via CardKit: token=${cardToken}`);
@@ -146,9 +149,10 @@ async function patchCardViaCardkit(
       throw new Error(`cardkit.card.update: code=${response.code}, msg=${response.msg}`);
     }
     console.log(`[feishu-adapter] Updated ${kind} card via CardKit: token=${cardToken}`);
+    return true;
   } catch (error) {
     console.warn(`[feishu-adapter] CardKit update failed, falling back to patch:`, error);
-    // Fallback handled by caller if needed
+    return false;
   }
 }
 

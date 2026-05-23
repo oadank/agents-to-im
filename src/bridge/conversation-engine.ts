@@ -650,6 +650,21 @@ async function consumeStream(
             errorMessage = event.data || 'Unknown error';
             break;
 
+          case 'session_invalid': {
+            // SDK session is no longer valid (429, CLI crash, etc.)
+            // Clear sdkSessionId so next call can inject conversation history
+            try {
+              const invalidData = JSON.parse(event.data);
+              console.warn('[conversation-engine] Session invalidated:', invalidData.reason);
+              if (runtime === 'codex') {
+                store.updateCodexThreadId(sessionId, '');
+              } else {
+                store.updateSdkSessionId(sessionId, '');
+              }
+            } catch { /* skip */ }
+            break;
+          }
+
           case 'result': {
             try {
               const resultData = JSON.parse(event.data);

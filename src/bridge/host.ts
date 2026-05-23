@@ -50,6 +50,7 @@ export type SSEEventType =
   | 'mode_changed'
   | 'task_update'
   | 'keep_alive'
+  | 'session_invalid'  // Signal that sdkSessionId is no longer valid
   | 'done';
 
 /** Content block in an LLM response message. */

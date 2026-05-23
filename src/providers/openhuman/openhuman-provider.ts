@@ -26,6 +26,30 @@ interface JsonRpcResponse {
 }
 
 /**
+ * Build prompt with history injection for OpenHuman.
+ * OpenHuman has no session concept, so we inject history as context.
+ */
+function buildPromptWithHistory(
+  prompt: string,
+  history?: Array<{ role: 'user' | 'assistant'; content: string }> | undefined,
+): string {
+  if (!history || history.length === 0) return prompt;
+
+  const historyText = history
+    .map((msg) => `${msg.role === 'user' ? '用户' : '助手'}：${msg.content}`)
+    .join('\n\n');
+
+  return `以下是之前的对话历史，请继续对话：
+
+${historyText}
+
+---
+
+用户最新消息：
+${prompt}`;
+}
+
+/**
  * OpenHumanProvider 实现 LLMProvider 接口
  * 调用 OpenHuman Core 的 agent_chat RPC 方法
  */
@@ -72,14 +96,20 @@ export class OpenHumanProvider implements LLMProvider {
    * 返回 SSE 格式的 ReadableStream
    */
   streamChat(params: StreamChatParams): ReadableStream<string> {
-    const { prompt, abortController } = params;
+    const { abortController, conversationHistory } = params;
+
+    // Inject history as context (OpenHuman has no session concept)
+    const effectivePrompt = buildPromptWithHistory(params.prompt, conversationHistory);
+    if (conversationHistory && conversationHistory.length > 0) {
+      console.log(`[openhuman-provider] Injecting ${conversationHistory.length} history messages`);
+    }
 
     return new ReadableStream<string>({
       start: async (controller) => {
         try {
           // 调用 openhuman.agent_chat
           const result = await this.callRpc('openhuman.agent_chat', {
-            message: prompt,
+            message: effectivePrompt,
           });
 
           if (result.error) {

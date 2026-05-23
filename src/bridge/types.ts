@@ -125,6 +125,7 @@ export interface SendResult {
   /** Platform-specific message ID of the sent message */
   messageId?: string;
   openMessageId?: string;
+  cardToken?: string;
   error?: string;
 }
 

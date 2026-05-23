@@ -30,6 +30,8 @@ type JsonRecord = Record<string, unknown>;
 interface ThreadBootstrap {
   threadId: string;
   model?: string;
+  /** True if this is a freshly created thread (no prior history), needs context injection */
+  isFresh?: boolean;
 }
 
 interface TokenUsageBreakdown {
@@ -553,9 +555,27 @@ function buildLegacyActivityEvent(
 async function buildUserInput(
   prompt: string,
   files: StreamChatParams['files'],
+  history?: Array<{ role: 'user' | 'assistant'; content: string }> | undefined,
 ): Promise<{ input: Array<Record<string, unknown>>; tempFiles: string[] }> {
   const tempFiles: string[] = [];
-  const input: Array<Record<string, unknown>> = [toTextInput(prompt)];
+
+  // If history is provided (session lost), inject as context
+  let effectivePrompt = prompt;
+  if (history && history.length > 0) {
+    const historyText = history
+      .map((msg) => `${msg.role === 'user' ? '用户' : '助手'}：${msg.content}`)
+      .join('\n\n');
+    effectivePrompt = `以下是之前的对话历史，请继续对话：
+
+${historyText}
+
+---
+
+用户最新消息：
+${prompt}`;
+  }
+
+  const input: Array<Record<string, unknown>> = [toTextInput(effectivePrompt)];
 
   for (const file of files ?? []) {
     if (!file.type.startsWith('image/')) continue;
@@ -671,7 +691,16 @@ export class CodexProvider implements LLMProvider {
         },
       });
 
-      const { input, tempFiles: createdTemps } = await buildUserInput(params.prompt, params.files);
+      // Inject history if this is a fresh thread (session lost)
+      const needsHistoryInjection = bootstrap.isFresh && params.conversationHistory && params.conversationHistory.length > 0;
+      if (needsHistoryInjection) {
+        console.log(`[codex-provider] Injecting ${params.conversationHistory!.length} history messages (fresh thread)`);
+      }
+      const { input, tempFiles: createdTemps } = await buildUserInput(
+        params.prompt,
+        params.files,
+        needsHistoryInjection ? params.conversationHistory : undefined,
+      );
       tempFiles.push(...createdTemps);
 
       const turnParams: JsonRecord = {
@@ -936,6 +965,7 @@ export class CodexProvider implements LLMProvider {
           return {
             threadId: String(resumed.thread?.id || savedThreadId),
             model: typeof resumed.model === 'string' ? resumed.model : undefined,
+            isFresh: false,  // Resumed existing thread, has history
           };
         }
 
@@ -947,6 +977,7 @@ export class CodexProvider implements LLMProvider {
         return {
           threadId,
           model: typeof started.model === 'string' ? started.model : undefined,
+          isFresh: !retriedFresh,  // Fresh thread, needs history injection (unless we retried from resume failure)
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

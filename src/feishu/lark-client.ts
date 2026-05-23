@@ -74,7 +74,7 @@ export class LarkClient {
     card: Record<string, unknown> | lark.InteractiveCard,
     replyToMessageId?: string,
     requestUuid?: string,
-  ): Promise<{ messageId: string; openMessageId?: string }> {
+  ): Promise<{ messageId: string; openMessageId?: string; cardToken?: string }> {
     const response = await this.sendMessage(
       address,
       'interactive',

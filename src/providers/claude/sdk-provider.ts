@@ -138,6 +138,65 @@ function buildPrompt(
 }
 
 /**
+ * Build a prompt stream that includes conversation history.
+ * Used when sdkSessionId is empty (session lost) to restore context.
+ *
+ * Converts conversationHistory (stored in agents-to-im) to SDKUserMessage
+ * format and yields them before the current user message.
+ */
+function buildPromptWithHistory(
+  text: string,
+  history: Array<{ role: 'user' | 'assistant'; content: string }> | undefined,
+  files?: FileAttachment[],
+): AsyncIterable<{ type: 'user' | 'assistant'; message: { role: 'user' | 'assistant'; content: unknown }; parent_tool_use_id: null; session_id: string }> {
+  return (async function* () {
+    // Yield history messages first
+    if (history && history.length > 0) {
+      for (const msg of history) {
+        yield {
+          type: msg.role,
+          message: { role: msg.role, content: msg.content },
+          parent_tool_use_id: null,
+          session_id: '',
+        };
+      }
+    }
+
+    // Then yield the current user message
+    const imageFiles = files?.filter(f => SUPPORTED_IMAGE_TYPES.has(f.type));
+    if (imageFiles && imageFiles.length > 0) {
+      const contentBlocks: unknown[] = [];
+      for (const file of imageFiles) {
+        contentBlocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: (file.type === 'image/jpg' ? 'image/jpeg' : file.type) as ImageMediaType,
+            data: file.data,
+          },
+        });
+      }
+      if (text.trim()) {
+        contentBlocks.push({ type: 'text', text });
+      }
+      yield {
+        type: 'user' as const,
+        message: { role: 'user' as const, content: contentBlocks },
+        parent_tool_use_id: null,
+        session_id: '',
+      };
+    } else {
+      yield {
+        type: 'user' as const,
+        message: { role: 'user' as const, content: text },
+        parent_tool_use_id: null,
+        session_id: '',
+      };
+    }
+  })();
+}
+
+/**
  * Mutable state shared between the streaming loop and catch block.
  *
  * Key distinction:
@@ -618,7 +677,15 @@ export class SDKLLMProvider implements LLMProvider {
               queryOptions.pathToClaudeCodeExecutable = cliPath;
             }
 
-            const prompt = buildPrompt(params.prompt, params.files);
+            // Build prompt - inject history if session is lost (no sdkSessionId)
+            const hasHistory = params.conversationHistory && params.conversationHistory.length > 0;
+            const needsHistoryInjection = !params.sdkSessionId && hasHistory;
+            if (needsHistoryInjection) {
+              console.log(`[llm-provider] Injecting ${params.conversationHistory!.length} history messages (session lost)`);
+            }
+            const prompt = needsHistoryInjection
+              ? buildPromptWithHistory(params.prompt, params.conversationHistory, params.files)
+              : buildPrompt(params.prompt, params.files);
             const q = query({
               prompt: prompt as Parameters<typeof query>[0]['prompt'],
               options: queryOptions as Parameters<typeof query>[0]['options'],
@@ -665,6 +732,26 @@ export class SDKLLMProvider implements LLMProvider {
             // Text was streamed but no result arrived — the response was
             // truncated by a real crash. Always emit an error so the user
             // knows the output is incomplete.
+
+            // ── Check for session-invalidating errors (429, rate limit, CLI crash) ──
+            // These errors cause the SDK CLI process to exit, making the sdkSessionId
+            // invalid. Signal to conversation-engine to clear it so next call can
+            // inject conversation history.
+            const isRateLimitError = message.includes('429')
+              || message.includes('rate_limit')
+              || message.includes('RateLimitError')
+              || message.includes('TooManyRequests')
+              || stderrBuf.includes('429')
+              || stderrBuf.includes('rate_limit');
+            const isSessionInvalid = isRateLimitError
+              || (isTransportExit && !state.hasReceivedResult);
+            if (isSessionInvalid && params.sdkSessionId) {
+              console.warn('[llm-provider] Session invalidated by error, signaling to clear sdkSessionId');
+              emitCanonicalTurnEvent(controller, {
+                type: 'session_invalid',
+                data: { reason: isRateLimitError ? 'rate_limit' : 'cli_crash' },
+              });
+            }
 
             // ── Build user-facing error message ──
             const authKind = classifyAuthError(message) || classifyAuthError(stderrBuf);

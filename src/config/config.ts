@@ -15,7 +15,7 @@ export interface FeishuProfileConfig {
 
 export interface Config {
   defaultWorkDir: string;
-  defaultRuntime: 'claude' | 'codex';
+  defaultRuntime: 'claude' | 'codex' | 'openhuman';
   feishu: FeishuProfileConfig;
   claudeCliExecutable?: string;
 }
@@ -81,7 +81,8 @@ export function loadConfig(): Config {
   }
 
   const runtimeStr = env.get('CTI_DEFAULT_RUNTIME') || 'claude';
-  const defaultRuntime: 'claude' | 'codex' = runtimeStr === 'codex' ? 'codex' : 'claude';
+  const defaultRuntime: 'claude' | 'codex' | 'openhuman' =
+    runtimeStr === 'codex' ? 'codex' : runtimeStr === 'openhuman' ? 'openhuman' : 'claude';
 
   return {
     defaultWorkDir: env.get('CTI_DEFAULT_WORKDIR') || process.cwd(),

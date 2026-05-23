@@ -83,21 +83,19 @@ export class OpenHumanProvider implements LLMProvider {
           });
 
           if (result.error) {
-            // 错误响应
-            controller.enqueue(`event: error\ndata: ${JSON.stringify(result.error)}\n\n`);
+            // 错误响应 - 使用 consumeStream 期望的格式
+            controller.enqueue(`data: ${JSON.stringify({ type: 'error', data: result.error.message })}\n\n`);
           } else if (result.result?.result) {
-            // 成功响应 - 发送文本事件
+            // 成功响应 - 发送文本事件（格式与 consumeStream 期望一致）
             const text = result.result.result;
-            controller.enqueue(`event: text\ndata: ${JSON.stringify({ text })}\n\n`);
-
-            // 发送完成事件
-            controller.enqueue(`event: done\ndata: {}\n\n`);
+            controller.enqueue(`data: ${JSON.stringify({ type: 'text', data: text })}\n\n`);
           }
+          controller.enqueue(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
 
           controller.close();
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error';
-          controller.enqueue(`event: error\ndata: ${JSON.stringify({ message })}\n\n`);
+          controller.enqueue(`data: ${JSON.stringify({ type: 'error', data: message })}\n\n`);
           controller.close();
         }
       },

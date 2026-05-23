@@ -1,4 +1,5 @@
 import type { InboundMessage } from '../../bridge/types.js';
+import { loadConfig } from '../../config/config.js';
 import type {
   AdapterContext,
   FeishuMessageEventData,
@@ -166,6 +167,10 @@ export async function handleDirectMessage(
     await ctx.handleCreateSessionCommand(sender, inbound, 'codex');
     return;
   }
+  if (command === '/new:openhuman') {
+    await ctx.handleCreateSessionCommand(sender, inbound, 'openhuman');
+    return;
+  }
   if (command === '/resume:claude') {
     await ctx.handleResumeSessionCommand(sender, inbound, 'claude');
     return;
@@ -174,39 +179,51 @@ export async function handleDirectMessage(
     await ctx.handleResumeSessionCommand(sender, inbound, 'codex');
     return;
   }
-  // 私聊非命令消息：尝试恢复最近的会话
+  if (command === '/resume:openhuman') {
+    await ctx.handleResumeSessionCommand(sender, inbound, 'openhuman');
+    return;
+  }
+  // 私聊非命令消息：尝试恢复最近的会话，或自动创建新会话
   const store = ctx.getStore();
-  const allBindings = store.listChannelBindings(ctx.channelType).filter((b) => b.channelInstanceId === ctx.profileId);
-  if (allBindings.length > 0) {
-    const sortedBindings = allBindings.sort((a, b) => {
-      try {
-        const sessionA = store.getSession(a.codepilotSessionId);
-        const sessionB = store.getSession(b.codepilotSessionId);
-        const timeA = sessionA ? new Date(sessionA.updated_at || sessionA.created_at).getTime() : new Date(a.updated_at || a.created_at || 0).getTime();
-        const timeB = sessionB ? new Date(sessionB.updated_at || sessionB.created_at).getTime() : new Date(b.updated_at || b.created_at || 0).getTime();
-        return timeB - timeA;
-      } catch {
-        const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
-        const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
-        return timeB - timeA;
-      }
+  const existingBinding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+
+  // 如果已有绑定，直接处理消息
+  if (existingBinding) {
+    ctx.enqueue(inbound);
+    return;
+  }
+
+  // 没有绑定，自动创建新会话并绑定私聊本身（不创建新群聊）
+  const config = loadConfig();
+  const defaultRuntime = config.defaultRuntime || 'claude';
+  console.log(`[feishu-adapter] No existing binding found for p2p chat, auto-creating session with runtime=${defaultRuntime}`);
+  try {
+    await ctx.ensureRuntimeAvailable(defaultRuntime);
+    const session = store.createRuntimeSession({
+      runtime: defaultRuntime,
+      model: '',
+      cwd: store.getSetting('bridge_default_work_dir') || process.cwd(),
     });
-    if (sortedBindings.length > 0) {
-      const latestBinding = sortedBindings[0];
-      store.upsertChannelBinding({
-        channelType: ctx.channelType,
-        channelInstanceId: ctx.profileId,
-        chatId: inbound.address.chatId,
-        codepilotSessionId: latestBinding.codepilotSessionId,
-        // 指向最近的会话
-        sdkSessionId: latestBinding.sdkSessionId,
-        workingDirectory: latestBinding.workingDirectory,
-        model: latestBinding.model,
-        mode: latestBinding.mode,
-        claudePermissionMode: latestBinding.claudePermissionMode,
-        active: true,
-      });
-    }
+    // 直接绑定私聊本身，不创建新群聊
+    store.upsertChannelBinding({
+      channelType: ctx.channelType,
+      channelInstanceId: ctx.profileId,
+      chatId: inbound.address.chatId,  // 使用私聊的 chatId
+      codepilotSessionId: session.id,
+      workingDirectory: session.working_directory,
+      model: session.model,
+      mode: 'code',
+      active: true,
+    });
+    console.log(`[feishu-adapter] Created and bound session ${session.id} (runtime=${defaultRuntime}) to p2p chat ${inbound.address.chatId}`);
+  } catch (error) {
+    console.error('[feishu-adapter] Failed to auto-create session:', error);
+    await ctx.sendAsPost(
+      inbound.address,
+      `自动创建会话失败：${error instanceof Error ? error.message : String(error)}`,
+      inbound.messageId,
+    );
+    return;
   }
   ctx.enqueue(inbound);
   return;

@@ -29,4 +29,13 @@ export const RUNTIME_CAPABILITIES: Record<RuntimeName, ProviderCapabilities> = {
     resumeKinds: ['sdkSessionId', 'runtimeThreadId'],
     elicitation: false,
   },
+  openhuman: {
+    nativePlanProtocol: false,
+    askUserQuestion: false,
+    structuredInput: false,
+    approvalKinds: 'permission_callback',
+    activityGranularity: 'basic',
+    resumeKinds: [],
+    elicitation: false,
+  },
 };

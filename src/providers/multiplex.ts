@@ -3,11 +3,13 @@ import type { LLMProvider, StreamChatParams } from '../bridge/host.js';
 import type { Config } from '../config/config.js';
 import { CodexProvider } from './codex/codex-provider.js';
 import { SDKLLMProvider } from './claude/sdk-provider.js';
+import { OpenHumanProvider, createOpenHumanProvider } from './openhuman/openhuman-provider.js';
 import { preflightCheck, resolveClaudeCliPath } from './claude/cli-support.js';
 import { PendingApprovals, type PendingPermissions, PendingStructuredInputs } from './claude/permission-gateway.js';
 import {
   ClaudeRuntimeDriver,
   CodexRuntimeDriver,
+  OpenHumanRuntimeDriver,
   type RuntimeDriver,
 } from '../runtime/driver.js';
 import {
@@ -22,8 +24,10 @@ export type { ProviderCapabilities } from '../runtime/capabilities.js';
 export class MultiplexLLMProvider implements LLMProvider {
   private claudeProvider: SDKLLMProvider | null = null;
   private codexProvider: CodexProvider | null = null;
+  private openhumanProvider: OpenHumanProvider | null = null;
   private claudeDriver: ClaudeRuntimeDriver | null = null;
   private codexDriver: CodexRuntimeDriver | null = null;
+  private openhumanDriver: OpenHumanRuntimeDriver | null = null;
   private claudeCliPath: string | null = null;
   private readonly pendingApprovals: PendingApprovals;
   private readonly pendingStructuredInputs: PendingStructuredInputs;
@@ -88,8 +92,15 @@ export class MultiplexLLMProvider implements LLMProvider {
     return provider;
   }
 
+  private async getOpenHumanProvider(): Promise<OpenHumanProvider> {
+    if (this.openhumanProvider) return this.openhumanProvider;
+    this.openhumanProvider = createOpenHumanProvider();
+    return this.openhumanProvider;
+  }
+
   protected async getProvider(runtime: RuntimeName): Promise<LLMProvider> {
     if (runtime === 'codex') return this.getCodexProvider();
+    if (runtime === 'openhuman') return this.getOpenHumanProvider();
     return this.getClaudeProvider();
   }
 
@@ -103,6 +114,16 @@ export class MultiplexLLMProvider implements LLMProvider {
         );
       }
       return this.codexDriver;
+    }
+    if (runtime === 'openhuman') {
+      if (!this.openhumanDriver) {
+        this.openhumanDriver = new OpenHumanRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('openhuman') as Promise<OpenHumanProvider>,
+        );
+      }
+      return this.openhumanDriver;
     }
     if (!this.claudeDriver) {
       this.claudeDriver = new ClaudeRuntimeDriver(

@@ -77,7 +77,7 @@ export async function handleNewSessionCardAction(
   callbackData: string,
 ): Promise<CardActionResult> {
   const [, runtimeText, modeText] = callbackData.split(':');
-  const runtime = runtimeText === 'codex' ? 'codex' : runtimeText === 'claude' ? 'claude' : null;
+  const runtime = runtimeText === 'codex' ? 'codex' : runtimeText === 'claude' ? 'claude' : runtimeText === 'openhuman' ? 'openhuman' : null;
   const bindingMode = modeText === 'plan' ? 'plan' : modeText === 'code' ? 'code' : null;
   if (!runtime || !bindingMode) {
     return { toast: { type: 'warning', content: 'Unsupported action' } };

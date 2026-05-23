@@ -7,6 +7,7 @@ import {
 import { JsonFileStore } from '../infra/store.js';
 import { CodexProvider } from '../providers/codex/codex-provider.js';
 import { SDKLLMProvider } from '../providers/claude/sdk-provider.js';
+import { OpenHumanProvider } from '../providers/openhuman/openhuman-provider.js';
 import type { RuntimeName } from './types.js';
 import { RUNTIME_CAPABILITIES, type ProviderCapabilities } from './capabilities.js';
 
@@ -115,5 +116,35 @@ export class CodexRuntimeDriver extends BaseRuntimeDriver {
     if (typeof (provider as CodexProvider).close === 'function') {
       await provider.close();
     }
+  }
+}
+
+export class OpenHumanRuntimeDriver extends BaseRuntimeDriver {
+  readonly runtime = 'openhuman' as const;
+
+  constructor(
+    store: JsonFileStore,
+    config: Config,
+    private readonly providerLoader: () => Promise<OpenHumanProvider>,
+  ) {
+    super(store, config, 'openhuman');
+  }
+
+  async prepare(): Promise<void> {
+    // OpenHuman 不需要 prepare，直接可用
+  }
+
+  async streamTurn(params: StreamChatParams): Promise<ReadableStream<string>> {
+    const provider = await this.providerLoader();
+    return provider.streamChat(params);
+  }
+
+  async readSessionTitle(_sessionId: string): Promise<string | null> {
+    // OpenHuman 不支持 session title 存储
+    return null;
+  }
+
+  async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
+    // OpenHuman 不支持 session title 存储
   }
 }

@@ -729,6 +729,7 @@ export class JsonFileStore implements BridgeStore {
       ...(typeof (link as PermissionLinkInput & { openMessageId?: string }).openMessageId === 'string'
         ? { openMessageId: (link as PermissionLinkInput & { openMessageId?: string }).openMessageId }
         : {}),
+      ...(typeof link.cardToken === 'string' ? { cardToken: link.cardToken } : {}),
       resolved: false,
       suggestions: link.suggestions,
     });

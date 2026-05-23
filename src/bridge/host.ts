@@ -183,6 +183,7 @@ export interface PermissionLinkInput {
   chatId: string;
   messageId: string;
   openMessageId?: string;
+  cardToken?: string;
   toolName: string;
   suggestions: string;
 }
@@ -195,6 +196,7 @@ export interface PermissionLinkRecord {
   chatId: string;
   messageId: string;
   openMessageId?: string;
+  cardToken?: string;
   resolved: boolean;
   suggestions: string;
 }

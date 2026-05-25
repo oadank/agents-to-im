@@ -103,6 +103,7 @@ import {
   TYPING_EMOJI,
   findMissingAppScopes,
 } from './constants.js';
+import { OutboundAudioService } from './services/outbound-audio-service.js';
 import type {
   ActivityArtifact,
   FeishuAdapterOptions,
@@ -180,6 +181,11 @@ export class FeishuAdapter extends BaseChannelAdapter {
   private readonly inboundImageService = new InboundImageService(
     () => this.restClient,
   );
+  private readonly outboundAudioService = new OutboundAudioService(
+    () => this.restClient,
+  );
+  /** Tracks chats that need audio reply (user sent audio message) */
+  private pendingAudioReply = new Map<string, boolean>();
 
   constructor(
     private readonly options: FeishuAdapterOptions = {
@@ -322,7 +328,10 @@ export class FeishuAdapter extends BaseChannelAdapter {
       prunePendingInboundImages: this.prunePendingInboundImages.bind(this),
       setPendingInboundImage: this.setPendingInboundImage.bind(this),
       downloadInboundImageAttachment: this.downloadInboundImageAttachment.bind(this),
+      downloadAndTranscribe: this.downloadAndTranscribe.bind(this),
       resolveReferencedInboundImages: this.resolveReferencedInboundImages.bind(this),
+      setPendingAudioReply: this.setPendingAudioReply.bind(this),
+      needsAudioReply: this.needsAudioReply.bind(this),
     };
   }
 
@@ -618,6 +627,19 @@ export class FeishuAdapter extends BaseChannelAdapter {
     }
     const address = this.withInstance(message.address);
 
+    // Check if this chat needs audio reply (user sent audio message)
+    if (this.needsAudioReply(address.chatId)) {
+      const text = normalizeMarkdown(message);
+      console.log(`[feishu-adapter] Sending audio reply to chat ${address.chatId}`);
+      const audioResult = await this.outboundAudioService.sendAudioReply(address, text, message.replyToMessageId);
+      if (audioResult.success) {
+        void this.maybeSyncSessionTitle(address.chatId);
+        return { ok: true };
+      }
+      // Audio reply failed, fall back to text
+      console.warn(`[feishu-adapter] Audio reply failed, falling back to text: ${audioResult.error}`);
+    }
+
     if (message.rawCard) {
       const result = await this.sendInteractiveCard(address, message.rawCard, message.replyToMessageId);
       return {
@@ -701,6 +723,56 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return this.inboundImageService.downloadInboundImageAttachment(messageId, imageKey);
   }
 
+  private async downloadAndTranscribe(messageId: string, fileKey: string): Promise<{ text: string }> {
+    const client = this.getLarkClient().getClient();
+    if (!client?.im?.messageResource?.get) {
+      throw new Error('Feishu 音频资源下载能力不可用');
+    }
+    
+    const tmpDir = '/tmp/feishu-audio';
+    const tmpFile = `${tmpDir}/${messageId}.opus`;
+    
+    // 确保目录存在
+    const fs = await import('node:fs/promises');
+    const nodeFs = await import('node:fs');
+    await fs.mkdir(tmpDir, { recursive: true });
+    
+    // 使用飞书 API 下载音频文件
+    const response = await client.im.messageResource.get({
+      params: { type: 'file' as never },  // 音频文件用 file 类型
+      path: {
+        message_id: messageId,
+        file_key: fileKey,
+      },
+    });
+    
+    // 从流读取数据
+    const stream = response.getReadableStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const buffer = Buffer.concat(chunks);
+    await fs.writeFile(tmpFile, buffer);
+    
+    // 调用 transcribe.sh 转写
+    const { execSync } = await import('node:child_process');
+    const transcribeScript = '/opt/.codex/skills/voice-engine/transcribe.sh';
+    try {
+      const text = execSync(`bash "${transcribeScript}" "${tmpFile}"`, {
+        encoding: 'utf-8',
+        timeout: 60000,
+        env: { ...process.env, LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || '') },
+      }).trim();
+      // 清理临时文件
+      await fs.unlink(tmpFile).catch(() => {});
+      return { text };
+    } catch (error) {
+      await fs.unlink(tmpFile).catch(() => {});
+      throw error;
+    }
+  }
+
   private resolveReferencedInboundImages(
     chatId: string,
     senderId: string,
@@ -713,6 +785,19 @@ export class FeishuAdapter extends BaseChannelAdapter {
       threadId,
       referenceIds,
     );
+  }
+
+  private setPendingAudioReply(chatId: string, needsAudio: boolean): void {
+    this.pendingAudioReply.set(chatId, needsAudio);
+  }
+
+  private needsAudioReply(chatId: string): boolean {
+    const needs = this.pendingAudioReply.get(chatId) || false;
+    // Clear after checking (one-time use)
+    if (needs) {
+      this.pendingAudioReply.delete(chatId);
+    }
+    return needs;
   }
 
   private async handleIncomingEvent(data: FeishuMessageEventData): Promise<void> {

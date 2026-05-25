@@ -142,6 +142,21 @@ export function parseImageResourceKey(content: string): string {
   }
 }
 
+export function parseAudioFileKey(content: string): string {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    // 飞书语音消息可能用 file_key 或 audio_key
+    const candidate = typeof parsed.file_key === 'string'
+      ? parsed.file_key
+      : typeof parsed.audio_key === 'string'
+        ? parsed.audio_key
+        : '';
+    return candidate.trim();
+  } catch {
+    return '';
+  }
+}
+
 export function extensionForMimeType(mimeType: string): string {
   const normalized = mimeType.toLowerCase();
   if (normalized.includes('png')) return 'png';

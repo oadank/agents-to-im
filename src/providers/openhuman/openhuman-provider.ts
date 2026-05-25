@@ -206,19 +206,8 @@ export class OpenHumanProvider implements LLMProvider {
                   break;
 
                 case 'tool_call':
-                  // 工具调用卡片
-                  sse = `data: ${JSON.stringify({
-                    type: 'activity_event',
-                    data: JSON.stringify({
-                      kind: 'tool_activity',
-                      id: `tool:${data.tool_call_id || data.request_id}`,
-                      turnId: data.request_id,
-                      toolUseId: data.tool_call_id || data.request_id,
-                      toolName: data.tool_name || 'unknown',
-                      status: 'running',
-                      inputPreview: data.args ? JSON.stringify(data.args).slice(0, 200) : undefined,
-                    } as ActivityEvent),
-                  })}\n\n`;
+                  // 工具调用卡片 - 不发送，避免噪音
+                  sse = null;
                   break;
 
                 case 'tool_result':
@@ -260,18 +249,8 @@ export class OpenHumanProvider implements LLMProvider {
                       break;
                     }
                   }
-                  sse = `data: ${JSON.stringify({
-                    type: 'activity_event',
-                    data: JSON.stringify({
-                      kind: 'tool_activity',
-                      id: `tool:${data.tool_call_id || data.request_id}`,
-                      turnId: data.request_id,
-                      toolUseId: data.tool_call_id || data.request_id,
-                      toolName: data.tool_name || 'unknown',
-                      status: data.success ? 'completed' : 'failed',
-                      resultPreview: outputPreview.slice(0, 500),
-                    } as ActivityEvent),
-                  })}\n\n`;
+                  // 工具结果卡片 - 不发送，避免噪音
+                  sse = null;
                   break;
 
                 case 'chat_done':

@@ -277,10 +277,15 @@ export interface AdapterContext {
   prunePendingInboundImages(now?: number): void;
   setPendingInboundImage(entry: PendingInboundImage): void;
   downloadInboundImageAttachment(messageId: string, imageKey: string): Promise<FileAttachment>;
+  downloadAndTranscribe(messageId: string, fileKey: string): Promise<{ text: string }>;
   resolveReferencedInboundImages(
     chatId: string,
     senderId: string,
     threadId: string | undefined,
     referenceIds: Array<string | undefined>,
   ): { attachments?: FileAttachment[]; errorMessage?: string };
+  /** Mark that this chat needs audio reply (user sent audio message) */
+  setPendingAudioReply(chatId: string, needsAudio: boolean): void;
+  /** Check if this chat needs audio reply */
+  needsAudioReply(chatId: string): boolean;
 }

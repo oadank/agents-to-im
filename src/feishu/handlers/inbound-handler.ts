@@ -5,7 +5,7 @@ import type {
   FeishuMessageEventData,
   SenderIdentity,
 } from '../types.js';
-import { buildRouteKey, parseImageResourceKey, parseTextContent } from '../utils.js';
+import { buildRouteKey, parseImageResourceKey, parseTextContent, parseAudioFileKey } from '../utils.js';
 import { pendingInboundImageKey } from '../utils.js';
 
 export async function handleIncomingEvent(
@@ -114,6 +114,54 @@ export async function handleIncomingEvent(
       return;
     }
 
+
+    // 语音消息处理
+    if (data.message.message_type === 'audio') {
+      const fileKey = parseAudioFileKey(data.message.content);
+      if (!fileKey) {
+        await ctx.sendAsPost(
+          inbound.address,
+          '已收到语音消息，但读取语音文件失败。请重新发送语音。',
+          messageId,
+        );
+        return;
+      }
+      try {
+        console.log(`[feishu-adapter] Transcribing audio ${messageId} file_key=${fileKey}`);
+        const result = await ctx.downloadAndTranscribe(messageId, fileKey);
+        const transcribedText = result.text.trim();
+        if (!transcribedText) {
+          await ctx.sendAsPost(
+            inbound.address,
+            '语音转写失败。请重新发送语音或直接发文字。',
+            messageId,
+          );
+          return;
+        }
+        console.log(`[feishu-adapter] Audio transcribed: "${transcribedText}"`);
+        await ctx.sendAsPost(
+          inbound.address,
+          `语音转写：${transcribedText}`,
+          messageId,
+        );
+        // 把转写文本当作普通文本继续处理，并标记来源为语音
+        inbound.text = transcribedText;
+        inbound.fromAudio = true; // 标记消息来源为语音，用于触发语音回复
+        data.message.message_type = 'text';
+        // 标记此 chat 需要语音回复
+        ctx.setPendingAudioReply(data.message.chat_id, true);
+        console.log(`[feishu-adapter] Audio converted to text (fromAudio=true), continuing processing...`);
+      } catch (error) {
+        console.warn('[feishu-adapter] Audio transcription failed:', error);
+        await ctx.sendAsPost(
+          inbound.address,
+          `语音转写失败：${error instanceof Error ? error.message : String(error)}`,
+          messageId,
+        );
+        return;
+      }
+    }
+
     if (data.message.message_type !== 'text') {
       console.warn(
         `[feishu-adapter] Dropped inbound message ${messageId}: unsupported message type ` +
@@ -122,7 +170,10 @@ export async function handleIncomingEvent(
       return;
     }
 
-    inbound.text = parseTextContent(data.message.content);
+    // 如果已有转写文本（语音），跳过 parseTextContent
+    if (!inbound.text) {
+      inbound.text = parseTextContent(data.message.content);
+    }
     if (!inbound.text) {
       console.warn(
         `[feishu-adapter] Dropped inbound message ${messageId}: empty parsed text ` +
@@ -146,9 +197,11 @@ export async function handleIncomingEvent(
     }
 
     if (data.message.chat_type === 'p2p') {
+      console.log(`[feishu-adapter] Routing to handleDirectMessage, text="${inbound.text}"`);
       await handleDirectMessage(ctx, sender, inbound);
       return;
     }
+    console.log(`[feishu-adapter] Routing to handleGroupMessage, text="${inbound.text}"`);
     await handleGroupMessage(ctx, sender, inbound);
   });
 }

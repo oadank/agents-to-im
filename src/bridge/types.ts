@@ -66,6 +66,8 @@ export interface InboundMessage {
   attachments?: import('./host.js').FileAttachment[];
   /** Bridge-internal routing metadata */
   bridgeMeta?: BridgeMessageMeta;
+  /** Whether this message was originally an audio message (transcribed to text) */
+  fromAudio?: boolean;
 }
 
 /** Outbound message to send to an IM channel */

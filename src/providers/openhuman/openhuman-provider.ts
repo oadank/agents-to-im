@@ -166,10 +166,31 @@ export class OpenHumanProvider implements LLMProvider {
 
               // 处理不同事件类型
               let sse: string | null = null;
+              // 标记是否已发送思维过程（让思维过程在文本之前）
+              let thinkingSent = false;
 
               switch (data.event) {
                 case 'text_delta':
-                  // 文本流式输出
+                  // 文本流式输出：先发送累积的思维过程（如果有）
+                  if (accumulatedThinking.trim() && !thinkingSent) {
+                    const thinkingSse = `data: ${JSON.stringify({
+                      type: 'activity_event',
+                      data: JSON.stringify({
+                        kind: 'reasoning_activity',
+                        id: `thinking:${data.request_id}`,
+                        turnId: data.request_id,
+                        status: 'completed',
+                        text: accumulatedThinking.trim(),
+                      } as ActivityEvent),
+                    })}\n\n`;
+                    try {
+                      controller.enqueue(thinkingSse);
+                      thinkingSent = true;
+                    } catch (e) {
+                      // 忽略
+                    }
+                  }
+                  // 然后发送文本
                   if (data.delta) {
                     sse = `data: ${JSON.stringify({ type: 'text', data: data.delta })}\n\n`;
                   }
@@ -180,7 +201,7 @@ export class OpenHumanProvider implements LLMProvider {
                   if (data.delta) {
                     accumulatedThinking += data.delta;
                   }
-                  // 不发送 SSE，等待 chat_done 时统一发送
+                  // 不发送 SSE，等待 text_delta 或 chat_done 时发送
                   sse = null;
                   break;
 
@@ -202,6 +223,30 @@ export class OpenHumanProvider implements LLMProvider {
 
                 case 'tool_result':
                   // 工具结果卡片
+                  // 检查是否是权限请求错误消息
+                  if (data.output && data.output.includes('PERMISSION_REQUIRED:')) {
+                    // 解析权限请求信息: PERMISSION_REQUIRED:shell:<command>
+                    const permMatch = data.output.match(/PERMISSION_REQUIRED:(\w+):(.+)/);
+                    if (permMatch) {
+                      const permKind = permMatch[1]; // 'shell'
+                      const permCommand = permMatch[2]; // command
+                      // 发送权限请求 SSE 事件
+                      const permRequestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+                      sse = `data: ${JSON.stringify({
+                        type: 'permission_request',
+                        data: JSON.stringify({
+                          permissionRequestId: permRequestId,
+                          toolName: data.tool_name || permKind,
+                          toolInput: { command: permCommand },
+                          kind: permKind,
+                        }),
+                      })}\n\n`;
+                      // 存储权限请求 ID 用于后续响应
+                      (this as any)._pendingPermRequestId = permRequestId;
+                      (this as any)._pendingPermCommand = permCommand;
+                      break;
+                    }
+                  }
                   sse = `data: ${JSON.stringify({
                     type: 'activity_event',
                     data: JSON.stringify({
@@ -217,8 +262,8 @@ export class OpenHumanProvider implements LLMProvider {
                   break;
 
                 case 'chat_done':
-                  // 完成时，如果有累积的思维过程，发送最终卡片
-                  if (accumulatedThinking.trim()) {
+                  // 完成时，如果思维过程还没发送（比如只有思维没有文本），现在发送
+                  if (accumulatedThinking.trim() && !thinkingSent) {
                     const thinkingSse = `data: ${JSON.stringify({
                       type: 'activity_event',
                       data: JSON.stringify({
@@ -410,6 +455,30 @@ export class OpenHumanProvider implements LLMProvider {
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
+    }
+  }
+
+  /**
+   * 发送审批结果给 OpenHuman
+   * 当飞书用户点击审批按钮后调用此方法
+   */
+  async sendPermissionResponse(permissionRequestId: string, approved: boolean): Promise<void> {
+    try {
+      const socket = await this.ensureSocket();
+
+      // 发送 permission_response 事件
+      socket.emit('permission_response', {
+        permission_request_id: permissionRequestId,
+        approved,
+        event: 'permission_response',
+        client_id: socket.id || '',
+        thread_id: '',
+        request_id: permissionRequestId,
+      });
+
+      console.log('[openhuman-provider] Sent permission_response:', permissionRequestId, 'approved:', approved);
+    } catch (error) {
+      console.warn('[openhuman-provider] Failed to send permission_response:', error);
     }
   }
 }

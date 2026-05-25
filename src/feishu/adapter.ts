@@ -108,6 +108,7 @@ import type {
   FeishuAdapterOptions,
   FeishuChatUpdatedEventData,
   FeishuMessageEventData,
+  FeishuMessageRecalledEventData,
   PendingActivitySend,
   PendingInboundImage,
   PreviewArtifact,
@@ -355,6 +356,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
         await this.handleIncomingEvent(data as FeishuMessageEventData);
       },
       'im.message.message_read_v1': async () => {},
+      'im.message.recalled_v1': async (data: unknown) => {
+        await this.handleMessageRecalledEvent(data as FeishuMessageRecalledEventData);
+      },
       'im.chat.updated_v1': async (data: unknown) => {
         await this.handleChatUpdatedEvent(data as FeishuChatUpdatedEventData);
       },
@@ -1204,6 +1208,39 @@ export class FeishuAdapter extends BaseChannelAdapter {
       await llm.writeSessionTitle?.(binding.codepilotSessionId, afterName);
     } catch (error) {
       console.warn('[feishu-adapter] Failed to push manual title to runtime:', error);
+    }
+  }
+
+  private async handleMessageRecalledEvent(data: FeishuMessageRecalledEventData): Promise<void> {
+    const messageId = data.message_id?.trim();
+    const chatId = data.chat_id?.trim();
+    if (!messageId || !chatId) return;
+
+    console.log(`[feishu-adapter] Message recalled: ${messageId} in chat ${chatId}`);
+
+    // Clear lastIncomingMessageId if the recalled message was the last one
+    const routeKey = routeKeyForAddress({
+      channelType: this.channelType,
+      channelInstanceId: this.profileId,
+      chatId,
+    });
+    if (this.lastIncomingMessageId.get(routeKey) === messageId) {
+      this.lastIncomingMessageId.delete(routeKey);
+      console.log(`[feishu-adapter] Cleared lastIncomingMessageId for route ${routeKey}`);
+    }
+
+    // Clear typing reaction if exists
+    if (this.typingReactions.has(routeKey)) {
+      this.typingReactions.delete(routeKey);
+    }
+
+    // Clean up preview artifacts for this chat
+    const previewKeyPrefix = routeKey;
+    for (const [key, artifact] of this.previewService.previewArtifacts) {
+      if (key.startsWith(previewKeyPrefix) && artifact.messageId === messageId) {
+        this.previewService.previewArtifacts.delete(key);
+        console.log(`[feishu-adapter] Cleaned up preview artifact for recalled message`);
+      }
     }
   }
 

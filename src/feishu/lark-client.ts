@@ -45,15 +45,36 @@ export class LarkClient {
     return this.enqueueMessage(address.chatId, async () => {
       const uuid = requestUuid || randomUUID().slice(0, 50);
       if (replyToMessageId) {
-        return this.client!.im.message.reply({
-          path: { message_id: replyToMessageId },
-          data: {
-            msg_type: msgType,
-            content,
-            uuid,
-            ...(address.threadId ? { reply_in_thread: true } : {}),
-          },
-        });
+        try {
+          return await this.client!.im.message.reply({
+            path: { message_id: replyToMessageId },
+            data: {
+              msg_type: msgType,
+              content,
+              uuid,
+              ...(address.threadId ? { reply_in_thread: true } : {}),
+            },
+          });
+        } catch (error) {
+          // Check if the error is "message withdrawn" (code 230011)
+          const axiosError = error as { response?: { data?: { code?: number } } };
+          if (axiosError.response?.data?.code === 230011) {
+            console.warn('[feishu-adapter] Reply message was withdrawn, falling back to create new message');
+            // Fall back to creating a new message without reply
+            const receiveId = address.threadId || address.chatId;
+            const receiveIdType = (address.threadId ? 'thread_id' : 'chat_id') as 'thread_id' | 'chat_id';
+            return this.client!.im.message.create({
+              params: { receive_id_type: receiveIdType as never },
+              data: {
+                receive_id: receiveId,
+                msg_type: msgType,
+                content,
+                uuid: randomUUID().slice(0, 50), // New UUID to avoid conflict
+              },
+            });
+          }
+          throw error;
+        }
       }
       const receiveId = address.threadId || address.chatId;
       const receiveIdType = (address.threadId ? 'thread_id' : 'chat_id') as 'thread_id' | 'chat_id';

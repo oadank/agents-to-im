@@ -60,6 +60,13 @@ export interface FeishuChatUpdatedEventData {
   };
 }
 
+export interface FeishuMessageRecalledEventData {
+  message_id: string;
+  chat_id: string;
+  recall_time?: string;
+  recall_type?: 'message_owner' | 'group_owner' | 'group_manager' | 'enterprise_manager';
+}
+
 export interface PreviewArtifact {
   key: string;
   routeKey: string;

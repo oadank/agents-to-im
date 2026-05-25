@@ -162,7 +162,8 @@ export async function handleIncomingEvent(
       }
     }
 
-    if (data.message.message_type !== 'text') {
+    // 支持 text 和 post（富文本）类型消息
+    if (data.message.message_type !== 'text' && data.message.message_type !== 'post') {
       console.warn(
         `[feishu-adapter] Dropped inbound message ${messageId}: unsupported message type ` +
         `(type=${data.message.message_type}, content=${data.message.content.slice(0, 200)})`,

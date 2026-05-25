@@ -1481,10 +1481,12 @@ export class FeishuAdapter extends BaseChannelAdapter {
     const coreToken = process.env.OPENHUMAN_CORE_TOKEN || '';
 
     // Build ChatBatch payload for memory_tree_ingest
+    // Use OpenHuman user ID (from config or default) as owner, not feishu senderId
+    const openhumanUserId = process.env.OPENHUMAN_USER_ID || '6a0bd5556b16f2d8e561ee92';
     const payload = {
       source_kind: 'chat',
       source_id: `feishu:${chatId}:${senderId}`,
-      owner: senderId,
+      owner: openhumanUserId,
       tags: ['feishu', 'channel'],
       payload: {
         platform: 'feishu',

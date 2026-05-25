@@ -293,6 +293,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       markSeenMessage: this.markSeenMessage.bind(this),
       enqueue: this.enqueue.bind(this),
       enqueueChatTask: this.enqueueChatTask.bind(this),
+      ingestToMemoryTree: this.ingestToMemoryTree.bind(this),
       sendAsPost: this.sendAsPost.bind(this),
       sendAsInteractiveCard: this.sendAsInteractiveCard.bind(this),
       sendInteractiveCard: this.sendInteractiveCard.bind(this),
@@ -1464,6 +1465,69 @@ export class FeishuAdapter extends BaseChannelAdapter {
       if (this.chatQueues.get(chatId) === next) {
         this.chatQueues.delete(chatId);
       }
+    }
+  }
+
+  /** Ingest message to OpenHuman memory_tree for semantic search.
+   * Called when OpenHuman runtime is active to build searchable memory index.
+   */
+  private async ingestToMemoryTree(
+    chatId: string,
+    senderId: string,
+    text: string,
+    messageId: string,
+  ): Promise<void> {
+    const coreUrl = process.env.OPENHUMAN_CORE_URL || 'http://localhost:7788/rpc';
+    const coreToken = process.env.OPENHUMAN_CORE_TOKEN || '';
+
+    // Build ChatBatch payload for memory_tree_ingest
+    const payload = {
+      source_kind: 'chat',
+      source_id: `feishu:${chatId}:${senderId}`,
+      owner: senderId,
+      tags: ['feishu', 'channel'],
+      payload: {
+        platform: 'feishu',
+        channel_label: chatId,
+        messages: [
+          {
+            author: senderId,
+            timestamp: new Date().toISOString(),
+            text,
+            source_ref: `feishu://message/${messageId}`,
+          },
+        ],
+      },
+    };
+
+    try {
+      const response = await fetch(coreUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(coreToken ? { 'Authorization': `Bearer ${coreToken}` } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'openhuman.memory_tree_ingest',
+          params: payload,
+        }),
+      });
+
+      if (!response.ok) {
+        console.warn('[feishu-adapter] memory_tree_ingest HTTP error:', response.status);
+        return;
+      }
+
+      const result = await response.json() as { result?: { chunks_written?: number; chunks_dropped?: number }; error?: { message: string } };
+      if (result.error) {
+        console.warn('[feishu-adapter] memory_tree_ingest error:', result.error.message);
+      } else {
+        console.log('[feishu-adapter] memory_tree_ingest success:', result.result);
+      }
+    } catch (error) {
+      console.warn('[feishu-adapter] memory_tree_ingest failed:', error);
     }
   }
 

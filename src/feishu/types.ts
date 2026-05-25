@@ -173,6 +173,8 @@ export interface AdapterContext {
   markSeenMessage(messageId: string): boolean;
   enqueue(msg: InboundMessage): void;
   enqueueChatTask(chatId: string, task: () => Promise<void>): Promise<void>;
+  /** Ingest message to OpenHuman memory_tree for semantic search. */
+  ingestToMemoryTree(chatId: string, senderId: string, text: string, messageId: string): Promise<void>;
   sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult>;
   sendAsInteractiveCard(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult>;
   sendInteractiveCard(

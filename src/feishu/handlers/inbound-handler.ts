@@ -196,6 +196,21 @@ export async function handleIncomingEvent(
       inbound.attachments = referencedImages.attachments;
     }
 
+    // Ingest to memory_tree if OpenHuman runtime is configured
+    // Check if this instance is configured for OpenHuman
+    const defaultRuntime = process.env.CTI_DEFAULT_RUNTIME || '';
+    if (defaultRuntime === 'openhuman' && inbound.text.trim()) {
+      // Fire-and-forget ingest (don't block message processing)
+      ctx.ingestToMemoryTree(
+        data.message.chat_id,
+        sender.id,
+        inbound.text,
+        messageId,
+      ).catch((err) => {
+        console.warn('[feishu-adapter] memory_tree ingest error (non-blocking):', err);
+      });
+    }
+
     if (data.message.chat_type === 'p2p') {
       console.log(`[feishu-adapter] Routing to handleDirectMessage, text="${inbound.text}"`);
       await handleDirectMessage(ctx, sender, inbound);

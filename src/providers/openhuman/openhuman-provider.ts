@@ -223,10 +223,23 @@ export class OpenHumanProvider implements LLMProvider {
 
                 case 'tool_result':
                   // 工具结果卡片
+                  // 解析 output JSON（OpenHuman 发送 JSON 格式）
+                  let outputPreview = '';
+                  let outputChars = 0;
+                  if (data.output) {
+                    try {
+                      const outputJson = JSON.parse(data.output);
+                      outputPreview = outputJson.output_preview || '';
+                      outputChars = outputJson.output_chars || 0;
+                    } catch {
+                      // 如果不是 JSON，直接使用原字符串
+                      outputPreview = data.output;
+                    }
+                  }
                   // 检查是否是权限请求错误消息
-                  if (data.output && data.output.includes('PERMISSION_REQUIRED:')) {
+                  if (outputPreview.includes('PERMISSION_REQUIRED:')) {
                     // 解析权限请求信息: PERMISSION_REQUIRED:shell:<command>
-                    const permMatch = data.output.match(/PERMISSION_REQUIRED:(\w+):(.+)/);
+                    const permMatch = outputPreview.match(/PERMISSION_REQUIRED:(\w+):(.+)/);
                     if (permMatch) {
                       const permKind = permMatch[1]; // 'shell'
                       const permCommand = permMatch[2]; // command
@@ -256,7 +269,7 @@ export class OpenHumanProvider implements LLMProvider {
                       toolUseId: data.tool_call_id || data.request_id,
                       toolName: data.tool_name || 'unknown',
                       status: data.success ? 'completed' : 'failed',
-                      resultPreview: data.output ? data.output.slice(0, 500) : undefined,
+                      resultPreview: outputPreview.slice(0, 500),
                     } as ActivityEvent),
                   })}\n\n`;
                   break;

@@ -105,6 +105,8 @@ export function buildActionCard(
               },
             },
           ],
+          // 阻止飞书按钮点击后的默认刷新行为，避免覆盖我们的 patch 更新
+          disable_update: true,
         },
       ],
     };

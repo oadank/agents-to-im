@@ -77,15 +77,20 @@ export async function handleCardAction(
         channelInstanceId: ctx.profileId,
       })
     ) {
-      // 直接使用 patch 方式更新卡片（CardKit API card_id 限制 20 字符，cardToken 长度超过限制）
+      // 延迟 500ms 后更新卡片，让飞书的按钮状态同步先完成
+      // 避免飞书的默认刷新行为覆盖我们的 patch 更新
       const card = buildHandledPermissionCard(action || '');
-      await patchActionCardSafely(
-        ctx,
-        updatedLink.messageId,
-        card,
-        'permission',
-        actionMessageId || updatedLink.openMessageId,
-      );
+      setTimeout(() => {
+        patchActionCardSafely(
+          ctx,
+          updatedLink.messageId,
+          card,
+          'permission',
+          actionMessageId || updatedLink.openMessageId,
+        ).catch((err) => {
+          console.warn('[feishu-adapter] Delayed permission card patch failed:', err);
+        });
+      }, 500);
       return { toast: { type: 'success', content: 'Permission updated' } };
     }
     return { toast: { type: 'warning', content: 'Permission already handled' } };

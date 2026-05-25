@@ -1492,7 +1492,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
         messages: [
           {
             author: senderId,
-            timestamp: new Date().toISOString(),
+            timestamp: Date.now(),
             text,
             source_ref: `feishu://message/${messageId}`,
           },

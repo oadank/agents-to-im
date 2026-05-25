@@ -77,26 +77,15 @@ export async function handleCardAction(
         channelInstanceId: ctx.profileId,
       })
     ) {
-      // 尝试 CardKit 更新，失败后自动 fallback 到 patch
+      // 直接使用 patch 方式更新卡片（CardKit API card_id 限制 20 字符，cardToken 长度超过限制）
       const card = buildHandledPermissionCard(action || '');
-      let cardkitOk = false;
-      if (updatedLink.cardToken) {
-        cardkitOk = await patchCardViaCardkit(
-          ctx,
-          updatedLink.cardToken,
-          card,
-          'permission',
-        );
-      }
-      if (!cardkitOk) {
-        await patchActionCardSafely(
-          ctx,
-          updatedLink.messageId,
-          card,
-          'permission',
-          actionMessageId || updatedLink.openMessageId,
-        );
-      }
+      await patchActionCardSafely(
+        ctx,
+        updatedLink.messageId,
+        card,
+        'permission',
+        actionMessageId || updatedLink.openMessageId,
+      );
       return { toast: { type: 'success', content: 'Permission updated' } };
     }
     return { toast: { type: 'warning', content: 'Permission already handled' } };

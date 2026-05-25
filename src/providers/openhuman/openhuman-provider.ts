@@ -125,109 +125,6 @@ export class OpenHumanProvider implements LLMProvider {
   }
 
   /**
-   * 将 WebChannelEvent 转换为 SSE 格式
-   */
-  private eventToSSE(event: WebChannelEvent): string | null {
-    switch (event.event) {
-      case 'text_delta':
-        if (event.delta) {
-          return `data: ${JSON.stringify({ type: 'text', data: event.delta })}\n\n`;
-        }
-        return null;
-
-      case 'thinking_delta':
-        if (event.delta) {
-          // 思维过程用 activity_event 格式
-          return `data: ${JSON.stringify({
-            type: 'activity_event',
-            data: JSON.stringify({
-              kind: 'reasoning_activity',
-              id: `thinking:${event.request_id}`,
-              turnId: event.request_id,
-              status: 'running',
-              text: event.delta,
-            } as ActivityEvent),
-          })}\n\n`;
-        }
-        return null;
-
-      case 'tool_call':
-        return `data: ${JSON.stringify({
-          type: 'activity_event',
-          data: JSON.stringify({
-            kind: 'tool_activity',
-            id: `tool:${event.tool_call_id || event.request_id}`,
-            turnId: event.request_id,
-            toolUseId: event.tool_call_id || event.request_id,
-            toolName: event.tool_name || 'unknown',
-            status: 'running',
-            inputPreview: event.args ? JSON.stringify(event.args).slice(0, 200) : undefined,
-          } as ActivityEvent),
-        })}\n\n`;
-
-      case 'tool_result':
-        return `data: ${JSON.stringify({
-          type: 'activity_event',
-          data: JSON.stringify({
-            kind: 'tool_activity',
-            id: `tool:${event.tool_call_id || event.request_id}`,
-            turnId: event.request_id,
-            toolUseId: event.tool_call_id || event.request_id,
-            toolName: event.tool_name || 'unknown',
-            status: event.success ? 'completed' : 'failed',
-            resultPreview: event.output ? event.output.slice(0, 500) : undefined,
-          } as ActivityEvent),
-        })}\n\n`;
-
-      case 'chat_done':
-        return `data: ${JSON.stringify({ type: 'done' })}\n\n`;
-
-      case 'chat_message':
-        // 完整消息
-        if (event.full_response) {
-          return `data: ${JSON.stringify({ type: 'text', data: event.full_response })}\n\n`;
-        }
-        if (event.message) {
-          return `data: ${JSON.stringify({ type: 'text', data: event.message })}\n\n`;
-        }
-        return null;
-
-      case 'chat_error':
-        return `data: ${JSON.stringify({ type: 'error', data: event.message || event.error_type || 'Unknown error' })}\n\n`;
-
-      case 'subagent_spawned':
-      case 'subagent_completed':
-      case 'subagent_iteration_start':
-      case 'subagent_tool_call':
-      case 'subagent_tool_result':
-        // Subagent 事件
-        if (event.subagent || event.tool_name) {
-          return `data: ${JSON.stringify({
-            type: 'activity_event',
-            data: JSON.stringify({
-              kind: 'tool_activity',
-              id: `subagent:${event.request_id}`,
-              turnId: event.request_id,
-              toolUseId: event.tool_call_id || event.request_id,
-              toolName: event.tool_name || 'subagent',
-              status: event.event === 'subagent_completed' ? 'completed' : 'running',
-              inputPreview: event.args ? JSON.stringify(event.args).slice(0, 200) : undefined,
-              resultPreview: event.output ? event.output.slice(0, 500) : undefined,
-            } as ActivityEvent),
-          })}\n\n`;
-        }
-        return null;
-
-      default:
-        // 其他事件类型，尝试提取有用信息
-        if (event.delta) {
-          return `data: ${JSON.stringify({ type: 'text', data: event.delta })}\n\n`;
-        }
-        return null;
-    }
-  }
-
-  /**
    * 实现 LLMProvider.streamChat
    * 使用 Socket.IO 监听流式事件
    */
@@ -243,6 +140,9 @@ export class OpenHumanProvider implements LLMProvider {
           const clientId = socket.id || '';
 
           console.log('[openhuman-provider] Starting chat, thread_id=', threadId, 'client_id=', clientId);
+
+          // 累积思维过程文本
+          let accumulatedThinking = '';
 
           // 监听所有事件（OpenHuman 按房间发送）
           // 需要监听 client_id 对应的事件
@@ -264,7 +164,124 @@ export class OpenHumanProvider implements LLMProvider {
 
               console.log('[openhuman-provider] Received event:', data.event, 'delta=', data.delta?.slice(0, 50));
 
-              const sse = this.eventToSSE(data);
+              // 处理不同事件类型
+              let sse: string | null = null;
+
+              switch (data.event) {
+                case 'text_delta':
+                  // 文本流式输出
+                  if (data.delta) {
+                    sse = `data: ${JSON.stringify({ type: 'text', data: data.delta })}\n\n`;
+                  }
+                  break;
+
+                case 'thinking_delta':
+                  // 累积思维过程，不立即发送
+                  if (data.delta) {
+                    accumulatedThinking += data.delta;
+                  }
+                  // 不发送 SSE，等待 chat_done 时统一发送
+                  sse = null;
+                  break;
+
+                case 'tool_call':
+                  // 工具调用卡片
+                  sse = `data: ${JSON.stringify({
+                    type: 'activity_event',
+                    data: JSON.stringify({
+                      kind: 'tool_activity',
+                      id: `tool:${data.tool_call_id || data.request_id}`,
+                      turnId: data.request_id,
+                      toolUseId: data.tool_call_id || data.request_id,
+                      toolName: data.tool_name || 'unknown',
+                      status: 'running',
+                      inputPreview: data.args ? JSON.stringify(data.args).slice(0, 200) : undefined,
+                    } as ActivityEvent),
+                  })}\n\n`;
+                  break;
+
+                case 'tool_result':
+                  // 工具结果卡片
+                  sse = `data: ${JSON.stringify({
+                    type: 'activity_event',
+                    data: JSON.stringify({
+                      kind: 'tool_activity',
+                      id: `tool:${data.tool_call_id || data.request_id}`,
+                      turnId: data.request_id,
+                      toolUseId: data.tool_call_id || data.request_id,
+                      toolName: data.tool_name || 'unknown',
+                      status: data.success ? 'completed' : 'failed',
+                      resultPreview: data.output ? data.output.slice(0, 500) : undefined,
+                    } as ActivityEvent),
+                  })}\n\n`;
+                  break;
+
+                case 'chat_done':
+                  // 完成时，如果有累积的思维过程，发送最终卡片
+                  if (accumulatedThinking.trim()) {
+                    const thinkingSse = `data: ${JSON.stringify({
+                      type: 'activity_event',
+                      data: JSON.stringify({
+                        kind: 'reasoning_activity',
+                        id: `thinking:${data.request_id}`,
+                        turnId: data.request_id,
+                        status: 'completed',
+                        text: accumulatedThinking.trim(),
+                      } as ActivityEvent),
+                    })}\n\n`;
+                    try {
+                      controller.enqueue(thinkingSse);
+                    } catch (e) {
+                      // 忽略
+                    }
+                  }
+                  sse = `data: ${JSON.stringify({ type: 'done' })}\n\n`;
+                  break;
+
+                case 'chat_message':
+                  // 完整消息
+                  if (data.full_response) {
+                    sse = `data: ${JSON.stringify({ type: 'text', data: data.full_response })}\n\n`;
+                  } else if (data.message) {
+                    sse = `data: ${JSON.stringify({ type: 'text', data: data.message })}\n\n`;
+                  }
+                  break;
+
+                case 'chat_error':
+                  sse = `data: ${JSON.stringify({ type: 'error', data: data.message || data.error_type || 'Unknown error' })}\n\n`;
+                  break;
+
+                case 'subagent_spawned':
+                case 'subagent_completed':
+                case 'subagent_iteration_start':
+                case 'subagent_tool_call':
+                case 'subagent_tool_result':
+                  // Subagent 事件
+                  if (data.subagent || data.tool_name) {
+                    sse = `data: ${JSON.stringify({
+                      type: 'activity_event',
+                      data: JSON.stringify({
+                        kind: 'tool_activity',
+                        id: `subagent:${data.request_id}`,
+                        turnId: data.request_id,
+                        toolUseId: data.tool_call_id || data.request_id,
+                        toolName: data.tool_name || 'subagent',
+                        status: data.event === 'subagent_completed' ? 'completed' : 'running',
+                        inputPreview: data.args ? JSON.stringify(data.args).slice(0, 200) : undefined,
+                        resultPreview: data.output ? data.output.slice(0, 500) : undefined,
+                      } as ActivityEvent),
+                    })}\n\n`;
+                  }
+                  break;
+
+                default:
+                  // 其他事件，尝试提取 delta
+                  if (data.delta) {
+                    sse = `data: ${JSON.stringify({ type: 'text', data: data.delta })}\n\n`;
+                  }
+                  break;
+              }
+
               if (sse) {
                 try {
                   controller.enqueue(sse);

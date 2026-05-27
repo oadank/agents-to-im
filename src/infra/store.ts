@@ -517,9 +517,58 @@ export class JsonFileStore implements BridgeStore {
 
   // ── Messages ──
 
+  // 消息数量硬限制
+  private readonly MAX_MESSAGES = 100;
+  // 压缩阈值（总字符数）
+  private readonly COMPACT_THRESHOLD = 500000;
+  // 每条消息最大长度
+  private readonly MAX_MESSAGE_LENGTH = 50000;
+
   addMessage(sessionId: string, role: string, content: string, _usage?: string | null): void {
     const msgs = this.loadMessages(sessionId);
-    msgs.push({ role, content });
+    // 截断超长消息
+    let truncatedContent = content;
+    if (content.length > this.MAX_MESSAGE_LENGTH) {
+      truncatedContent = content.slice(0, this.MAX_MESSAGE_LENGTH) + '...[TRUNCATED]';
+    }
+    msgs.push({ role, content: truncatedContent });
+    // 硬限制：保留最近 100 轮
+    if (msgs.length > this.MAX_MESSAGES) {
+      msgs.splice(0, msgs.length - this.MAX_MESSAGES);
+    }
+    this.persistMessages(sessionId);
+  }
+
+  /**
+   * 获取消息总字符数
+   */
+  getMessageTotalChars(sessionId: string): number {
+    const msgs = this.loadMessages(sessionId);
+    return msgs.reduce((sum, m) => sum + m.content.length, 0);
+  }
+
+  /**
+   * 是否需要压缩
+   */
+  needsCompaction(sessionId: string): boolean {
+    return this.getMessageTotalChars(sessionId) > this.COMPACT_THRESHOLD;
+  }
+
+  /**
+   * 压缩消息历史：保留最近 N 轮，旧的合并为摘要
+   */
+  compactMessages(sessionId: string, summary: string): void {
+    const msgs = this.loadMessages(sessionId);
+    if (msgs.length <= 20) return; // 太少不压缩
+    // 保留最近 20 轮，之前的用摘要替换
+    const recentMsgs = msgs.slice(-20);
+    const oldMsgs = msgs.slice(0, -20);
+    // 插入摘要作为一条特殊消息
+    recentMsgs.unshift({
+      role: 'system',
+      content: `[COMPACTED_HISTORY] ${summary}`,
+    });
+    this.messages.set(sessionId, recentMsgs);
     this.persistMessages(sessionId);
   }
 
@@ -628,6 +677,25 @@ export class JsonFileStore implements BridgeStore {
 
   getSessionSdkSessionId(sessionId: string): string {
     return this.sessions.get(sessionId)?.sdk_session_id || '';
+  }
+
+  /**
+   * 清空所有 Codex 会话的 thread id（当 Codex 进程重启时调用）
+   * 防止 "no rollout found for thread id" 错误
+   */
+  clearAllCodexThreadIds(): number {
+    let cleared = 0;
+    for (const session of this.sessions.values()) {
+      if (session.ext?.runtime === 'codex' && session.ext?.codexThreadId) {
+        session.ext.codexThreadId = undefined;
+        cleared += 1;
+      }
+    }
+    if (cleared > 0) {
+      this.persistSessions();
+      console.log(`[store] Cleared ${cleared} codex thread IDs due to Codex process restart`);
+    }
+    return cleared;
   }
 
   migrateLegacySessions(defaultRuntime: RuntimeName = 'claude'): boolean {

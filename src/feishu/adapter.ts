@@ -332,6 +332,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       downloadAndTranscribe: this.downloadAndTranscribe.bind(this),
       resolveReferencedInboundImages: this.resolveReferencedInboundImages.bind(this),
       setPendingAudioReply: this.setPendingAudioReply.bind(this),
+      clearPendingAudioReply: this.clearPendingAudioReply.bind(this),
       needsAudioReply: this.needsAudioReply.bind(this),
     };
   }
@@ -391,7 +392,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       appId,
       appSecret,
       domain,
-      loggerLevel: lark.LoggerLevel.info,
+      loggerLevel: lark.LoggerLevel.trace,  // 最详细级别，捕获 ping/pong
     });
 
     const wsClientAny = this.wsClient as unknown as {
@@ -399,9 +400,14 @@ export class FeishuAdapter extends BaseChannelAdapter {
     };
     const originalHandleEventData = wsClientAny.handleEventData.bind(wsClientAny);
     wsClientAny.handleEventData = (data: unknown) => {
-      const frame = data as { headers?: Array<{ key?: string; value?: string }> };
+      const frame = data as { headers?: Array<{ key?: string; value?: string }>; payload?: Uint8Array };
       const messageType = frame.headers?.find((header) => header.key === 'type')?.value;
+      const messageId = frame.headers?.find((header) => header.key === 'message_id')?.value;
+      // 调试：记录所有接收的数据帧类型和 payload
+      const payloadStr = frame.payload ? new TextDecoder('utf-8').decode(frame.payload) : 'undefined';
+      console.log('[feishu-adapter] WS frame received, type=', messageType, 'message_id=', messageId, 'payload=', payloadStr.slice(0, 200));
       if (messageType === 'card' && frame.headers) {
+        console.log('[feishu-adapter] Converting card type to event');
         return originalHandleEventData({
           ...frame,
           headers: frame.headers.map((header) =>
@@ -792,12 +798,14 @@ export class FeishuAdapter extends BaseChannelAdapter {
     this.pendingAudioReply.set(chatId, needsAudio);
   }
 
+  private clearPendingAudioReply(chatId: string): void {
+    this.pendingAudioReply.delete(chatId);
+  }
+
   private needsAudioReply(chatId: string): boolean {
     const needs = this.pendingAudioReply.get(chatId) || false;
     // Clear after checking (one-time use)
-    if (needs) {
-      this.pendingAudioReply.delete(chatId);
-    }
+    // 持续语音模式：直到用户发文本消息才清除，而不是一次性消耗
     return needs;
   }
 

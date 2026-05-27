@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -115,6 +116,61 @@ function resolveCodexHome(): string {
   return process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 }
 
+/**
+ * PID 文件路径，用于检测 Codex 进程是否重启
+ * 保存在 CTI_HOME 目录下的 runtime 子目录
+ */
+function resolvePidFile(): string {
+  const ctiHome = process.env.CTI_HOME;
+  if (ctiHome) {
+    return path.join(ctiHome, 'runtime', 'codex-app-server.pid');
+  }
+  // 默认路径
+  return path.join(resolveCodexHome(), 'runtime', 'codex-app-server.pid');
+}
+
+/**
+ * 检查指定 PID 的进程是否还在运行
+ */
+function isProcessRunning(pid: number): boolean {
+  try {
+    // 发送信号 0 检查进程是否存在（不会实际杀死进程）
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 读取之前保存的 PID
+ */
+function readSavedPid(): number | null {
+  const pidFile = resolvePidFile();
+  try {
+    const content = fs.readFileSync(pidFile, 'utf8').trim();
+    const pid = parseInt(content, 10);
+    if (pid > 0) return pid;
+  } catch {
+    // 文件不存在或读取失败
+  }
+  return null;
+}
+
+/**
+ * 保存当前 PID 到文件
+ */
+function savePid(pid: number): void {
+  const pidFile = resolvePidFile();
+  const pidDir = path.dirname(pidFile);
+  try {
+    fs.mkdirSync(pidDir, { recursive: true });
+    fs.writeFileSync(pidFile, String(pid));
+  } catch (error) {
+    console.warn('[codex-app-server] Failed to save PID file:', error);
+  }
+}
+
 function jsonRpcError(method: string, error: JsonRpcFailure['error']): Error {
   const detail = typeof error.data === 'string' ? ` (${error.data})` : '';
   return new Error(`[codex-app-server] ${method} failed: ${error.message}${detail}`);
@@ -150,6 +206,26 @@ export class CodexAppServerClient {
       this.startPromise = null;
       throw error;
     }
+  }
+
+  /**
+   * 检查是否需要清空 codexThreadId（因为 Codex 进程重启了）
+   * 在 prepare() 之前调用，如果返回 true，需要清空所有 thread id
+   */
+  checkPidChanged(): boolean {
+    const savedPid = readSavedPid();
+    if (!savedPid) {
+      // 没有保存的 PID，说明是首次启动或 PID 文件丢失
+      // 需要清空所有 thread id，防止旧 thread id 残留
+      console.log('[codex-app-server] No saved PID found, will clear stale thread IDs');
+      return true;
+    }
+    // 检查保存的 PID 是否还在运行
+    if (!isProcessRunning(savedPid)) {
+      console.log(`[codex-app-server] Previous PID ${savedPid} not running, Codex process restarted`);
+      return true;
+    }
+    return false;
   }
 
   supportsCollaborationMode(mode: string): boolean {
@@ -276,6 +352,12 @@ export class CodexAppServerClient {
       if (typeof mode === 'string' && mode) {
         this.capabilities.collaborationModes.add(mode);
       }
+    }
+
+    // 保存 Codex 进程 PID，用于后续检测进程是否重启
+    if (proc.pid) {
+      savePid(proc.pid);
+      console.log(`[codex-app-server] Started with PID ${proc.pid}`);
     }
   }
 

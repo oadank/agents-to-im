@@ -88,6 +88,14 @@ export class MultiplexLLMProvider implements LLMProvider {
     if (this.codexProvider) return this.codexProvider;
     const provider = new CodexProvider(this.pendingApprovals, this.pendingStructuredInputs);
     await provider.prepare();
+    // 检测 Codex 进程是否重启了，如果重启则清空所有 thread id
+    if (provider.didPidChange()) {
+      const cleared = this.store.clearAllCodexThreadIds();
+      if (cleared > 0) {
+        console.log(`[multiplex] Codex process restarted, cleared ${cleared} thread IDs`);
+      }
+      provider.resetPidChanged();
+    }
     this.codexProvider = provider;
     return provider;
   }

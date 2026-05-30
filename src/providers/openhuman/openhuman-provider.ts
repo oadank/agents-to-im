@@ -361,11 +361,11 @@ export class OpenHumanProvider implements LLMProvider {
             for (const h of handlers) {
               socket.off(h.name, h.handler);
             }
-            controller.enqueue(`data: ${JSON.stringify({ type: 'error', data: 'Response timeout' })}\n\n`);
             try {
+              controller.enqueue(`data: ${JSON.stringify({ type: 'error', data: 'Response timeout' })}\n\n`);
               controller.close();
             } catch (e) {
-              // 已经关闭了
+              // Controller already closed, ignore
             }
           }, 300000);
 

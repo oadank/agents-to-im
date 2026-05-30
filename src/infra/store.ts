@@ -30,7 +30,7 @@ import {
   type ChannelType,
 } from '../bridge/types.js';
 import { normalizeClaudePermissionMode } from '../runtime/claude-mode.js';
-import { CTI_HOME } from '../config/config.js';
+import { CTI_HOME, type CompactConfig } from '../config/config.js';
 import type {
   DisplayNameMode,
   RuntimeName,
@@ -115,9 +115,17 @@ export class JsonFileStore implements BridgeStore {
   private dedupKeys = new Map<string, number>();
   private locks = new Map<string, LockEntry>();
   private auditLog: Array<AuditLogInput & { id: string; createdAt: string }> = [];
+  private compact: CompactConfig;
 
   constructor(settingsMap: Map<string, string>) {
     this.settings = settingsMap;
+    this.compact = {
+      model: settingsMap.get('compact_model') || 'codex-model',
+      maxTokens: parseInt(settingsMap.get('compact_max_tokens') || '3000'),
+      temperature: parseFloat(settingsMap.get('compact_temperature') || '0.2'),
+      promptFile: settingsMap.get('compact_prompt_file') || '',
+      clearSdkSession: settingsMap.get('compact_clear_sdk_session') !== 'false',
+    };
     ensureDir(DATA_DIR);
     ensureDir(MESSAGES_DIR);
     this.loadAll();

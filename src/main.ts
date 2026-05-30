@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { initBridgeContext } from './bridge/context.js';
 import * as bridgeManager from './bridge/bridge-manager.js';
 
-import { loadConfig, configToSettings, CTI_HOME } from './config/config.js';
+import { loadConfig, configToSettings, CTI_HOME, type Config } from './config/config.js';
 import { FeishuAdapter } from './feishu/adapter.js';
 import { MultiplexLLMProvider } from './providers/multiplex.js';
 import { JsonFileStore } from './infra/store.js';
@@ -52,6 +52,12 @@ async function main(): Promise<void> {
   console.log(`[agents-to-im] Starting bridge (run_id: ${runId})`);
 
   const settings = configToSettings(config);
+  // Add compact config to settings for JsonFileStore
+  settings.set('compact_model', config.compact.model);
+  settings.set('compact_max_tokens', String(config.compact.maxTokens));
+  settings.set('compact_temperature', String(config.compact.temperature));
+  settings.set('compact_prompt_file', config.compact.promptFile);
+  settings.set('compact_clear_sdk_session', String(config.compact.clearSdkSession));
   const store = new JsonFileStore(settings);
   store.migrateLegacySessions(config.defaultRuntime);
   const pendingPerms = new PendingPermissions();

@@ -53,6 +53,28 @@ export class InboundImageService {
     this.pendingInboundImages.set(entry.key, entry);
   }
 
+  /**
+   * Fallback: 查找同一 chat + sender 下最近一条有效 pending image。
+   * 用于"先发图片再发文字（非回复）"场景，parent_id/root_id 无法匹配时。
+   */
+  getLatestPendingImageForChat(
+    chatId: string,
+    senderId: string,
+    threadId?: string,
+  ): PendingInboundImage | null {
+    const now = Date.now();
+    let latest: PendingInboundImage | null = null;
+    for (const entry of this.pendingInboundImages.values()) {
+      if (entry.chatId !== chatId || entry.senderId !== senderId) continue;
+      if (entry.threadId !== (threadId || undefined)) continue;
+      if (now - entry.createdAt > PENDING_INBOUND_IMAGE_TTL_MS) continue;
+      if (!latest || entry.createdAt > latest.createdAt) {
+        latest = entry;
+      }
+    }
+    return latest;
+  }
+
   async downloadInboundImageAttachment(messageId: string, imageKey: string): Promise<FileAttachment> {
     const client = this.getClient();
     if (!client?.im?.messageResource?.get) {

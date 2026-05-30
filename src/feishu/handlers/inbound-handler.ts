@@ -194,6 +194,21 @@ export async function handleIncomingEvent(
     }
     if (referencedImages.attachments?.length) {
       inbound.attachments = referencedImages.attachments;
+    } else {
+      // Fallback: 当 parent_id/root_id 无法匹配时（如"先发图片再发文字"非回复场景），
+      // 查找同一 chat + sender 下最近一条 pending image
+      const fallbackImage = ctx.resolveLatestPendingImageForChat(
+        data.message.chat_id,
+        sender.id,
+        threadId,
+      );
+      if (fallbackImage?.errorMessage) {
+        await ctx.sendAsPost(inbound.address, fallbackImage.errorMessage, messageId);
+        return;
+      }
+      if (fallbackImage?.attachments?.length) {
+        inbound.attachments = fallbackImage.attachments;
+      }
     }
 
     // Ingest to memory_tree if OpenHuman runtime is configured

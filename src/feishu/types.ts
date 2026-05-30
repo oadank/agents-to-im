@@ -286,6 +286,12 @@ export interface AdapterContext {
     threadId: string | undefined,
     referenceIds: Array<string | undefined>,
   ): { attachments?: FileAttachment[]; errorMessage?: string };
+  /** Fallback: 查找同一 chat+sender 下最近一条 pending image（非回复场景） */
+  resolveLatestPendingImageForChat(
+    chatId: string,
+    senderId: string,
+    threadId?: string,
+  ): { attachments?: FileAttachment[]; errorMessage?: string } | null;
   /** Mark that this chat needs audio reply (user sent audio message) */
   setPendingAudioReply(chatId: string, needsAudio: boolean): void;
   /** Check if this chat needs audio reply */

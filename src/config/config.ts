@@ -13,11 +13,20 @@ export interface FeishuProfileConfig {
   showToolCallCards?: boolean;
 }
 
+export interface CompactConfig {
+  model: string;
+  maxTokens: number;
+  temperature: number;
+  promptFile: string;
+  clearSdkSession: boolean;
+}
+
 export interface Config {
   defaultWorkDir: string;
   defaultRuntime: 'claude' | 'codex' | 'openhuman';
   feishu: FeishuProfileConfig;
   claudeCliExecutable?: string;
+  compact: CompactConfig;
 }
 
 export const DEFAULT_CTI_HOME = path.join(os.homedir(), '.agents-to-im');
@@ -71,6 +80,16 @@ function loadFeishuConfig(env: Map<string, string>): FeishuProfileConfig {
   };
 }
 
+function loadCompactConfig(env: Map<string, string>): CompactConfig {
+  return {
+    model: env.get('CTI_COMPACT_MODEL') || process.env.CTI_COMPACT_MODEL || 'codex-model',
+    maxTokens: parseInt(env.get('CTI_COMPACT_MAX_TOKENS') || process.env.CTI_COMPACT_MAX_TOKENS || '3000'),
+    temperature: parseFloat(env.get('CTI_COMPACT_TEMPERATURE') || process.env.CTI_COMPACT_TEMPERATURE || '0.2'),
+    promptFile: env.get('CTI_COMPACT_PROMPT_FILE') || process.env.CTI_COMPACT_PROMPT_FILE || '',
+    clearSdkSession: (env.get('CTI_COMPACT_CLEAR_SDK_SESSION') || process.env.CTI_COMPACT_CLEAR_SDK_SESSION || 'true') !== 'false',
+  };
+}
+
 export function loadConfig(): Config {
   let env = new Map<string, string>();
   try {
@@ -89,6 +108,7 @@ export function loadConfig(): Config {
     defaultRuntime,
     feishu: loadFeishuConfig(env),
     claudeCliExecutable: env.get('CTI_CLAUDE_CODE_EXECUTABLE') || undefined,
+    compact: loadCompactConfig(env),
   };
 }
 

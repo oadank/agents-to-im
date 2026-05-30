@@ -331,6 +331,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       downloadInboundImageAttachment: this.downloadInboundImageAttachment.bind(this),
       downloadAndTranscribe: this.downloadAndTranscribe.bind(this),
       resolveReferencedInboundImages: this.resolveReferencedInboundImages.bind(this),
+      resolveLatestPendingImageForChat: this.resolveLatestPendingImageForChat.bind(this),
       setPendingAudioReply: this.setPendingAudioReply.bind(this),
       needsAudioReply: this.needsAudioReply.bind(this),
     };
@@ -786,6 +787,25 @@ export class FeishuAdapter extends BaseChannelAdapter {
       threadId,
       referenceIds,
     );
+  }
+
+  private resolveLatestPendingImageForChat(
+    chatId: string,
+    senderId: string,
+    threadId?: string,
+  ): { attachments?: FileAttachment[]; errorMessage?: string } | null {
+    const entry = this.inboundImageService.getLatestPendingImageForChat(
+      chatId,
+      senderId,
+      threadId,
+    );
+    if (!entry) return null;
+    if (entry.attachments?.length) {
+      return { attachments: entry.attachments };
+    }
+    return {
+      errorMessage: entry.errorMessage || '这张图片暂时无法读取，请重新发送图片后再直接回复文字。',
+    };
   }
 
   private setPendingAudioReply(chatId: string, needsAudio: boolean): void {

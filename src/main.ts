@@ -60,6 +60,12 @@ async function main(): Promise<void> {
   settings.set('compact_clear_sdk_session', String(config.compact.clearSdkSession));
   const store = new JsonFileStore(settings);
   store.migrateLegacySessions(config.defaultRuntime);
+  // 启动时清空所有 Codex thread ID，防止 Codex app-server 重启后 "no rollout found"
+  // 因为 Codex app-server 的 thread 状态在重启后会丢失
+  const clearedThreads = store.clearAllCodexThreadIds();
+  if (clearedThreads > 0) {
+    console.log(`[agents-to-im] Cleared ${clearedThreads} stale Codex thread IDs on startup`);
+  }
   const pendingPerms = new PendingPermissions();
   const pendingApprovals = new PendingApprovals();
   const pendingStructuredInputs = new PendingStructuredInputs();

@@ -171,6 +171,12 @@ export async function handleIncomingEvent(
       return;
     }
 
+    // 用户主动发文本消息时，清除语音回复标记（退出语音模式）
+    if (data.message.message_type === 'text' && !inbound.fromAudio) {
+      ctx.clearPendingAudioReply(data.message.chat_id);
+      console.log(`[feishu-adapter] User sent text message, clearing audio reply mode for chat ${data.message.chat_id}`);
+    }
+
     // 如果已有转写文本（语音），跳过 parseTextContent
     if (!inbound.text) {
       inbound.text = parseTextContent(data.message.content);
@@ -181,6 +187,13 @@ export async function handleIncomingEvent(
         `(type=${data.message.message_type}, content=${data.message.content.slice(0, 200)})`,
       );
       return;
+    }
+
+    // 用户主动发文本消息时，退出语音回复模式
+    // 注意：语音转写的文本 inbound.fromAudio=true，不应退出语音模式
+    if (!inbound.fromAudio) {
+      ctx.setPendingAudioReply(data.message.chat_id, false);
+      console.log(`[feishu-adapter] User sent text message, clearing audio reply mode for chat ${data.message.chat_id}`);
     }
 
     const referencedImages = ctx.resolveReferencedInboundImages(

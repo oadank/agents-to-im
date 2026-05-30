@@ -22,6 +22,37 @@ import type {
 import { getBridgeContext } from './context.js';
 import crypto from 'crypto';
 
+/**
+ * 生成对话历史摘要（用于压缩）
+ */
+async function generateCompactionSummary(prompt: string, model?: string): Promise<string | null> {
+  try {
+    // 使用 LiteLLM API 生成摘要
+    const response = await fetch('http://127.0.0.1:4000/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer sk-200418',
+      },
+      body: JSON.stringify({
+        model: model || 'litellm/auto',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 500,
+        temperature: 0.3,
+      }),
+    });
+    if (!response.ok) {
+      console.warn('[compaction] LiteLLM response not ok:', response.status);
+      return null;
+    }
+    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    return data.choices?.[0]?.message?.content || null;
+  } catch (err) {
+    console.warn('[compaction] Failed to call LiteLLM:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 export interface PermissionRequestInfo {
   permissionRequestId: string;
   toolName: string;
@@ -274,12 +305,39 @@ export async function processMessage(
         : resolveLegacyPermissionMode(binding);
     }
 
+    // Compaction: 检测是否需要压缩历史
+    if (store.needsCompaction(sessionId)) {
+      console.log('[conversation-engine] Compaction needed, generating summary...');
+      try {
+        // 获取旧消息（最近 20 轮之前的）
+        const allMsgs = store.getMessages(sessionId).messages;
+        if (allMsgs.length > 20) {
+          const oldMsgs = allMsgs.slice(0, -20);
+          const oldContent = oldMsgs.map(m => `${m.role}: ${m.content.slice(0, 500)}`).join('\n');
+          // 调用轻量模型生成摘要
+          const summaryPrompt = `请用简洁的语言总结以下对话历史的关键内容（包括讨论的主题、做出的决策、解决的问题）：\n\n${oldContent}`;
+          // 使用一个简单的 HTTP 请求调用 LiteLLM
+          const summary = await generateCompactionSummary(summaryPrompt, effectiveModel);
+          if (summary) {
+            store.compactMessages(sessionId, summary);
+            console.log('[conversation-engine] Compaction completed, summary length:', summary.length);
+          }
+        }
+      } catch (err) {
+        console.warn('[conversation-engine] Compaction failed:', err instanceof Error ? err.message : err);
+        // 压缩失败不影响继续执行
+      }
+    }
+
     // Load conversation history for context
     const { messages: recentMsgs } = store.getMessages(sessionId, { limit: 50 });
-    const historyMsgs = recentMsgs.slice(0, -1).map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+    const historyMsgs = recentMsgs.slice(0, -1).map(m => {
+      // 压缩后的摘要（role: 'system'）需要保留，作为历史背景
+      if (m.role === 'system' && m.content.startsWith('[COMPACTED_HISTORY]')) {
+        return { role: 'user' as const, content: `【历史摘要】${m.content.slice('[COMPACTED_HISTORY] '.length)}` };
+      }
+      return { role: m.role as 'user' | 'assistant', content: m.content };
+    });
 
     const abortController = new AbortController();
     if (abortSignal) {

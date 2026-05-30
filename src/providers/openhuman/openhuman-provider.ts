@@ -1,8 +1,8 @@
 /**
- * OpenHuman Provider — 使用 Socket.IO 监听流式事件
+ * OpenHuman Provider — Socket.IO 流式事件 + RPC 发送消息
  *
- * 连接 OpenHuman Core Socket.IO，监听 text_delta/thinking_delta/tool_call 等事件
- * 将事件转换为 SSE 格式发送给飞书
+ * 连接 OpenHuman Core Socket.IO 接收流式事件
+ * 用 RPC openhuman.channel_web_chat 发送消息（Core 用 client_id 路由事件）
  */
 
 import { io, Socket } from 'socket.io-client';
@@ -52,7 +52,7 @@ interface WebChannelEvent {
 
 /**
  * OpenHumanProvider 实现 LLMProvider 接口
- * 使用 Socket.IO 监听流式事件
+ * Socket.IO 接收事件 + RPC 发送消息
  */
 export class OpenHumanProvider implements LLMProvider {
   private coreUrl: string;
@@ -60,7 +60,6 @@ export class OpenHumanProvider implements LLMProvider {
   private socket: Socket | null = null;
 
   constructor(config?: OpenHumanConfig) {
-    // 从 RPC URL 推导 Socket.IO URL
     const rpcUrl = config?.coreUrl || process.env.OPENHUMAN_CORE_URL || 'http://localhost:7788/rpc';
     this.coreUrl = rpcUrl.replace('/rpc', '');
     this.coreToken = config?.coreToken || process.env.OPENHUMAN_CORE_TOKEN || '';
@@ -75,13 +74,19 @@ export class OpenHumanProvider implements LLMProvider {
     }
 
     this.socket = io(this.coreUrl, {
-      auth: {
-        token: this.coreToken,
-      },
-      transports: ['websocket'],
+      path: '/socket.io/',           // 关键：显式路径
+      auth: { token: this.coreToken },
+      transports: ['websocket', 'polling'],  // polling fallback
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      forceNew: true,
+      timeout: 5000,
+    });
+
+    // 调试：监听所有 Socket.IO 事件
+    this.socket.onAny((eventName, ...args) => {
+      console.log('[openhuman-provider] Socket.IO event:', eventName, 'args:', JSON.stringify(args).slice(0, 200));
     });
 
     return new Promise((resolve, reject) => {
@@ -95,7 +100,6 @@ export class OpenHumanProvider implements LLMProvider {
         reject(err);
       });
 
-      // 监听 ready 事件
       this.socket!.on('ready', (data: { sid: string }) => {
         console.log('[openhuman-provider] Socket.IO ready, sid=', data.sid);
       });
@@ -110,266 +114,291 @@ export class OpenHumanProvider implements LLMProvider {
   }
 
   /**
-   * 构建 chat 消息（合并历史上下文）
+   * 通过 RPC 发送消息到 OpenHuman Core
+   * Core 用 client_id（socket.id）路由事件到对应 socket
    */
-  private buildChatMessage(prompt: string, history?: Array<{ role: 'user' | 'assistant'; content: string }>): string {
-    if (!history || history.length === 0) {
-      return prompt;
+  private async sendChatViaRpc(
+    clientId: string,
+    threadId: string,
+    message: string,
+    modelOverride?: string,
+    fromAudio?: boolean,
+  ): Promise<void> {
+    const response = await fetch(`${this.coreUrl}/rpc`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.coreToken ? { 'Authorization': `Bearer ${this.coreToken}` } : {}),
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'openhuman.channel_web_chat',
+        params: {
+          client_id: clientId,
+          thread_id: threadId,
+          message,
+          model_override: modelOverride || null,
+          profile_id: null,
+          locale: null,
+          // 传递语音标记，让 Core 知道消息来源
+          ...(fromAudio ? { from_audio: true } : {}),
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`RPC HTTP error: ${response.status}`);
     }
 
-    const historyText = history
-      .map(msg => `${msg.role === 'user' ? '用户' : '助手'}: ${msg.content}`)
-      .join('\n\n');
+    const result = await response.json() as { error?: { message: string } };
+    if (result.error) {
+      throw new Error(result.error.message);
+    }
 
-    return `【之前的对话】\n${historyText}\n\n【当前问题】\n${prompt}`;
+    console.log('[openhuman-provider] RPC chat sent, thread_id=', threadId, 'fromAudio=', fromAudio);
+  }
+
+  /**
+   * 构建 chat 消息
+   * OpenHuman 用 thread_id 自己管理对话历史，我们只发送用户当前输入
+   */
+  private buildChatMessage(prompt: string, _history?: Array<{ role: 'user' | 'assistant'; content: string }>): string {
+    return prompt;
   }
 
   /**
    * 实现 LLMProvider.streamChat
-   * 使用 Socket.IO 监听流式事件
+   * Socket.IO 接收事件 + RPC 发送消息
    */
   streamChat(params: StreamChatParams): ReadableStream<string> {
-    const { abortController, prompt, conversationHistory } = params;
+    const { abortController, prompt, conversationHistory, model } = params;
 
     return new ReadableStream<string>({
       start: async (controller) => {
         try {
           const socket = await this.ensureSocket();
-          const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-          const requestId = threadId;
           const clientId = socket.id || '';
 
-          console.log('[openhuman-provider] Starting chat, thread_id=', threadId, 'client_id=', clientId);
+          if (!clientId) {
+            console.warn('[openhuman-provider] No socket.id, falling back to RPC');
+            await this.fallbackRpcChat(params, controller);
+            return;
+          }
 
-          // 累积思维过程文本
+          // 生成临时 thread_id（用于 RPC 调用，Core 可能会生成新的）
+          const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+          console.log('[openhuman-provider] Starting chat, client_id=', clientId, 'thread_id=', threadId);
+
+          // 检查是否是语音消息（从 params.files 判断）
+          const fromAudio = params.files?.some(f => f.type.startsWith('audio/')) || false;
+
+          // 状态变量
+          let activeThreadId: string | null = null;  // 从第一个事件确定
           let accumulatedThinking = '';
+          let accumulatedText = '';
+          let thinkingSent = false;
+          let done = false;
 
-          // 监听所有事件（OpenHuman 按房间发送）
-          // 需要监听 client_id 对应的事件
+          // 监听的事件列表
           const eventNames = [
+            'inference_start', 'iteration_start',
             'text_delta', 'thinking_delta', 'tool_call', 'tool_result',
-            'chat_done', 'chat_message', 'chat_error',
+            'chat_done', 'chat_segment', 'chat_error',
             'subagent_spawned', 'subagent_completed', 'subagent_iteration_start',
             'subagent_tool_call', 'subagent_tool_result',
           ];
 
-          const handlers: Array<{ name: string; handler: (data: WebChannelEvent) => void }> = [];
+          const handlers: Array<{ name: string; handler: (data: unknown) => void }> = [];
 
           for (const eventName of eventNames) {
-            const handler = (data: WebChannelEvent) => {
-              // 只处理当前请求的事件
-              if (data.request_id !== requestId && data.thread_id !== threadId) {
+            const handler = (data: unknown) => {
+              const event = data as WebChannelEvent;
+
+              // 等待第一个事件确定 thread_id
+              if (!activeThreadId && event.thread_id) {
+                activeThreadId = event.thread_id;
+                console.log('[openhuman-provider] Active thread_id set:', activeThreadId);
+              }
+
+              // 只处理当前 thread 的事件
+              if (activeThreadId && event.thread_id !== activeThreadId) {
                 return;
               }
 
-              console.log('[openhuman-provider] Received event:', data.event, 'delta=', data.delta?.slice(0, 50));
+              console.log('[openhuman-provider] Event:', eventName, 'delta=', (event as any).delta?.slice?.(0, 50));
 
-              // 处理不同事件类型
               let sse: string | null = null;
-              // 标记是否已发送思维过程（让思维过程在文本之前）
-              let thinkingSent = false;
 
-              switch (data.event) {
+              switch (eventName) {
                 case 'text_delta':
-                  // 文本流式输出：先发送累积的思维过程（如果有）
+                  if ((event as any).delta) {
+                    accumulatedText += (event as any).delta;
+                  }
+                  // 先发送累积的思维过程
                   if (accumulatedThinking.trim() && !thinkingSent) {
                     const thinkingSse = `data: ${JSON.stringify({
                       type: 'activity_event',
                       data: JSON.stringify({
                         kind: 'reasoning_activity',
-                        id: `thinking:${data.request_id}`,
-                        turnId: data.request_id,
+                        id: `thinking:${event.request_id}`,
+                        turnId: event.request_id,
                         status: 'completed',
                         text: accumulatedThinking.trim(),
                       } as ActivityEvent),
                     })}\n\n`;
-                    try {
-                      controller.enqueue(thinkingSse);
-                      thinkingSent = true;
-                    } catch (e) {
-                      // 忽略
-                    }
+                    try { controller.enqueue(thinkingSse); thinkingSent = true; } catch { }
                   }
-                  // 然后发送文本
-                  if (data.delta) {
-                    sse = `data: ${JSON.stringify({ type: 'text', data: data.delta })}\n\n`;
+                  if ((event as any).delta) {
+                    sse = `data: ${JSON.stringify({ type: 'text', data: (event as any).delta })}\n\n`;
                   }
                   break;
 
                 case 'thinking_delta':
-                  // 累积思维过程，不立即发送
-                  if (data.delta) {
-                    accumulatedThinking += data.delta;
+                  if ((event as any).delta) {
+                    accumulatedThinking += (event as any).delta;
                   }
-                  // 不发送 SSE，等待 text_delta 或 chat_done 时发送
                   sse = null;
                   break;
 
+                case 'inference_start':
+                  sse = `data: ${JSON.stringify({
+                    type: 'activity_event',
+                    data: JSON.stringify({
+                      kind: 'lightweight_activity',
+                      id: `inference:${event.thread_id}`,
+                      status: 'running',
+                      text: '正在思考...',
+                    } as ActivityEvent),
+                  })}\n\n`;
+                  break;
+
+                case 'iteration_start':
+                  if ((event as any).round > 1) {
+                    sse = `data: ${JSON.stringify({
+                      type: 'activity_event',
+                      data: JSON.stringify({
+                        kind: 'lightweight_activity',
+                        id: `iteration:${event.thread_id}`,
+                        status: 'running',
+                        text: `迭代 ${(event as any).round}...`,
+                      } as ActivityEvent),
+                    })}\n\n`;
+                  }
+                  break;
+
                 case 'tool_call':
-                  // 工具调用卡片 - 不发送，避免噪音
+                  // 不显示工具调用，避免噪音
                   sse = null;
                   break;
 
                 case 'tool_result':
-                  // 工具结果卡片
-                  // 解析 output JSON（OpenHuman 发送 JSON 格式）
-                  let outputPreview = '';
-                  let outputChars = 0;
-                  if (data.output) {
-                    try {
-                      const outputJson = JSON.parse(data.output);
-                      outputPreview = outputJson.output_preview || '';
-                      outputChars = outputJson.output_chars || 0;
-                    } catch {
-                      // 如果不是 JSON，直接使用原字符串
-                      outputPreview = data.output;
-                    }
-                  }
-                  // 检查是否是权限请求错误消息
-                  if (outputPreview.includes('PERMISSION_REQUIRED:')) {
-                    // 解析权限请求信息: PERMISSION_REQUIRED:shell:<command>
-                    const permMatch = outputPreview.match(/PERMISSION_REQUIRED:(\w+):(.+)/);
+                  // 只处理权限请求
+                  if (event.output && event.output.includes('PERMISSION_REQUIRED:')) {
+                    const permMatch = event.output.match(/PERMISSION_REQUIRED:(\w+):(.+)/);
                     if (permMatch) {
-                      const permKind = permMatch[1]; // 'shell'
-                      const permCommand = permMatch[2]; // command
-                      // 发送权限请求 SSE 事件
                       const permRequestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
                       sse = `data: ${JSON.stringify({
                         type: 'permission_request',
                         data: JSON.stringify({
                           permissionRequestId: permRequestId,
-                          toolName: data.tool_name || permKind,
-                          toolInput: { command: permCommand },
-                          kind: permKind,
+                          toolName: event.tool_name || permMatch[1],
+                          toolInput: { command: permMatch[2] },
                         }),
                       })}\n\n`;
-                      // 存储权限请求 ID 用于后续响应
                       (this as any)._pendingPermRequestId = permRequestId;
-                      (this as any)._pendingPermCommand = permCommand;
-                      break;
                     }
                   }
-                  // 工具结果卡片 - 不发送，避免噪音
                   sse = null;
                   break;
 
+                case 'chat_segment':
+                  if ((event as any).full_response) {
+                    sse = `data: ${JSON.stringify({ type: 'text_segment', data: (event as any).full_response })}\n\n`;
+                  }
+                  break;
+
                 case 'chat_done':
-                  // 完成时，如果思维过程还没发送（比如只有思维没有文本），现在发送
+                  if (accumulatedText.trim()) {
+                    const textSegmentSse = `data: ${JSON.stringify({ type: 'text_segment', data: accumulatedText.trim() })}\n\n`;
+                    try { controller.enqueue(textSegmentSse); } catch { }
+                  }
                   if (accumulatedThinking.trim() && !thinkingSent) {
                     const thinkingSse = `data: ${JSON.stringify({
                       type: 'activity_event',
                       data: JSON.stringify({
                         kind: 'reasoning_activity',
-                        id: `thinking:${data.request_id}`,
-                        turnId: data.request_id,
+                        id: `thinking:${event.request_id}`,
+                        turnId: event.request_id,
                         status: 'completed',
                         text: accumulatedThinking.trim(),
                       } as ActivityEvent),
                     })}\n\n`;
-                    try {
-                      controller.enqueue(thinkingSse);
-                    } catch (e) {
-                      // 忽略
-                    }
+                    try { controller.enqueue(thinkingSse); } catch { }
                   }
-                  sse = `data: ${JSON.stringify({ type: 'done' })}\n\n`;
-                  break;
-
-                case 'chat_message':
-                  // 完整消息
-                  if (data.full_response) {
-                    sse = `data: ${JSON.stringify({ type: 'text', data: data.full_response })}\n\n`;
-                  } else if (data.message) {
-                    sse = `data: ${JSON.stringify({ type: 'text', data: data.message })}\n\n`;
+                  if (event.full_response && !accumulatedText.trim()) {
+                    // 修复：发送 text_segment 而不是 text，确保桥接能正确处理并发送消息
+                    const fallbackSegment = `data: ${JSON.stringify({ type: 'text_segment', data: event.full_response })}\n\n`;
+                    try { controller.enqueue(fallbackSegment); } catch { }
                   }
-                  break;
+                  controller.enqueue(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+                  done = true;
+                  for (const h of handlers) {
+                    socket.off(h.name, h.handler);
+                  }
+                  try { controller.close(); } catch { }
+                  return;
 
                 case 'chat_error':
-                  sse = `data: ${JSON.stringify({ type: 'error', data: data.message || data.error_type || 'Unknown error' })}\n\n`;
-                  break;
+                  sse = `data: ${JSON.stringify({ type: 'error', data: event.message || event.error_type || 'Unknown error' })}\n\n`;
+                  done = true;
+                  for (const h of handlers) {
+                    socket.off(h.name, h.handler);
+                  }
+                  try { controller.close(); } catch { }
+                  return;
 
                 case 'subagent_spawned':
                 case 'subagent_completed':
                 case 'subagent_iteration_start':
                 case 'subagent_tool_call':
                 case 'subagent_tool_result':
-                  // Subagent 事件
-                  if (data.subagent || data.tool_name) {
-                    sse = `data: ${JSON.stringify({
-                      type: 'activity_event',
-                      data: JSON.stringify({
-                        kind: 'tool_activity',
-                        id: `subagent:${data.request_id}`,
-                        turnId: data.request_id,
-                        toolUseId: data.tool_call_id || data.request_id,
-                        toolName: data.tool_name || 'subagent',
-                        status: data.event === 'subagent_completed' ? 'completed' : 'running',
-                        inputPreview: data.args ? JSON.stringify(data.args).slice(0, 200) : undefined,
-                        resultPreview: data.output ? data.output.slice(0, 500) : undefined,
-                      } as ActivityEvent),
-                    })}\n\n`;
-                  }
-                  break;
-
-                default:
-                  // 其他事件，尝试提取 delta
-                  if (data.delta) {
-                    sse = `data: ${JSON.stringify({ type: 'text', data: data.delta })}\n\n`;
-                  }
+                  // 不显示 subagent 活动，避免噪音
+                  sse = null;
                   break;
               }
 
               if (sse) {
-                try {
-                  controller.enqueue(sse);
-                } catch (e) {
-                  console.warn('[openhuman-provider] Failed to enqueue:', e);
-                }
-              }
-
-              // 完成或错误时关闭
-              if (data.event === 'chat_done' || data.event === 'chat_error') {
-                for (const h of handlers) {
-                  socket.off(h.name, h.handler);
-                }
-                try {
-                  controller.close();
-                } catch (e) {
-                  // 已经关闭了
-                }
+                try { controller.enqueue(sse); } catch { }
               }
             };
+
             handlers.push({ name: eventName, handler });
             socket.on(eventName, handler);
           }
 
-          // 发送 chat:start 事件
+          // 通过 RPC 发送消息
           const message = this.buildChatMessage(prompt, conversationHistory);
-          socket.emit('chat:start', {
-            thread_id: threadId,
-            message,
-            model_override: null,
-            temperature: null,
-            profile_id: null,
-            locale: null,
-          });
+          await this.sendChatViaRpc(clientId, threadId, message, model, fromAudio);
 
-          console.log('[openhuman-provider] Sent chat:start, message length=', message.length);
+          console.log('[openhuman-provider] RPC sent, waiting for events...');
 
           // 设置超时（5分钟）
           const timeout = setTimeout(() => {
-            for (const h of handlers) {
-              socket.off(h.name, h.handler);
-            }
-            try {
-              controller.enqueue(`data: ${JSON.stringify({ type: 'error', data: 'Response timeout' })}\n\n`);
-              controller.close();
-            } catch (e) {
-              // Controller already closed, ignore
+            if (!done) {
+              console.warn('[openhuman-provider] Response timeout');
+              for (const h of handlers) {
+                socket.off(h.name, h.handler);
+              }
+              try {
+                controller.enqueue(`data: ${JSON.stringify({ type: 'error', data: 'Response timeout' })}\n\n`);
+                controller.close();
+              } catch { }
             }
           }, 300000);
 
-          // 清理超时当流关闭
+          // 清理超时
           abortController?.signal.addEventListener('abort', () => {
             clearTimeout(timeout);
             for (const h of handlers) {
@@ -378,7 +407,6 @@ export class OpenHumanProvider implements LLMProvider {
           });
 
         } catch (error) {
-          // Socket.IO 连接失败，回退到 RPC
           console.warn('[openhuman-provider] Socket.IO failed, falling back to RPC:', error);
           await this.fallbackRpcChat(params, controller);
         }
@@ -388,7 +416,6 @@ export class OpenHumanProvider implements LLMProvider {
           abortController.abort();
         }
         if (this.socket) {
-          // 移除所有监听器
           this.socket.removeAllListeners();
         }
       },
@@ -452,13 +479,10 @@ export class OpenHumanProvider implements LLMProvider {
 
   /**
    * 发送审批结果给 OpenHuman
-   * 当飞书用户点击审批按钮后调用此方法
    */
   async sendPermissionResponse(permissionRequestId: string, approved: boolean): Promise<void> {
     try {
       const socket = await this.ensureSocket();
-
-      // 发送 permission_response 事件
       socket.emit('permission_response', {
         permission_request_id: permissionRequestId,
         approved,
@@ -467,7 +491,6 @@ export class OpenHumanProvider implements LLMProvider {
         thread_id: '',
         request_id: permissionRequestId,
       });
-
       console.log('[openhuman-provider] Sent permission_response:', permissionRequestId, 'approved:', approved);
     } catch (error) {
       console.warn('[openhuman-provider] Failed to send permission_response:', error);

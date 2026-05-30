@@ -593,6 +593,8 @@ export class CodexProvider implements LLMProvider {
   private client: CodexAppServerClient | null = null;
   private readonly pendingApprovals: PendingApprovals;
   private readonly pendingStructuredInputs: PendingStructuredInputs;
+  /** 是否检测到 PID 变化（需要清空 thread id） */
+  private pidChanged = false;
 
   constructor(
     pendingApprovals?: unknown,
@@ -612,6 +614,10 @@ export class CodexProvider implements LLMProvider {
       return this.client;
     }
     const client = new CodexAppServerClient();
+    // 检测 PID 变化（Codex 进程是否重启了）
+    if (client.checkPidChanged()) {
+      this.pidChanged = true;
+    }
     await client.prepare();
     this.client = client;
     return client;
@@ -619,6 +625,19 @@ export class CodexProvider implements LLMProvider {
 
   async prepare(): Promise<void> {
     await this.ensureClient();
+  }
+
+  /**
+   * 返回是否检测到 Codex 进程重启
+   * 如果返回 true，需要调用 store.clearAllCodexThreadIds()
+   */
+  didPidChange(): boolean {
+    return this.pidChanged;
+  }
+
+  /** 重置 PID 变化标志（在清空 thread id 后调用） */
+  resetPidChanged(): void {
+    this.pidChanged = false;
   }
 
   async close(): Promise<void> {

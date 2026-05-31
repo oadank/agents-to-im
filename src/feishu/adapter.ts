@@ -1429,10 +1429,10 @@ export class FeishuAdapter extends BaseChannelAdapter {
     if (!this.restClient) return;
     const chatApi = this.restClient.im?.chat;
     if (!chatApi?.update) return;
-    // p2p 私聊不支持改名，跳过
+    // p2p 私聊不支持改名，跳过；旧绑定无 chatType 时也跳过（安全默认）
     const store = this.getStore();
     const binding = store.getChannelBinding(this.channelType, chatId, this.profileId);
-    if (binding?.chatType === 'p2p') return;
+    if (!binding || binding.chatType !== 'group') return;
     const name = this.computeChatDisplayName(chatId);
     if (!name) return;
     if (this.knownChatNames.get(chatId) === name) return;

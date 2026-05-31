@@ -190,11 +190,12 @@ async function main(): Promise<void> {
   const IDLE_THRESHOLD_MS = 90 * 60 * 1000; // 1.5 hours idle
   const MIN_MESSAGES_FOR_COMPACT = 20; // Only compact sessions with enough messages
 
-  const config2 = loadConfig();
   setInterval(async () => {
     try {
       const store = (globalThis as any).__ctiStore;
       if (!store) return;
+      // 每次执行时重新加载配置，确保运行时修改 config.env 生效
+      const config2 = loadConfig();
       const now = Date.now();
       const bindings = store.listChannelBindings?.() || [];
       for (const binding of bindings) {

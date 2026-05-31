@@ -347,6 +347,8 @@ export interface BridgeStore {
   // ── Messages ──
   addMessage(sessionId: string, role: string, content: string, usage?: string | null): void;
   getMessages(sessionId: string, opts?: { limit?: number }): { messages: BridgeMessage[] };
+  /** Replace all messages for a session atomically (single write). */
+  setMessages(sessionId: string, messages: BridgeMessage[]): void;
   clearSessionMessages(sessionId: string): void;
 
   // ── Session locking ──

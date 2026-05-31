@@ -671,6 +671,21 @@ export class JsonFileStore implements BridgeStore {
     this.persistMessages(sessionId);
   }
 
+  setMessages(sessionId: string, newMsgs: BridgeMessage[]): void {
+    // Truncate each message to MAX_MESSAGE_LENGTH
+    const msgs = newMsgs.map(m => {
+      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      return {
+        role: m.role,
+        content: content.length > this.MAX_MESSAGE_LENGTH
+          ? content.slice(0, this.MAX_MESSAGE_LENGTH) + '...[TRUNCATED]'
+          : content,
+      };
+    });
+    this.messages.set(sessionId, msgs);
+    this.persistMessages(sessionId);
+  }
+
   updateSessionSdkId(sessionId: string, sdkId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {

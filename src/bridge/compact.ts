@@ -113,7 +113,7 @@ export async function compactConversation(
   compactLocks.set(sessionId, true);
 
   try {
-    const { messages } = store.getMessages(sessionId, { limit: 9999 });
+    const { messages } = store.getMessages(sessionId);
     if (messages.length < 4) {
       return { success: false, originalCount: messages.length, error: '消息太少，无需压缩' };
     }
@@ -160,6 +160,8 @@ export async function compactConversation(
  * Avoids consecutive same-role messages (Anthropic API requires alternating
  * user/assistant). If the first preserved message is 'user', the summary is
  * prepended to that message's content instead of being added separately.
+ *
+ * Uses store.setMessages for atomic write — no partial data loss on crash.
  */
 export function applyCompactResult(
   store: BridgeStore,
@@ -168,24 +170,26 @@ export function applyCompactResult(
 ): void {
   if (!result.success || !result.summary) return;
 
-  store.clearSessionMessages(sessionId);
-
   const summaryText = `[会话已压缩]\n\n${result.summary}`;
   const preserved = result.preservedMessages || [];
+  const newMessages: BridgeMessage[] = [];
 
   if (preserved.length > 0 && preserved[0].role === 'user') {
     // First preserved message is 'user' → merge summary into it to avoid
     // consecutive user messages which the Anthropic API rejects.
-    store.addMessage(sessionId, 'user', `${summaryText}\n\n---\n\n${preserved[0].content}`);
+    newMessages.push({ role: 'user', content: `${summaryText}\n\n---\n\n${preserved[0].content}` });
     for (let i = 1; i < preserved.length; i++) {
-      store.addMessage(sessionId, preserved[i].role, preserved[i].content);
+      newMessages.push(preserved[i]);
     }
   } else {
     // First preserved message is 'assistant' (or no preserved messages) →
     // safe to add summary as a standalone user message.
-    store.addMessage(sessionId, 'user', summaryText);
+    newMessages.push({ role: 'user', content: summaryText });
     for (const msg of preserved) {
-      store.addMessage(sessionId, msg.role, msg.content);
+      newMessages.push(msg);
     }
   }
+
+  // Atomic write: replace all messages in one disk write
+  store.setMessages(sessionId, newMessages);
 }

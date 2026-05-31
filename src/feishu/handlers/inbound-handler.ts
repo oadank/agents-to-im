@@ -163,44 +163,8 @@ export async function handleIncomingEvent(
       }
     }
 
-    // Convert post (rich text) to plain text
-    if (data.message.message_type === 'post') {
-      try {
-        const postContent = JSON.parse(data.message.content);
-        const lines: string[] = [];
-        const title = postContent.title || '';
-        if (title) lines.push(title);
-        const content = postContent.content || postContent;
-        if (Array.isArray(content)) {
-          for (const para of content) {
-            if (Array.isArray(para)) {
-              const textParts: string[] = [];
-              for (const elem of para) {
-                if (elem.tag === 'text' && elem.text) textParts.push(elem.text);
-                else if (elem.tag === 'a' && elem.href) textParts.push(elem.href);
-                else if (elem.tag === 'at' && elem.user_name) textParts.push('@' + elem.user_name);
-                else if (elem.tag === 'img' && elem.alt) textParts.push('[图片:' + elem.alt + ']');
-              }
-              if (textParts.length) lines.push(textParts.join(''));
-            }
-          }
-        }
-        const extractedText = lines.join('\n').trim();
-        if (extractedText) {
-          console.log(`[feishu-adapter] Post converted to text: "${extractedText.slice(0, 100)}"`);
-          data.message.message_type = 'text';
-          data.message.content = JSON.stringify({ text: extractedText });
-        } else {
-          console.warn(`[feishu-adapter] Dropped post message ${messageId}: empty after conversion`);
-          return;
-        }
-      } catch (e) {
-        console.warn(`[feishu-adapter] Failed to parse post content: ${e}`);
-        return;
-      }
-    }
-
-    if (data.message.message_type !== 'text') {
+    // 支持 text 和 post（富文本）类型消息
+    if (data.message.message_type !== 'text' && data.message.message_type !== 'post') {
       console.warn(
         `[feishu-adapter] Dropped inbound message ${messageId}: unsupported message type ` +
         `(type=${data.message.message_type}, content=${data.message.content.slice(0, 200)})`,

@@ -527,10 +527,6 @@ export class JsonFileStore implements BridgeStore {
 
   // ── Messages ──
 
-  // 消息数量硬限制
-  private readonly MAX_MESSAGES = 100;
-  // 压缩阈值（总字符数）
-  private readonly COMPACT_THRESHOLD = 500000;
   // 每条消息最大长度
   private readonly MAX_MESSAGE_LENGTH = 50000;
 
@@ -542,43 +538,6 @@ export class JsonFileStore implements BridgeStore {
       truncatedContent = content.slice(0, this.MAX_MESSAGE_LENGTH) + '...[TRUNCATED]';
     }
     msgs.push({ role, content: truncatedContent });
-    // 硬限制：保留最近 100 轮
-    if (msgs.length > this.MAX_MESSAGES) {
-      msgs.splice(0, msgs.length - this.MAX_MESSAGES);
-    }
-    this.persistMessages(sessionId);
-  }
-
-  /**
-   * 获取消息总字符数
-   */
-  getMessageTotalChars(sessionId: string): number {
-    const msgs = this.loadMessages(sessionId);
-    return msgs.reduce((sum, m) => sum + m.content.length, 0);
-  }
-
-  /**
-   * 是否需要压缩
-   */
-  needsCompaction(sessionId: string): boolean {
-    return this.getMessageTotalChars(sessionId) > this.COMPACT_THRESHOLD;
-  }
-
-  /**
-   * 压缩消息历史：保留最近 N 轮，旧的合并为摘要
-   */
-  compactMessages(sessionId: string, summary: string): void {
-    const msgs = this.loadMessages(sessionId);
-    if (msgs.length <= 20) return; // 太少不压缩
-    // 保留最近 20 轮，之前的用摘要替换
-    const recentMsgs = msgs.slice(-20);
-    const oldMsgs = msgs.slice(0, -20);
-    // 插入摘要作为一条特殊消息
-    recentMsgs.unshift({
-      role: 'system',
-      content: `[COMPACTED_HISTORY] ${summary}`,
-    });
-    this.messages.set(sessionId, recentMsgs);
     this.persistMessages(sessionId);
   }
 

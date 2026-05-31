@@ -347,12 +347,6 @@ export interface BridgeStore {
   // ── Messages ──
   addMessage(sessionId: string, role: string, content: string, usage?: string | null): void;
   getMessages(sessionId: string, opts?: { limit?: number }): { messages: BridgeMessage[] };
-  /** 获取消息总字符数 */
-  getMessageTotalChars(sessionId: string): number;
-  /** 是否需要压缩 */
-  needsCompaction(sessionId: string): boolean;
-  /** 压缩消息历史 */
-  compactMessages(sessionId: string, summary: string): void;
   clearSessionMessages(sessionId: string): void;
 
   // ── Session locking ──

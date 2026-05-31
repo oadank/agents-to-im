@@ -349,8 +349,6 @@ export async function handleDirectMessage(
       workingDirectory: session.working_directory,
       model: session.model,
       chatType: 'p2p',
-      mode: 'code',
-      active: true,
     });
     console.log(`[feishu-adapter] Created and bound session ${session.id} (runtime=${defaultRuntime}) to p2p chat ${inbound.address.chatId}`);
   } catch (error) {

@@ -143,10 +143,9 @@ export async function compactConversation(
     return { success: false, originalCount: messages.length, error: result.error };
   }
 
-  const formatted = formatSummary(result.text!);
   return {
     success: true,
-    summary: formatted,
+    summary: result.text!,
     preservedMessages: messagesToKeep,
     originalCount: messages.length,
   };

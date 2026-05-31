@@ -923,6 +923,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       codepilotSessionId: session.id,
       workingDirectory: session.working_directory,
       model: session.model,
+      chatType: 'group',
       ...(runtime === 'claude'
         ? { claudePermissionMode: options?.claudePermissionMode || 'default' }
         : {}),
@@ -1428,6 +1429,10 @@ export class FeishuAdapter extends BaseChannelAdapter {
     if (!this.restClient) return;
     const chatApi = this.restClient.im?.chat;
     if (!chatApi?.update) return;
+    // p2p 私聊不支持改名，跳过
+    const store = this.getStore();
+    const binding = store.getChannelBinding(this.channelType, chatId, this.profileId);
+    if (binding?.chatType === 'p2p') return;
     const name = this.computeChatDisplayName(chatId);
     if (!name) return;
     if (this.knownChatNames.get(chatId) === name) return;
@@ -1439,7 +1444,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
       assertLarkOk(response, 'im.chat.update');
       this.rememberObservedChatName(chatId, name);
       this.rememberSelfRename(chatId, name);
-    } catch (error) {
+    } catch (error: any) {
+      console.warn('[feishu-adapter] Failed to sync chat name:', error);
       console.warn('[feishu-adapter] Failed to sync chat name:', error);
     }
   }

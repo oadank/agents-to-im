@@ -12,6 +12,7 @@ import { initBridgeContext } from './bridge/context.js';
 import * as bridgeManager from './bridge/bridge-manager.js';
 
 import { loadConfig, configToSettings, CTI_HOME, type Config } from './config/config.js';
+import { compactConversation, applyCompactResult } from './bridge/compact.js';
 import { FeishuAdapter } from './feishu/adapter.js';
 import { MultiplexLLMProvider } from './providers/multiplex.js';
 import { JsonFileStore } from './infra/store.js';
@@ -58,7 +59,12 @@ async function main(): Promise<void> {
   settings.set('compact_temperature', String(config.compact.temperature));
   settings.set('compact_prompt_file', config.compact.promptFile);
   settings.set('compact_clear_sdk_session', String(config.compact.clearSdkSession));
+    // Permission mode: bypassPermissions skips all tool confirmations
+    const permMode = process.env.CTI_PERMISSION_MODE || 'bypassPermissions';
+    settings.set('claude_permission_mode', permMode);
+    console.log('[agents-to-im] Permission mode:', permMode);
   const store = new JsonFileStore(settings);
+  (globalThis as any).__ctiStore = store;
   store.migrateLegacySessions(config.defaultRuntime);
   // 启动时清空所有 Codex thread ID，防止 Codex app-server 重启后 "no rollout found"
   // 因为 Codex app-server 的 thread 状态在重启后会丢失
@@ -179,6 +185,43 @@ async function main(): Promise<void> {
   // setInterval is ref'd by default, preventing Node from exiting
   // when the event loop would otherwise be empty.
   setInterval(() => { /* keepalive */ }, 45_000);
+
+  // ── Idle-compact: LLM summarize sessions idle > 1.5h with accumulated messages ──
+  const IDLE_COMPACT_INTERVAL_MS = 30 * 60 * 1000; // Check every 30 minutes
+  const IDLE_THRESHOLD_MS = 90 * 60 * 1000; // 1.5 hours idle
+  const MIN_MESSAGES_FOR_COMPACT = 20; // Only compact sessions with enough messages
+
+  const config2 = loadConfig();
+  setInterval(async () => {
+    try {
+      const store = (globalThis as any).__ctiStore;
+      if (!store) return;
+      const now = Date.now();
+      const bindings = store.listChannelBindings?.() || [];
+      for (const binding of bindings) {
+        if (!binding.active) continue;
+        const updatedAt = new Date(binding.updatedAt).getTime();
+        if (isNaN(updatedAt) || now - updatedAt < IDLE_THRESHOLD_MS) continue;
+        const msgs = store.getMessages(binding.codepilotSessionId, { limit: 1 });
+        if (!msgs?.messages?.length) continue;
+        const msgCount = store.getMessages(binding.codepilotSessionId, { limit: 999 })?.messages?.length || 0;
+        if (msgCount < MIN_MESSAGES_FOR_COMPACT) continue;
+        // Idle session with enough messages — LLM summarize
+        const sid = binding.codepilotSessionId;
+        console.log(`[idle-compact] Compacting session ${sid} (idle ${Math.round((now - updatedAt) / 60000)}min, ${msgCount} msgs)`);
+        const result = await compactConversation(store, sid, config2.compact);
+        if (result.success) {
+          applyCompactResult(store, sid, result);
+          store.updateSdkSessionId(sid, '');
+          console.log(`[idle-compact] 压缩完成: ${result.originalCount} 条消息 → 摘要`);
+        } else {
+          console.warn(`[idle-compact] 压缩失败: ${result.error}`);
+        }
+      }
+    } catch (err) {
+      console.error('[idle-compact] Error:', err);
+    }
+  }, IDLE_COMPACT_INTERVAL_MS);
 }
 
 main().catch((err) => {

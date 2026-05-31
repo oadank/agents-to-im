@@ -194,14 +194,20 @@ function dropTrailingDuplicatePlanText(
   }
 }
 
-function resolveLegacyPermissionMode(binding: ChannelBinding): ClaudePermissionMode {
+function resolveLegacyPermissionMode(binding: ChannelBinding, store?: any): ClaudePermissionMode {
   switch (binding.mode) {
     case 'plan':
       return 'plan';
     case 'ask':
       return 'default';
-    default:
+    default: {
+      // Check store setting for global permission mode override
+      const storeMode = store?.getSetting?.('claude_permission_mode');
+      if (storeMode === 'bypassPermissions' || storeMode === 'dontAsk') {
+        return storeMode as ClaudePermissionMode;
+      }
       return 'acceptEdits';
+    }
   }
 }
 
@@ -301,8 +307,8 @@ export async function processMessage(
     let permissionMode = options?.permissionModeOverride;
     if (!permissionMode) {
       permissionMode = runtime === 'claude'
-        ? (binding.claudePermissionMode || resolveLegacyPermissionMode(binding))
-        : resolveLegacyPermissionMode(binding);
+        ? (binding.claudePermissionMode || resolveLegacyPermissionMode(binding, store))
+        : resolveLegacyPermissionMode(binding, store);
     }
 
     // Compaction: 检测是否需要压缩历史

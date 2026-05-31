@@ -151,6 +151,8 @@ export interface ChannelBinding {
   mode: 'code' | 'plan' | 'ask';
   /** Persistent Claude SDK permission mode for Claude runtime chats */
   claudePermissionMode?: ClaudePermissionMode;
+  /** Chat type: p2p (direct message) or group */
+  chatType?: 'p2p' | 'group';
   /** Whether this binding is currently active */
   active: boolean;
   createdAt: string;

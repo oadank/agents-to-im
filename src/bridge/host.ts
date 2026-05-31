@@ -315,6 +315,7 @@ export interface UpsertChannelBindingInput {
   codepilotSessionId: string;
   workingDirectory: string;
   model: string;
+  chatType?: 'p2p' | 'group';
   claudePermissionMode?: ClaudePermissionMode;
 }
 
@@ -352,6 +353,7 @@ export interface BridgeStore {
   needsCompaction(sessionId: string): boolean;
   /** 压缩消息历史 */
   compactMessages(sessionId: string, summary: string): void;
+  clearSessionMessages(sessionId: string): void;
 
   // ── Session locking ──
   acquireSessionLock(sessionId: string, lockId: string, owner: string, ttlSecs: number): boolean;

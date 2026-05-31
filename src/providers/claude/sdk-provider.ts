@@ -26,6 +26,46 @@ import type { PendingPermissions, PendingStructuredInputs } from './permission-g
 
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
+
+// ── Memory injection (since SDK doesn't trigger CLI SessionStart hooks) ──
+
+function loadMemoryContent(): string {
+  try {
+    const claudeHome = process.env.CLAUDE_HOME || (process.env.HOME + '/.claude');
+    const settingsPath = claudeHome + '/settings.json';
+    if (!fs.existsSync(settingsPath)) return '';
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const memDir = settings.autoMemoryDirectory;
+    if (!memDir || !fs.existsSync(memDir)) return '';
+    
+    const parts: string[] = [];
+    // Load MEMORY.md as the index
+    const memFile = memDir + '/MEMORY.md';
+    if (fs.existsSync(memFile)) {
+      parts.push(fs.readFileSync(memFile, 'utf-8'));
+    }
+    // Load key memory files
+    for (const name of ['user_profile.md', 'user_identity.md', 'feedback_behavior_rules.md', 'feedback_no-docker.md', 'project_2026-05-30-debian13-migration.md']) {
+      const fp = memDir + '/' + name;
+      if (fs.existsSync(fp)) {
+        parts.push('\n=== ' + name + ' ===\n' + fs.readFileSync(fp, 'utf-8'));
+      }
+    }
+    return parts.join('\n---\n');
+  } catch { return ''; }
+}
+
+// Cache memory content (load once per process)
+let _cachedMemory: string | undefined;
+function getMemoryContent(): string {
+  if (_cachedMemory === undefined) {
+    _cachedMemory = loadMemoryContent();
+    if (_cachedMemory) console.log('[llm-provider] Memory loaded (' + _cachedMemory.length + ' chars)');
+    else console.log('[llm-provider] No memory loaded');
+  }
+  return _cachedMemory;
+}
+
 // ── Auth/credential-error detection ──
 
 /** Patterns indicating the local CLI is not logged in (fixable via `claude auth login`). */
@@ -155,7 +195,7 @@ function buildPromptWithHistory(
       for (const msg of history) {
         yield {
           type: msg.role,
-          message: { role: msg.role, content: msg.content },
+          message: { role: msg.role, content: typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : msg.content },
           parent_tool_use_id: null,
           session_id: '',
         };
@@ -600,6 +640,10 @@ export class SDKLLMProvider implements LLMProvider {
                   input: Record<string, unknown>,
                   opts: { toolUseID: string; suggestions?: string[] },
                 ): Promise<ClaudePermissionResult> => {
+                  // Auto-approve when CTI_DISABLE_PERMISSION_CHECK is set
+                  if (process.env.CTI_DISABLE_PERMISSION_CHECK === 'true') {
+                    return { behavior: 'allow' as const, updatedInput: input };
+                  }
                   if (toolName === 'AskUserQuestion') {
                     const request = parseAskUserQuestionRequest(opts.toolUseID, input);
                     if (!request) {
@@ -683,9 +727,17 @@ export class SDKLLMProvider implements LLMProvider {
             if (needsHistoryInjection) {
               console.log(`[llm-provider] Injecting ${params.conversationHistory!.length} history messages (session lost)`);
             }
+            // Inject memory on new sessions (no sdkSessionId)
+            let userPrompt = params.prompt;
+            if (!params.sdkSessionId) {
+              const memory = getMemoryContent();
+              if (memory) {
+                userPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n用户消息：' + params.prompt;
+              }
+            }
             const prompt = needsHistoryInjection
-              ? buildPromptWithHistory(params.prompt, params.conversationHistory, params.files)
-              : buildPrompt(params.prompt, params.files);
+              ? buildPromptWithHistory(userPrompt, params.conversationHistory, params.files)
+              : buildPrompt(userPrompt, params.files);
             const q = query({
               prompt: prompt as Parameters<typeof query>[0]['prompt'],
               options: queryOptions as Parameters<typeof query>[0]['options'],

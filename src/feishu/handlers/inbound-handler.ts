@@ -1,5 +1,6 @@
 import type { InboundMessage } from '../../bridge/types.js';
 import { loadConfig } from '../../config/config.js';
+import { compactConversation, applyCompactResult } from '../../bridge/compact.js';
 import type {
   AdapterContext,
   FeishuMessageEventData,
@@ -162,8 +163,44 @@ export async function handleIncomingEvent(
       }
     }
 
-    // 支持 text 和 post（富文本）类型消息
-    if (data.message.message_type !== 'text' && data.message.message_type !== 'post') {
+    // Convert post (rich text) to plain text
+    if (data.message.message_type === 'post') {
+      try {
+        const postContent = JSON.parse(data.message.content);
+        const lines: string[] = [];
+        const title = postContent.title || '';
+        if (title) lines.push(title);
+        const content = postContent.content || postContent;
+        if (Array.isArray(content)) {
+          for (const para of content) {
+            if (Array.isArray(para)) {
+              const textParts: string[] = [];
+              for (const elem of para) {
+                if (elem.tag === 'text' && elem.text) textParts.push(elem.text);
+                else if (elem.tag === 'a' && elem.href) textParts.push(elem.href);
+                else if (elem.tag === 'at' && elem.user_name) textParts.push('@' + elem.user_name);
+                else if (elem.tag === 'img' && elem.alt) textParts.push('[图片:' + elem.alt + ']');
+              }
+              if (textParts.length) lines.push(textParts.join(''));
+            }
+          }
+        }
+        const extractedText = lines.join('\n').trim();
+        if (extractedText) {
+          console.log(`[feishu-adapter] Post converted to text: "${extractedText.slice(0, 100)}"`);
+          data.message.message_type = 'text';
+          data.message.content = JSON.stringify({ text: extractedText });
+        } else {
+          console.warn(`[feishu-adapter] Dropped post message ${messageId}: empty after conversion`);
+          return;
+        }
+      } catch (e) {
+        console.warn(`[feishu-adapter] Failed to parse post content: ${e}`);
+        return;
+      }
+    }
+
+    if (data.message.message_type !== 'text') {
       console.warn(
         `[feishu-adapter] Dropped inbound message ${messageId}: unsupported message type ` +
         `(type=${data.message.message_type}, content=${data.message.content.slice(0, 200)})`,
@@ -280,6 +317,44 @@ export async function handleDirectMessage(
     await ctx.handleResumeSessionCommand(sender, inbound, 'openhuman');
     return;
   }
+  if (command === '/stop') {
+    const store = ctx.getStore();
+    const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话。', inbound.messageId);
+      return;
+    }
+    ctx.enqueue(inbound);
+    return;
+  }
+
+  if (command === '/compact') {
+    const store = ctx.getStore();
+    const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话，请先发送消息创建会话。', inbound.messageId);
+      return;
+    }
+    const sessionId = binding.codepilotSessionId;
+    if (!sessionId) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话。', inbound.messageId);
+      return;
+    }
+    await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId);
+    const config = loadConfig();
+    const result = await compactConversation(store, sessionId, config.compact);
+    if (result.success) {
+      applyCompactResult(store, sessionId, result);
+      store.updateSdkSessionId(sessionId, '');
+      console.log(`[feishu-adapter] /compact: 压缩完成，${result.originalCount} 条消息 → 摘要`);
+      await ctx.sendAsPost(inbound.address, `✅ 上下文已压缩（${result.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`, inbound.messageId);
+    } else {
+      console.warn(`[feishu-adapter] /compact 失败: ${result.error}`);
+      await ctx.sendAsPost(inbound.address, `❌ 压缩失败: ${result.error}`, inbound.messageId);
+    }
+    return;
+  }
+
   // 私聊非命令消息：尝试恢复最近的会话，或自动创建新会话
   const store = ctx.getStore();
   const existingBinding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
@@ -309,6 +384,7 @@ export async function handleDirectMessage(
       codepilotSessionId: session.id,
       workingDirectory: session.working_directory,
       model: session.model,
+      chatType: 'p2p',
       mode: 'code',
       active: true,
     });
@@ -363,6 +439,32 @@ export async function handleGroupMessage(
       return;
     }
     await ctx.handlePlanCommand(binding.id, inbound);
+    return;
+  }
+  if (lower === '/compact') {
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前群尚未绑定会话。', inbound.messageId);
+      return;
+    }
+    const store2 = ctx.getStore();
+    const binding2 = store2.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (binding2) {
+      const sid2 = binding2.codepilotSessionId;
+      if (sid2) {
+        await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId);
+        const config2 = loadConfig();
+        const result2 = await compactConversation(store2, sid2, config2.compact);
+        if (result2.success) {
+          applyCompactResult(store2, sid2, result2);
+          store2.updateSdkSessionId(sid2, '');
+          console.log(`[feishu-adapter] /compact: 压缩完成，${result2.originalCount} 条消息 → 摘要`);
+          await ctx.sendAsPost(inbound.address, `✅ 上下文已压缩（${result2.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`, inbound.messageId);
+        } else {
+          console.warn(`[feishu-adapter] /compact 失败: ${result2.error}`);
+          await ctx.sendAsPost(inbound.address, `❌ 压缩失败: ${result2.error}`, inbound.messageId);
+        }
+      }
+    }
     return;
   }
   if (lower.startsWith('/new')) {

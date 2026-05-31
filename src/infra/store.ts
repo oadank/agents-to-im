@@ -416,6 +416,7 @@ export class JsonFileStore implements BridgeStore {
         codepilotSessionId: data.codepilotSessionId,
         workingDirectory: data.workingDirectory,
         model: data.model,
+        ...(data.chatType ? { chatType: data.chatType } : {}),
         ...(data.claudePermissionMode !== undefined
           ? { claudePermissionMode: data.claudePermissionMode }
           : {}),
@@ -435,6 +436,7 @@ export class JsonFileStore implements BridgeStore {
       workingDirectory: data.workingDirectory,
       model: data.model,
       mode: 'code',
+      ...(data.chatType ? { chatType: data.chatType } : {}),
       ...(data.claudePermissionMode !== undefined
         ? { claudePermissionMode: data.claudePermissionMode }
         : {}),
@@ -704,6 +706,19 @@ export class JsonFileStore implements BridgeStore {
       console.log(`[store] Cleared ${cleared} codex thread IDs due to Codex process restart`);
     }
     return cleared;
+  }
+
+  clearSessionMessages(sessionId: string): void {
+    this.messages.delete(sessionId);
+    this.persistMessages(sessionId);
+  }
+
+  updateSessionSdkId(sessionId: string, sdkId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.sdk_session_id = sdkId;
+      this.persistSessions();
+    }
   }
 
   migrateLegacySessions(defaultRuntime: RuntimeName = 'claude'): boolean {

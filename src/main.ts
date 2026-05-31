@@ -57,7 +57,6 @@ async function main(): Promise<void> {
   settings.set('compact_model', config.compact.model);
   settings.set('compact_max_tokens', String(config.compact.maxTokens));
   settings.set('compact_temperature', String(config.compact.temperature));
-  settings.set('compact_prompt_file', config.compact.promptFile);
   settings.set('compact_clear_sdk_session', String(config.compact.clearSdkSession));
     // Permission mode: bypassPermissions skips all tool confirmations
     const permMode = process.env.CTI_PERMISSION_MODE || 'bypassPermissions';
@@ -202,8 +201,6 @@ async function main(): Promise<void> {
         if (!binding.active) continue;
         const updatedAt = new Date(binding.updatedAt).getTime();
         if (isNaN(updatedAt) || now - updatedAt < IDLE_THRESHOLD_MS) continue;
-        const msgs = store.getMessages(binding.codepilotSessionId, { limit: 1 });
-        if (!msgs?.messages?.length) continue;
         const msgCount = store.getMessages(binding.codepilotSessionId, { limit: 999 })?.messages?.length || 0;
         if (msgCount < MIN_MESSAGES_FOR_COMPACT) continue;
         // Idle session with enough messages — LLM summarize
@@ -212,7 +209,9 @@ async function main(): Promise<void> {
         const result = await compactConversation(store, sid, config2.compact);
         if (result.success) {
           applyCompactResult(store, sid, result);
-          store.updateSdkSessionId(sid, '');
+          if (config2.compact.clearSdkSession) {
+            store.updateSdkSessionId(sid, '');
+          }
           console.log(`[idle-compact] 压缩完成: ${result.originalCount} 条消息 → 摘要`);
         } else {
           console.warn(`[idle-compact] 压缩失败: ${result.error}`);

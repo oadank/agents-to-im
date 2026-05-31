@@ -1446,7 +1446,6 @@ export class FeishuAdapter extends BaseChannelAdapter {
       this.rememberSelfRename(chatId, name);
     } catch (error: any) {
       console.warn('[feishu-adapter] Failed to sync chat name:', error);
-      console.warn('[feishu-adapter] Failed to sync chat name:', error);
     }
   }
 

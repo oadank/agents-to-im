@@ -309,7 +309,9 @@ export async function handleDirectMessage(
     const result = await compactConversation(store, sessionId, config.compact);
     if (result.success) {
       applyCompactResult(store, sessionId, result);
-      store.updateSdkSessionId(sessionId, '');
+      if (config.compact.clearSdkSession) {
+        store.updateSdkSessionId(sessionId, '');
+      }
       console.log(`[feishu-adapter] /compact: 压缩完成，${result.originalCount} 条消息 → 摘要`);
       await ctx.sendAsPost(inbound.address, `✅ 上下文已压缩（${result.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`, inbound.messageId);
     } else {
@@ -418,7 +420,9 @@ export async function handleGroupMessage(
         const result2 = await compactConversation(store2, sid2, config2.compact);
         if (result2.success) {
           applyCompactResult(store2, sid2, result2);
-          store2.updateSdkSessionId(sid2, '');
+          if (config2.compact.clearSdkSession) {
+            store2.updateSdkSessionId(sid2, '');
+          }
           console.log(`[feishu-adapter] /compact: 压缩完成，${result2.originalCount} 条消息 → 摘要`);
           await ctx.sendAsPost(inbound.address, `✅ 上下文已压缩（${result2.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`, inbound.messageId);
         } else {

@@ -17,7 +17,6 @@ export interface CompactConfig {
   model: string;
   maxTokens: number;
   temperature: number;
-  promptFile: string;
   clearSdkSession: boolean;
 }
 
@@ -85,7 +84,6 @@ function loadCompactConfig(env: Map<string, string>): CompactConfig {
     model: env.get('CTI_COMPACT_MODEL') || process.env.CTI_COMPACT_MODEL || 'codex-model',
     maxTokens: parseInt(env.get('CTI_COMPACT_MAX_TOKENS') || process.env.CTI_COMPACT_MAX_TOKENS || '3000'),
     temperature: parseFloat(env.get('CTI_COMPACT_TEMPERATURE') || process.env.CTI_COMPACT_TEMPERATURE || '0.2'),
-    promptFile: env.get('CTI_COMPACT_PROMPT_FILE') || process.env.CTI_COMPACT_PROMPT_FILE || '',
     clearSdkSession: (env.get('CTI_COMPACT_CLEAR_SDK_SESSION') || process.env.CTI_COMPACT_CLEAR_SDK_SESSION || 'true') !== 'false',
   };
 }

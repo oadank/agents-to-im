@@ -113,42 +113,42 @@ export async function compactConversation(
   compactLocks.set(sessionId, true);
 
   try {
-  const { messages } = store.getMessages(sessionId, { limit: 9999 });
-  if (messages.length < 4) {
-    return { success: false, originalCount: messages.length, error: '消息太少，无需压缩' };
-  }
+    const { messages } = store.getMessages(sessionId, { limit: 9999 });
+    if (messages.length < 4) {
+      return { success: false, originalCount: messages.length, error: '消息太少，无需压缩' };
+    }
 
-  // Split: summarize older messages, preserve recent ones
-  const preserveCount = Math.min(PRESERVE_RECENT_COUNT, Math.floor(messages.length / 2));
-  const messagesToSummarize = messages.slice(0, -preserveCount);
-  const messagesToKeep = messages.slice(-preserveCount);
+    // Split: summarize older messages, preserve recent ones
+    const preserveCount = Math.min(PRESERVE_RECENT_COUNT, Math.floor(messages.length / 2));
+    const messagesToSummarize = messages.slice(0, -preserveCount);
+    const messagesToKeep = messages.slice(-preserveCount);
 
-  if (messagesToSummarize.length < 2) {
-    return { success: false, originalCount: messages.length, error: '需要压缩的消息太少' };
-  }
+    if (messagesToSummarize.length < 2) {
+      return { success: false, originalCount: messages.length, error: '需要压缩的消息太少' };
+    }
 
-  // Build conversation text for the summarization part
-  const conversationText = messagesToSummarize
-    .map((m: BridgeMessage) => {
-      const role = m.role === 'user' ? 'Human' : 'Assistant';
-      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-      return `<${role}>\n${content}\n</${role}>`;
-    })
-    .join('\n\n');
+    // Build conversation text for the summarization part
+    const conversationText = messagesToSummarize
+      .map((m: BridgeMessage) => {
+        const role = m.role === 'user' ? 'Human' : 'Assistant';
+        const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        return `<${role}>\n${content}\n</${role}>`;
+      })
+      .join('\n\n');
 
-  const fullPrompt = `${COMPACT_PROMPT}\n\n<conversation>\n${conversationText}\n</conversation>`;
+    const fullPrompt = `${COMPACT_PROMPT}\n\n<conversation>\n${conversationText}\n</conversation>`;
 
-  const result = await callCompactApi(fullPrompt, compactConfig);
-  if (result.error) {
-    return { success: false, originalCount: messages.length, error: result.error };
-  }
+    const result = await callCompactApi(fullPrompt, compactConfig);
+    if (result.error) {
+      return { success: false, originalCount: messages.length, error: result.error };
+    }
 
-  return {
-    success: true,
-    summary: result.text!,
-    preservedMessages: messagesToKeep,
-    originalCount: messages.length,
-  };
+    return {
+      success: true,
+      summary: result.text!,
+      preservedMessages: messagesToKeep,
+      originalCount: messages.length,
+    };
   } finally {
     compactLocks.set(sessionId, false);
   }
@@ -156,6 +156,10 @@ export async function compactConversation(
 
 /**
  * Apply compact result: replace messages with summary + preserved messages.
+ *
+ * Avoids consecutive same-role messages (Anthropic API requires alternating
+ * user/assistant). If the first preserved message is 'user', the summary is
+ * prepended to that message's content instead of being added separately.
  */
 export function applyCompactResult(
   store: BridgeStore,
@@ -166,12 +170,21 @@ export function applyCompactResult(
 
   store.clearSessionMessages(sessionId);
 
-  // Add summary
-  store.addMessage(sessionId, 'user', `[会话已压缩]\n\n${result.summary}`);
+  const summaryText = `[会话已压缩]\n\n${result.summary}`;
+  const preserved = result.preservedMessages || [];
 
-  // Re-add preserved recent messages (if any)
-  if (result.preservedMessages && result.preservedMessages.length > 0) {
-    for (const msg of result.preservedMessages) {
+  if (preserved.length > 0 && preserved[0].role === 'user') {
+    // First preserved message is 'user' → merge summary into it to avoid
+    // consecutive user messages which the Anthropic API rejects.
+    store.addMessage(sessionId, 'user', `${summaryText}\n\n---\n\n${preserved[0].content}`);
+    for (let i = 1; i < preserved.length; i++) {
+      store.addMessage(sessionId, preserved[i].role, preserved[i].content);
+    }
+  } else {
+    // First preserved message is 'assistant' (or no preserved messages) →
+    // safe to add summary as a standalone user message.
+    store.addMessage(sessionId, 'user', summaryText);
+    for (const msg of preserved) {
       store.addMessage(sessionId, msg.role, msg.content);
     }
   }

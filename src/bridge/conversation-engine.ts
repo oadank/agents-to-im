@@ -283,10 +283,6 @@ export async function processMessage(
     // Load conversation history for context
     const { messages: recentMsgs } = store.getMessages(sessionId, { limit: 50 });
     const historyMsgs = recentMsgs.slice(0, -1).map(m => {
-      // 压缩后的摘要（role: 'system'）需要保留，作为历史背景
-      if (m.role === 'system' && m.content.startsWith('[COMPACTED_HISTORY]')) {
-        return { role: 'user' as const, content: `【历史摘要】${m.content.slice('[COMPACTED_HISTORY] '.length)}` };
-      }
       return { role: m.role as 'user' | 'assistant', content: m.content };
     });
 

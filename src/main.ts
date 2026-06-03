@@ -214,6 +214,14 @@ async function main(): Promise<void> {
             store.updateSdkSessionId(sid, '');
           }
           console.log(`[idle-compact] 压缩完成: ${result.originalCount} 条消息 → 摘要`);
+          // Send feishu notification so the user knows compact ran
+          if (binding.channelType === 'feishu' && binding.chatId) {
+            const notified = await feishuAdapter.sendNotification(
+              binding.chatId,
+              `🔄 会话已自动压缩（${result.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`,
+            );
+            if (notified) console.log(`[idle-compact] 已通知飞书 chat ${binding.chatId}`);
+          }
         } else {
           console.warn(`[idle-compact] 压缩失败: ${result.error}`);
         }

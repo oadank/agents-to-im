@@ -338,6 +338,25 @@ export class FeishuAdapter extends BaseChannelAdapter {
     };
   }
 
+  /**
+   * Send a plain-text notification to a feishu chat.
+   * Used by idle-compact and other background processes to notify users.
+   */
+  async sendNotification(chatId: string, text: string): Promise<boolean> {
+    try {
+      const address: ChannelAddress = {
+        channelType: this.channelType,
+        channelInstanceId: this.profileId,
+        chatId,
+      };
+      await this.sendAsPost(address, text);
+      return true;
+    } catch (err) {
+      console.warn(`[feishu-adapter] sendNotification failed for ${chatId}:`, err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+
   private withInstance(address: ChannelAddress): ChannelAddress {
     return {
       ...address,

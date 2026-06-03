@@ -89,7 +89,9 @@ async function callCompactApi(
     }
 
     const data = await response.json() as any;
-    const text = data?.content?.[0]?.text;
+    // content[0] 可能是 thinking 块（无 text 字段），需要找到真正的 text 块
+    const textBlock = data?.content?.find?.((b: any) => b.type === 'text');
+    const text = textBlock?.text;
     if (!text) return { error: 'API 返回空摘要' };
     return { text };
   } catch (err: any) {

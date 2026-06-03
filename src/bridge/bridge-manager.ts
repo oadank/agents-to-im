@@ -1181,8 +1181,10 @@ async function handleMessage(
     }
   }
 
-  // Check for IM commands (before sanitization — commands are validated individually)
-  if (rawText.startsWith('/')) {
+  // Known slash commands — only treat as commands if first word matches
+  const KNOWN_COMMANDS = ['/start','/new','/bind','/cwd','/mode','/status','/sessions','/stop','/help'];
+  const firstWord = rawText.split(/\s+/)[0].split('@')[0].toLowerCase();
+  if (KNOWN_COMMANDS.includes(firstWord)) {
     await handleCommand(adapter, msg, rawText);
     ack();
     return;

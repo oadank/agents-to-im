@@ -453,10 +453,30 @@ async function consumeStream(
     }
   };
 
+  const STUCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+  let lastActivityAt = Date.now();
+  let stuckFired = false;
+  let stuckTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+    stuckFired = true;
+    const idle = Math.round((Date.now() - lastActivityAt) / 60000);
+    console.warn(`[conversation-engine] No SSE events for ${idle}min, aborting stuck stream (session ${sessionId})`);
+    try { reader.cancel('stuck-reply-timeout'); } catch { /* best effort */ }
+  }, STUCK_TIMEOUT_MS);
+
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+
+      // Reset stuck timer on every SSE event
+      lastActivityAt = Date.now();
+      clearTimeout(stuckTimer);
+      stuckTimer = setTimeout(() => {
+        stuckFired = true;
+        const idle = Math.round((Date.now() - lastActivityAt) / 60000);
+        console.warn(`[conversation-engine] No SSE events for ${idle}min, aborting stuck stream (session ${sessionId})`);
+        try { reader.cancel('stuck-reply-timeout'); } catch { /* best effort */ }
+      }, STUCK_TIMEOUT_MS);
 
       const lines = value.split('\n');
       for (const line of lines) {
@@ -713,6 +733,7 @@ async function consumeStream(
       }
     }
 
+    clearTimeout(stuckTimer);
     // Flush remaining text
     await flushTextBoundary(true);
     const renderedPlan = renderPlanMarkdown(planExplanation, planSteps, planBody);
@@ -755,6 +776,7 @@ async function consumeStream(
       sdkSessionId: capturedSdkSessionId,
     };
   } catch (e) {
+    clearTimeout(stuckTimer);
     // Best-effort save on stream error
     await flushTextBoundary(true);
     const renderedPlan = renderPlanMarkdown(planExplanation, planSteps, planBody);
@@ -784,12 +806,14 @@ async function consumeStream(
       || e instanceof Error && e.name === 'AbortError';
 
     return {
-      responseText: '',
-      responseSegments: [],
+      responseText: responseSegments.join('\n\n').trim(),
+      responseSegments,
       contentBlocks: [...contentBlocks],
       tokenUsage,
-      hasError: true,
-      errorMessage: isAbort ? 'Task stopped by user' : (e instanceof Error ? e.message : 'Stream consumption error'),
+      hasError: !stuckFired,
+      errorMessage: stuckFired
+        ? 'Task aborted: no output for 10 minutes'
+        : isAbort ? 'Task stopped by user' : (e instanceof Error ? e.message : 'Stream consumption error'),
       permissionRequests,
       sdkSessionId: capturedSdkSessionId,
     };

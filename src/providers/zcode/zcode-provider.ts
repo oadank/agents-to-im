@@ -394,10 +394,16 @@ export class ZCodeProvider implements LLMProvider {
           return;
         }
 
-        // session/prompt 响应 — 不需要处理，文本通过 notifications 返回
+        // session/prompt 响应 — 检查 error 或 stopReason
         if (id === 3) {
           if (msg.error) {
             settle(`GLM prompt error: ${msg.error.message || JSON.stringify(msg.error)}`);
+            return;
+          }
+          if (msg.result?.stopReason) {
+            console.log(`[zcode-provider] GLM ACP prompt done, stopReason=${msg.result.stopReason}`);
+            settle();
+            return;
           }
           return;
         }
@@ -407,18 +413,8 @@ export class ZCodeProvider implements LLMProvider {
           const update = msg.params?.update;
           if (update?.sessionUpdate === 'agent_message_chunk' && update?.content?.type === 'text') {
             responseText += update.content.text;
+            console.log(`[zcode-provider] GLM ACP text chunk: "${update.content.text}" total=${responseText.length}`);
           }
-          // usage_update 里的 session_id
-          if (update?.sessionUpdate === 'usage_update') {
-            // ignore
-          }
-        }
-
-        // session/prompt 的 result（终态）— id=3 的 result 带 stopReason
-        if (id === 3 && msg.result?.stopReason) {
-          console.log(`[zcode-provider] GLM ACP prompt done, stopReason=${msg.result.stopReason}`);
-          settle();
-          return;
         }
       } catch {}
     };

@@ -11,7 +11,7 @@ import type { CompactConfig } from '../config/config.js';
 const compactLocks = new Map<string, boolean>();
 
 /** How many recent messages to preserve verbatim after compaction */
-const PRESERVE_RECENT_COUNT = 6;
+const PRESERVE_RECENT_COUNT = 10;
 
 const COMPACT_PROMPT = `CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
 

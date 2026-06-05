@@ -188,7 +188,7 @@ async function main(): Promise<void> {
   // ── Idle-compact: LLM summarize sessions idle > 1.5h with accumulated messages ──
   const IDLE_COMPACT_INTERVAL_MS = 30 * 60 * 1000; // Check every 30 minutes
   const IDLE_THRESHOLD_MS = 90 * 60 * 1000; // 1.5 hours idle
-  const MIN_MESSAGES_FOR_COMPACT = 20; // Only compact sessions with enough messages
+  const MIN_MESSAGES_FOR_COMPACT = 40; // 20 轮对话（40 条消息）才压缩
 
   setInterval(async () => {
     try {

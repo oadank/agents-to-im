@@ -446,6 +446,17 @@ export class ZCodeProvider implements LLMProvider {
           return;
         }
 
+        // 权限请求: 自动批准（bypass 模式）— 必须在 id 检查之前，因为 permission 的 id 可能跟 prompt 相同
+        if (msg.method === 'session/request_permission') {
+          const reqId = msg.id ?? msg.params?.requestId;
+          console.log(`[zcode-provider] GLM ACP permission request, auto-approving id=${reqId}`);
+          child.stdin.write(JSON.stringify({
+            jsonrpc: '2.0', id: reqId ?? Date.now(),
+            result: { outcome: { outcome: 'selected', optionId: 'allow_always' } },
+          }) + '\n');
+          return;
+        }
+
         // session/prompt 响应 — 检查 error 或 stopReason
         if (id === 3) {
           if (msg.error) {
@@ -467,16 +478,6 @@ export class ZCodeProvider implements LLMProvider {
             responseText += update.content.text;
             console.log(`[zcode-provider] GLM ACP text chunk: "${update.content.text}" total=${responseText.length}`);
           }
-        }
-
-        // 权限请求: 自动批准（bypass 模式）
-        if (msg.method === 'session/request_permission') {
-          const reqId = msg.id ?? msg.params?.requestId;
-          console.log(`[zcode-provider] GLM ACP permission request, auto-approving id=${reqId}`);
-          child.stdin.write(JSON.stringify({
-            jsonrpc: '2.0', id: reqId ?? Date.now(),
-            result: { outcome: { outcome: 'selected', optionId: 'allow_always' } },
-          }) + '\n');
         }
       } catch {}
     };

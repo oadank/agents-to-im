@@ -106,6 +106,27 @@ const AGENT_CLI: Record<AgentName, AgentCliConfig> = {
   },
 };
 
+/**
+ * 加载 ZCode 记忆文件（/root/.zcode/memory/MEMORY.md + 关键文件）
+ */
+function loadZCodeMemory(): string {
+  const memDir = '/root/.zcode/memory';
+  const lines: string[] = [];
+  try {
+    const memFile = path.join(memDir, 'MEMORY.md');
+    if (fs.existsSync(memFile)) {
+      lines.push(fs.readFileSync(memFile, 'utf8'));
+    }
+    for (const f of ['user_identity.md', 'user_profile.md', 'feedback_behavior_rules.md']) {
+      const fp = path.join(memDir, f);
+      if (fs.existsSync(fp)) {
+        lines.push(`\n=== ${f} ===\n` + fs.readFileSync(fp, 'utf8'));
+      }
+    }
+  } catch {}
+  return lines.join('\n').trim();
+}
+
 function parseAgent(model?: string): AgentName {
   if (model?.startsWith('agent:')) {
     const name = model.slice(6) as AgentName;
@@ -397,12 +418,19 @@ export class ZCodeProvider implements LLMProvider {
           const r = msg.result as Record<string, unknown>;
           sessionId = r.sessionId as string;
           console.log(`[zcode-provider] GLM ACP session: ${sessionId}`);
+
+          // 注入 ZCode 记忆到 prompt
+          const memoryContent = loadZCodeMemory();
+          const fullPrompt = memoryContent
+            ? `${memoryContent}\n\n---\n\n用户消息：${prompt}`
+            : prompt;
+
           // → session/prompt
           child.stdin.write(JSON.stringify({
             jsonrpc: '2.0', id: 3, method: 'session/prompt',
             params: {
               sessionId,
-              prompt: [{ type: 'text', text: prompt }],
+              prompt: [{ type: 'text', text: fullPrompt }],
             },
           }) + '\n');
           return;

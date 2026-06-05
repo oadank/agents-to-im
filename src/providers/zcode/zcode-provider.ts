@@ -188,6 +188,12 @@ export class ZCodeProvider implements LLMProvider {
       enrichedPrompt = `以下是之前的对话上下文：\n${historyText}\n\n---\n\n用户当前消息：${prompt}`;
     }
 
+    // 注入 ZCode 记忆（所有 agent 共用）
+    const memoryContent = loadZCodeMemory();
+    if (memoryContent) {
+      enrichedPrompt = `${memoryContent}\n\n---\n\n${enrichedPrompt}`;
+    }
+
     // GLM 走 ACP 协议，独立处理
     if (agent === 'glm') {
       return this.runGlmAcp(controller, { ...params, prompt: enrichedPrompt });
@@ -427,18 +433,12 @@ export class ZCodeProvider implements LLMProvider {
           sessionId = r.sessionId as string;
           console.log(`[zcode-provider] GLM ACP session: ${sessionId}`);
 
-          // 注入 ZCode 记忆到 prompt
-          const memoryContent = loadZCodeMemory();
-          const fullPrompt = memoryContent
-            ? `${memoryContent}\n\n---\n\n用户消息：${prompt}`
-            : prompt;
-
-          // → session/prompt
+          // prompt 已在 run() 中注入了记忆和上文
           child.stdin.write(JSON.stringify({
             jsonrpc: '2.0', id: 3, method: 'session/prompt',
             params: {
               sessionId,
-              prompt: [{ type: 'text', text: fullPrompt }],
+              prompt: [{ type: 'text', text: prompt }],
             },
           }) + '\n');
           return;

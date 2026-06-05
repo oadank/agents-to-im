@@ -107,20 +107,18 @@ const AGENT_CLI: Record<AgentName, AgentCliConfig> = {
 };
 
 /**
- * 加载 ZCode 记忆文件（/root/.zcode/memory/MEMORY.md + 关键文件）
+ * 加载 ZCode 记忆文件（/opt/.zcode/memory/ 下所有 .md）
+ * 按 OpenClaw 风格：IDENTITY/USER/SOUL/MEMORY/AGENTS/CONTEXT/TOOLS.md
  */
 function loadZCodeMemory(): string {
-  const memDir = '/root/.zcode/memory';
+  const memDir = '/opt/.zcode/memory';
+  const files = ['IDENTITY.md', 'USER.md', 'SOUL.md', 'MEMORY.md', 'AGENTS.md', 'CONTEXT.md', 'TOOLS.md'];
   const lines: string[] = [];
   try {
-    const memFile = path.join(memDir, 'MEMORY.md');
-    if (fs.existsSync(memFile)) {
-      lines.push(fs.readFileSync(memFile, 'utf8'));
-    }
-    for (const f of ['user_identity.md', 'user_profile.md', 'feedback_behavior_rules.md']) {
+    for (const f of files) {
       const fp = path.join(memDir, f);
       if (fs.existsSync(fp)) {
-        lines.push(`\n=== ${f} ===\n` + fs.readFileSync(fp, 'utf8'));
+        lines.push(fs.readFileSync(fp, 'utf8'));
       }
     }
   } catch {}

@@ -903,6 +903,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
         '可用命令：`/stop` 中断当前输出、`/mode` 切换 mode、`/reset` 重置会话。权限请求请直接使用卡片按钮处理。',
       ].join('\n');
     }
+    if (runtime === 'zcode') {
+      return [
+        '已创建 ZCode 会话。',
+        '后续直接在本群发送消息继续对话。',
+        '可用命令：`/stop` 中断当前输出、`/reset` 重置会话。',
+      ].join('\n');
+    }
     return [
       `已创建 codex 会话，当前模式：**${binding.mode === 'plan' ? 'Plan' : '默认'}**。`,
       '后续请直接在本群继续对话。',

@@ -97,6 +97,7 @@ export function resolveClaudeBindingMode(
 
 export function defaultChatName(runtime: RuntimeName, claudePermissionMode?: ClaudePermissionMode): string {
   if (runtime === 'openhuman') return 'OpenHuman 新会话';
+  if (runtime === 'zcode') return 'ZCode 新会话';
   const base = runtime === 'codex' ? 'Codex 新会话' : 'Claude 新会话';
   return runtime === 'claude' ? `${base}${getClaudeModeSuffix(claudePermissionMode)}` : base;
 }

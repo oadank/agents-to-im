@@ -8,6 +8,7 @@ import { JsonFileStore } from '../infra/store.js';
 import { CodexProvider } from '../providers/codex/codex-provider.js';
 import { SDKLLMProvider } from '../providers/claude/sdk-provider.js';
 import { OpenHumanProvider } from '../providers/openhuman/openhuman-provider.js';
+import { ZCodeProvider } from '../providers/zcode/zcode-provider.js';
 import type { RuntimeName } from './types.js';
 import { RUNTIME_CAPABILITIES, type ProviderCapabilities } from './capabilities.js';
 
@@ -146,5 +147,35 @@ export class OpenHumanRuntimeDriver extends BaseRuntimeDriver {
 
   async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
     // OpenHuman 不支持 session title 存储
+  }
+}
+
+export class ZCodeRuntimeDriver extends BaseRuntimeDriver {
+  readonly runtime = 'zcode' as const;
+
+  constructor(
+    store: JsonFileStore,
+    config: Config,
+    private readonly providerLoader: () => Promise<ZCodeProvider>,
+  ) {
+    super(store, config, 'zcode');
+  }
+
+  async prepare(): Promise<void> {
+    const provider = await this.providerLoader();
+    await provider.prepare();
+  }
+
+  async streamTurn(params: StreamChatParams): Promise<ReadableStream<string>> {
+    const provider = await this.providerLoader();
+    return provider.streamChat(params);
+  }
+
+  async readSessionTitle(_sessionId: string): Promise<string | null> {
+    return null;
+  }
+
+  async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
+    // ZCode 不支持 session title 存储
   }
 }

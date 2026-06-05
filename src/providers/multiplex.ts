@@ -4,12 +4,14 @@ import type { Config } from '../config/config.js';
 import { CodexProvider } from './codex/codex-provider.js';
 import { SDKLLMProvider } from './claude/sdk-provider.js';
 import { OpenHumanProvider, createOpenHumanProvider } from './openhuman/openhuman-provider.js';
+import { ZCodeProvider, createZCodeProvider } from './zcode/zcode-provider.js';
 import { preflightCheck, resolveClaudeCliPath } from './claude/cli-support.js';
 import { PendingApprovals, type PendingPermissions, PendingStructuredInputs } from './claude/permission-gateway.js';
 import {
   ClaudeRuntimeDriver,
   CodexRuntimeDriver,
   OpenHumanRuntimeDriver,
+  ZCodeRuntimeDriver,
   type RuntimeDriver,
 } from '../runtime/driver.js';
 import {
@@ -25,9 +27,11 @@ export class MultiplexLLMProvider implements LLMProvider {
   private claudeProvider: SDKLLMProvider | null = null;
   private codexProvider: CodexProvider | null = null;
   private openhumanProvider: OpenHumanProvider | null = null;
+  private zcodeProvider: ZCodeProvider | null = null;
   private claudeDriver: ClaudeRuntimeDriver | null = null;
   private codexDriver: CodexRuntimeDriver | null = null;
   private openhumanDriver: OpenHumanRuntimeDriver | null = null;
+  private zcodeDriver: ZCodeRuntimeDriver | null = null;
   private claudeCliPath: string | null = null;
   private readonly pendingApprovals: PendingApprovals;
   private readonly pendingStructuredInputs: PendingStructuredInputs;
@@ -106,9 +110,16 @@ export class MultiplexLLMProvider implements LLMProvider {
     return this.openhumanProvider;
   }
 
+  private async getZCodeProvider(): Promise<ZCodeProvider> {
+    if (this.zcodeProvider) return this.zcodeProvider;
+    this.zcodeProvider = createZCodeProvider();
+    return this.zcodeProvider;
+  }
+
   protected async getProvider(runtime: RuntimeName): Promise<LLMProvider> {
     if (runtime === 'codex') return this.getCodexProvider();
     if (runtime === 'openhuman') return this.getOpenHumanProvider();
+    if (runtime === 'zcode') return this.getZCodeProvider();
     return this.getClaudeProvider();
   }
 
@@ -132,6 +143,16 @@ export class MultiplexLLMProvider implements LLMProvider {
         );
       }
       return this.openhumanDriver;
+    }
+    if (runtime === 'zcode') {
+      if (!this.zcodeDriver) {
+        this.zcodeDriver = new ZCodeRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('zcode') as Promise<ZCodeProvider>,
+        );
+      }
+      return this.zcodeDriver;
     }
     if (!this.claudeDriver) {
       this.claudeDriver = new ClaudeRuntimeDriver(

@@ -22,7 +22,7 @@ export interface CompactConfig {
 
 export interface Config {
   defaultWorkDir: string;
-  defaultRuntime: 'claude' | 'codex' | 'openhuman';
+  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode';
   feishu: FeishuProfileConfig;
   claudeCliExecutable?: string;
   compact: CompactConfig;
@@ -98,8 +98,11 @@ export function loadConfig(): Config {
   }
 
   const runtimeStr = env.get('CTI_DEFAULT_RUNTIME') || 'claude';
-  const defaultRuntime: 'claude' | 'codex' | 'openhuman' =
-    runtimeStr === 'codex' ? 'codex' : runtimeStr === 'openhuman' ? 'openhuman' : 'claude';
+  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' =
+    runtimeStr === 'codex' ? 'codex'
+      : runtimeStr === 'openhuman' ? 'openhuman'
+        : runtimeStr === 'zcode' ? 'zcode'
+          : 'claude';
 
   return {
     defaultWorkDir: env.get('CTI_DEFAULT_WORKDIR') || process.cwd(),

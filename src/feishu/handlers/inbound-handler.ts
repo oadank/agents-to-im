@@ -269,6 +269,10 @@ export async function handleDirectMessage(
     await ctx.handleCreateSessionCommand(sender, inbound, 'openhuman');
     return;
   }
+  if (command === '/new:zcode') {
+    await ctx.handleCreateSessionCommand(sender, inbound, 'zcode');
+    return;
+  }
   if (command === '/resume:claude') {
     await ctx.handleResumeSessionCommand(sender, inbound, 'claude');
     return;
@@ -279,6 +283,62 @@ export async function handleDirectMessage(
   }
   if (command === '/resume:openhuman') {
     await ctx.handleResumeSessionCommand(sender, inbound, 'openhuman');
+    return;
+  }
+  if (command === '/resume:zcode') {
+    await ctx.handleResumeSessionCommand(sender, inbound, 'zcode');
+    return;
+  }
+  if (command.startsWith('/agent:')) {
+    const agent = command.slice(7).trim();
+    const validAgents = ['glm', 'gemini', 'opencode'];
+    if (!validAgents.includes(agent)) {
+      await ctx.sendAsPost(inbound.address, `不支持的 agent: ${agent}。可用: ${validAgents.join(', ')}`, inbound.messageId);
+      return;
+    }
+    const store = ctx.getStore();
+    const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话，请先发送消息创建会话。', inbound.messageId);
+      return;
+    }
+    store.updateSessionModel(binding.codepilotSessionId, `agent:${agent}`);
+    await ctx.sendAsPost(inbound.address, `✅ 已切换到 ${agent}，后续消息将使用该 agent。`, inbound.messageId);
+    return;
+  }
+  if (command.startsWith('/ask:')) {
+    const spaceIdx = inbound.text.indexOf(' ');
+    if (spaceIdx === -1) {
+      await ctx.sendAsPost(inbound.address, '用法: /ask:agent名 你的问题', inbound.messageId);
+      return;
+    }
+    const agent = inbound.text.slice(5, spaceIdx).trim();
+    const msg = inbound.text.slice(spaceIdx + 1).trim();
+    const validAgents = ['glm', 'gemini', 'opencode'];
+    if (!validAgents.includes(agent)) {
+      await ctx.sendAsPost(inbound.address, `不支持的 agent: ${agent}。可用: ${validAgents.join(', ')}`, inbound.messageId);
+      return;
+    }
+    const store = ctx.getStore();
+    const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话，请先发送消息创建会话。', inbound.messageId);
+      return;
+    }
+    // 读取对话历史，拼到 prompt 前面
+    const { messages } = store.getMessages(binding.codepilotSessionId, { limit: 30 });
+    let enrichedPrompt = msg;
+    if (messages.length > 0) {
+      const history = messages
+        .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
+        .map((m: { role: string; content: string }) => `[${m.role}]: ${m.content}`)
+        .join('\n');
+      enrichedPrompt = `以下是之前的对话记录：\n${history}\n\n---\n\n用户: ${msg}`;
+    }
+    // 设置 model 为 agent:xxx，替换消息文本为 enriched prompt
+    store.updateSessionModel(binding.codepilotSessionId, `agent:${agent}`);
+    inbound.text = enrichedPrompt;
+    ctx.enqueue(inbound);
     return;
   }
   if (command === '/stop') {

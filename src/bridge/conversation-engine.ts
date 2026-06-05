@@ -345,7 +345,7 @@ export async function processMessage(
 async function consumeStream(
   stream: ReadableStream<string>,
   sessionId: string,
-  runtime: 'claude' | 'codex',
+  runtime: 'claude' | 'codex' | 'openhuman' | 'zcode',
   collaborationModeOverride?: ProcessMessageOptions['collaborationModeOverride'],
   onPermissionRequest?: OnPermissionRequest,
   onPartialText?: OnPartialText,

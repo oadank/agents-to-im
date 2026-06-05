@@ -370,10 +370,24 @@ export class ZCodeProvider implements LLMProvider {
         if (id === 1 && msg.result) {
           initResult = msg.result as Record<string, unknown>;
           console.log(`[zcode-provider] GLM ACP initialized:`, JSON.stringify((msg.result as Record<string, unknown>).agentInfo));
-          // → session/new
+          // → session/new（附带 agentmemory MCP）
           child.stdin.write(JSON.stringify({
             jsonrpc: '2.0', id: 2, method: 'session/new',
-            params: { cwd: process.cwd(), mcpServers: [] },
+            params: {
+              cwd: process.cwd(),
+              mcpServers: [
+                {
+                  type: 'stdio' as const,
+                  name: 'agentmemory',
+                  command: 'npx',
+                  args: ['-y', '@agentmemory/mcp'],
+                  env: [
+                    { name: 'AGENTMEMORY_URL', value: 'http://127.0.0.1:3111' },
+                    { name: 'AGENTMEMORY_TOOLS', value: 'memory_recall,memory_save,memory_smart_search' },
+                  ],
+                },
+              ],
+            },
           }) + '\n');
           return;
         }

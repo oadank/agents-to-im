@@ -180,15 +180,25 @@ export class ZCodeProvider implements LLMProvider {
     const { prompt, sdkSessionId, abortController, workingDirectory } = params;
     const agent = parseAgent(params.model);
 
+    // 构建带历史的 prompt
+    const history = params.conversationHistory;
+    let enrichedPrompt = prompt;
+    if (history && history.length > 0) {
+      const historyText = history.map(m =>
+        `${m.role === 'user' ? '用户' : '助手'}：${m.content}`
+      ).join('\n');
+      enrichedPrompt = `以下是之前的对话上下文：\n${historyText}\n\n---\n\n用户当前消息：${prompt}`;
+    }
+
     // GLM 走 ACP 协议，独立处理
     if (agent === 'glm') {
-      return this.runGlmAcp(controller, params);
+      return this.runGlmAcp(controller, { ...params, prompt: enrichedPrompt });
     }
 
     const agentCli = AGENT_CLI[agent];
 
     // 构建 CLI 参数
-    const args = agentCli.args(prompt);
+    const args = agentCli.args(enrichedPrompt);
 
     // 确定工作目录：gemini/opencode 使用 ZCode 沙箱目录（含 MiMo 认证）
     let cwd = workingDirectory || process.cwd();

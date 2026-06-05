@@ -416,6 +416,16 @@ export class ZCodeProvider implements LLMProvider {
             console.log(`[zcode-provider] GLM ACP text chunk: "${update.content.text}" total=${responseText.length}`);
           }
         }
+
+        // 权限请求: 自动批准（bypass 模式）
+        if (msg.method === 'session/request_permission') {
+          const reqId = msg.id ?? msg.params?.requestId;
+          console.log(`[zcode-provider] GLM ACP permission request, auto-approving id=${reqId}`);
+          child.stdin.write(JSON.stringify({
+            jsonrpc: '2.0', id: reqId ?? Date.now(),
+            result: { outcome: { outcome: 'selected', optionId: 'allow_always' } },
+          }) + '\n');
+        }
       } catch {}
     };
 

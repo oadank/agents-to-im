@@ -543,7 +543,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return {
       supported: true,
       privateOnly: false,
-      finalDelivery: 'segment_replace_preview',
+      finalDelivery: 'replace_preview',
     };
   }
 

@@ -10,6 +10,10 @@ export function buildStreamingCardSkeleton(): Record<string, unknown> {
       wide_screen_mode: true,
       update_multi: true,
       streaming_mode: true,
+      streaming_config: {
+        print_frequency_ms: { default: 50 },
+        print_step: { default: 1 },
+      },
       summary: {
         content: STREAM_PLACEHOLDER_TEXT,
         i18n_content: {

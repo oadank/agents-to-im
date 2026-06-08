@@ -77,7 +77,7 @@ interface StreamConfig {
 
 /** Default stream config per channel type. */
 const STREAM_DEFAULTS: Record<string, StreamConfig> = {
-  feishu: { intervalMs: 700, minDeltaChars: 20, maxChars: 3900, primeDelayMs: 900 },
+  feishu: { intervalMs: 160, minDeltaChars: 18, maxChars: 99999, primeDelayMs: 900 },
 };
 
 function getStreamConfig(channelType = 'feishu'): StreamConfig {
@@ -1747,6 +1747,13 @@ async function handleMessage(
 
     const delta = ps.pendingText.length - ps.lastSentText.length;
     const elapsed = Date.now() - ps.lastSentAt;
+
+    // replace_preview 模式：首次收到文本时立即创建卡片（不等 onResponseSegment）
+    if (!ps.placeholderPrimed && ps.pendingText.trim()) {
+      if (adapter.primePreview) {
+        primePreview(adapter, ps);
+      }
+    }
 
     if (delta < cfg.minDeltaChars && ps.lastSentAt > 0) {
       // Not enough new content — schedule trailing-edge timer if not already set

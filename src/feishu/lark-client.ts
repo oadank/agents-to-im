@@ -220,7 +220,7 @@ export class LarkClient {
     try {
       const lastSentAt = this.lastOutboundMessageAt.get(chatId) || 0;
       const elapsed = Date.now() - lastSentAt;
-      const minIntervalMs = 250;
+      const minIntervalMs = 50;
       if (elapsed < minIntervalMs) {
         await new Promise((resolve) => setTimeout(resolve, minIntervalMs - elapsed));
       }

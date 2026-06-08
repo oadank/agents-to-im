@@ -60,8 +60,8 @@ async function callCompactApi(
   prompt: string,
   compactConfig: CompactConfig,
 ): Promise<{ text?: string; error?: string }> {
-  const apiKey = process.env.ANTHROPIC_API_KEY || '';
-  const baseUrl = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+  const apiKey = process.env.CTI_COMPACT_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+  const baseUrl = process.env.CTI_COMPACT_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
   const model = compactConfig.model || 'codex-model';
 
   if (!apiKey) return { error: 'ANTHROPIC_API_KEY 未设置' };

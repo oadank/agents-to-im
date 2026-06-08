@@ -1,9 +1,6 @@
 import type { ChannelAddress, SendResult } from '../../bridge/types.js';
 import { buildSimpleCard, buildStreamingCardSkeleton } from '../cards/index.js';
-import {
-  STREAM_ELEMENT_ID,
-  STREAM_PLACEHOLDER_TEXT,
-} from '../constants.js';
+import { STREAM_ELEMENT_ID, STREAM_PLACEHOLDER_TEXT } from '../constants.js';
 import { LarkClient } from '../lark-client.js';
 import type { PreviewArtifact } from '../types.js';
 import {
@@ -41,6 +38,7 @@ export class PreviewService {
     const routeKey = routeKeyForAddress(address);
     const key = previewKey(routeKey, draftId);
     let artifact = this.previewArtifacts.get(key);
+    console.log(`[preview-service] sendPreview: key=${key}, exists=${!!artifact}, total=${this.previewArtifacts.size}`);
     if (!artifact) {
       const createdArtifact = await this.createPreviewArtifact(address, draftId, text);
       if (!createdArtifact) return 'degrade';
@@ -64,6 +62,7 @@ export class PreviewService {
         await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(text));
       }
       artifact.lastText = text;
+      artifact.streamed = true;
       return 'sent';
     } catch (error) {
       if (artifact.mode === 'cardkit' && artifact.messageId) {
@@ -71,6 +70,7 @@ export class PreviewService {
         try {
           await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(text));
           artifact.lastText = text;
+          artifact.streamed = true;
           return 'sent';
         } catch {
           console.warn('[feishu-adapter] Preview degraded after CardKit failure:', error);
@@ -102,30 +102,37 @@ export class PreviewService {
     if (this.activePreviewByRoute.get(routeKey) === key) {
       this.activePreviewByRoute.delete(routeKey);
     }
-    if (artifact?.messageId && !artifact.lastText.trim()) {
-      void this.larkClient.deleteMessageQuietly(artifact.messageId);
+    // Close streaming_mode on the card so it stops showing "streaming" state
+    if (artifact?.cardId && artifact.mode === 'cardkit') {
+      const client = this.larkClient.getClient();
+      if (client) {
+        artifact.sequence += 1;
+        client.cardkit.v1.card.settings({
+          path: { card_id: artifact.cardId },
+          data: {
+            settings: JSON.stringify({ streaming_mode: false }),
+            sequence: artifact.sequence,
+          },
+        }).catch(() => {});
+      }
     }
   }
 
-  async finalizePreview(address: ChannelAddress, finalText: string): Promise<SendResult | null> {
+  async finalizePreview(address: ChannelAddress, _finalText: string, draftId?: number): Promise<SendResult | null> {
     const client = this.larkClient.getClient();
-    const artifact = this.getActiveArtifact(address);
+    // Find the correct artifact
+    let artifact: PreviewArtifact | null = null;
+    if (draftId) {
+      const routeKey = routeKeyForAddress(address);
+      const key = previewKey(routeKey, draftId);
+      artifact = this.previewArtifacts.get(key) || null;
+    }
+    if (!artifact) artifact = this.getActiveArtifact(address);
+    console.log(`[preview-service] finalizePreview: draftId=${draftId}, found=${!!artifact}, activeRoute=${this.activePreviewByRoute.get(routeKeyForAddress(address)) || 'none'}, total=${this.previewArtifacts.size}`);
     if (!client || !artifact?.messageId) return null;
     try {
       if (artifact.mode === 'cardkit' && artifact.cardId) {
-        artifact.sequence += 1;
-        const card = buildSimpleCard(finalText);
-        const updateResponse = await client.cardkit.v1.card.update({
-          path: { card_id: artifact.cardId },
-          data: {
-            card: {
-              type: 'card_json',
-              data: JSON.stringify(card),
-            },
-            sequence: artifact.sequence,
-          },
-        });
-        assertLarkOk(updateResponse, 'cardkit.card.update');
+        // Only close streaming mode — the card already has the accumulated text
         artifact.sequence += 1;
         const settingsResponse = await client.cardkit.v1.card.settings({
           path: { card_id: artifact.cardId },
@@ -135,10 +142,12 @@ export class PreviewService {
           },
         });
         assertLarkOk(settingsResponse, 'cardkit.card.settings');
-      } else {
-        await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(finalText));
+      } else if (artifact.messageId) {
+        // Fallback: patch card with final text
+        await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(_finalText));
       }
-      artifact.lastText = finalText;
+      artifact.lastText = _finalText;
+      artifact.streamed = true;
       return { ok: true, messageId: artifact.messageId, openMessageId: artifact.messageId };
     } catch (error) {
       console.warn('[feishu-adapter] Failed to finalize preview in place:', error);
@@ -155,6 +164,7 @@ export class PreviewService {
     if (!client) return null;
     const routeKey = routeKeyForAddress(address);
     const replyToMessageId = this.getReplyToMessageId(routeKey);
+    console.log(`[preview-service] createPreviewArtifact: chatId=${address.chatId}, draftId=${draftId}, existingArtifacts=${this.previewArtifacts.size}`);
     try {
       const createResponse = await client.cardkit.v1.card.create({
         data: {
@@ -188,6 +198,8 @@ export class PreviewService {
         lastText: text,
         sequence: 0,
         mode: 'cardkit',
+        streamed: false,
+        streamStartedAt: Date.now(),
       };
     } catch (error) {
       console.warn('[feishu-adapter] CardKit preview unavailable, falling back to message patch:', error);
@@ -208,6 +220,8 @@ export class PreviewService {
           lastText: text,
           sequence: 0,
           mode: 'patch',
+          streamed: false,
+          streamStartedAt: Date.now(),
         };
       } catch (fallbackError) {
         console.warn('[feishu-adapter] Preview fallback failed:', fallbackError);

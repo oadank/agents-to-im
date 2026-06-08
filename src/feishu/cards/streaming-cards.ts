@@ -26,7 +26,7 @@ export function buildStreamingCardSkeleton(): Record<string, unknown> {
       elements: [
         {
           tag: 'markdown',
-          content: STREAM_PLACEHOLDER_TEXT,
+          content: '',
           element_id: STREAM_ELEMENT_ID,
         },
       ],

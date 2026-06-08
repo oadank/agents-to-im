@@ -548,16 +548,26 @@ function flushPreview(
     : state.pendingText;
   if (!text.trim()) return;
 
-  state.placeholderPrimed = false;
+  // DO NOT reset placeholderPrimed here — once the card is primed,
+  // it stays primed for the entire streaming session. Resetting it
+  // causes onPartialText / handleActivityEvent to call primePreview()
+  // again on the next tick, which can create duplicate cards.
   state.lastSentText = text;
   state.lastSentAt = Date.now();
   const draftId = state.draftId;
+  // Build combined text: thinking + answer in single element
+  const thinking = state.lastThinkingText;
   const send = async (): Promise<void> => {
     try {
-      const result = await adapter.sendPreview!(state.address, text, draftId);
+      let combined = text;
+      if (thinking) {
+        const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
+        const thinkingBlock = `> 💭 **思考中…**\n${windowThinking.split('\n').map((l: string) => `> ${l}`).join('\n')}`;
+        combined = `${thinkingBlock}\n\n---\n\n${text}`;
+      }
+      const result = await adapter.sendPreview!(state.address, combined, draftId);
       if (state.draftId !== draftId) return;
       if (result === 'degrade') state.degraded = true;
-      // 'skip' — transient failure, next flush will retry naturally
     } catch {
       // Network error — transient, don't degrade
     }
@@ -585,7 +595,14 @@ function primePreview(
     try {
       const result = await adapter.primePreview!(state.address, draftId);
       if (state.draftId !== draftId) return;
-      if (result === 'sent') state.placeholderPrimed = true;
+      if (result === 'sent') {
+        state.placeholderPrimed = true;
+        // Apply buffered thinking content that arrived before card was created
+        if (state.pendingThinkingText && adapter.sendPreview) {
+          await adapter.sendPreview(state.address, state.pendingThinkingText, draftId).catch(() => {});
+          state.pendingThinkingText = '';
+        }
+      }
       if (result === 'degrade') state.degraded = true;
     } catch {
       // Network error — transient, don't degrade
@@ -658,6 +675,8 @@ function resetPreviewState(state: StreamingPreviewState): void {
   state.lastSentAt = 0;
   state.pendingText = '';
   state.inFlightSend = null;
+  state.lastThinkingText = '';
+  state.pendingThinkingText = '';
 }
 
 interface LightweightActivityState {
@@ -770,6 +789,8 @@ interface BridgeManagerState {
   /** Per-session processing chains for concurrency control */
   sessionLocks: Map<string, Promise<void>>;
   autoStartChecked: boolean;
+  /** Track active preview state per chat address for cleanup on new messages */
+  activePreviewByAddress: Map<string, StreamingPreviewState>;
 }
 
 function getState(): BridgeManagerState {
@@ -785,6 +806,7 @@ function getState(): BridgeManagerState {
       pendingStopFeedback: new Map(),
       sessionLocks: new Map(),
       autoStartChecked: false,
+      activePreviewByAddress: new Map(),
     };
   }
   // Backfill sessionLocks for states created before this field existed
@@ -1315,6 +1337,14 @@ async function handleMessage(
   state.activeTasks.set(binding.codepilotSessionId, taskAbort);
 
   // ── Streaming preview setup ──────────────────────────────────
+  // Close any active preview card for this address (prevents orphaned streaming cards)
+  const addressKey = `${msg.address.channelType}:${msg.address.channelInstanceId}:${msg.address.chatId}`;
+  const oldPreview = state.activePreviewByAddress.get(addressKey);
+  if (oldPreview) {
+    state.activePreviewByAddress.delete(addressKey);
+    adapter.endPreview?.(msg.address, oldPreview.draftId);
+  }
+
   let previewState: StreamingPreviewState | null = null;
   const caps = adapter.getPreviewCapabilities?.(msg.address) ?? null;
   if (caps?.supported) {
@@ -1329,7 +1359,11 @@ async function handleMessage(
       throttleTimer: null,
       pendingText: '',
       inFlightSend: null,
+      streamStartedAt: Date.now(),
+      lastThinkingText: '',
+      pendingThinkingText: '',
     };
+    state.activePreviewByAddress.set(addressKey, previewState);
   }
 
   const streamCfg = previewState ? getStreamConfig(adapter.channelType) : null;
@@ -1712,7 +1746,34 @@ async function handleMessage(
     const normalized = normalizeActivityEvent(event);
     const shouldProjectActivity = adapter.shouldProjectActivityEvent?.(normalized) ?? true;
     if (!shouldProjectActivity) return;
+    // reasoning_activity ALWAYS goes to streaming card, NEVER creates activity cards
+    if (normalized.kind === 'reasoning_activity') {
+      await markProgressCardVisible();
+      if (previewState) {
+        const thinkingText = normalized.text || '';
+        if (thinkingText && thinkingText !== previewState.lastThinkingText) {
+          previewState.lastThinkingText = thinkingText;
+          const windowThinking = thinkingText.length > 1500 ? thinkingText.slice(-1500) : thinkingText;
+          const thinkingBlock = `> 💭 **思考中…**\n${windowThinking.split('\n').map((l: string) => `> ${l}`).join('\n')}`;
+          const answer = previewState.lastSentText || previewState.pendingText;
+          const combined = answer ? `${thinkingBlock}\n\n---\n\n${answer}` : thinkingBlock;
+          // Only send if card already primed; otherwise buffer thinking
+          // for primePreview to flush once the card is created.
+          if (previewState.placeholderPrimed && adapter.sendPreview) {
+            await adapter.sendPreview(msg.address, combined, previewState.draftId).catch(() => {});
+          } else {
+            previewState.pendingThinkingText = combined;
+            if (adapter.primePreview) {
+              primePreview(adapter, previewState);
+            }
+          }
+        }
+      }
+      return; // ALWAYS return — never create activity card for reasoning
+    }
     await markProgressCardVisible();
+    // When streaming card is active, skip ALL other activity card creation
+    if (previewState?.placeholderPrimed) return;
     if (normalized.kind === 'lightweight_activity') {
       if (
         lightweightActivityState?.current

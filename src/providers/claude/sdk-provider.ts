@@ -143,12 +143,14 @@ const SUPPORTED_IMAGE_TYPES = new Set<string>([
  * iterable that yields a single SDKUserMessage with multi-modal content
  * (image blocks + text). Otherwise returns the plain text string.
  */
+const CHINESE_THINKING_INSTRUCTION = '[系统指令-语言] 你必须100%使用中文进行内部思考（thinking/reasoning）和回复。禁止用英文思考。例如用"我需要分析这个问题"而非"I need to analyze this problem"。\n\n';
+
 function buildPrompt(
   text: string,
   files?: FileAttachment[],
 ): string | AsyncIterable<{ type: 'user'; message: { role: 'user'; content: unknown[] }; parent_tool_use_id: null; session_id: string }> {
   const imageFiles = files?.filter(f => SUPPORTED_IMAGE_TYPES.has(f.type));
-  if (!imageFiles || imageFiles.length === 0) return text;
+  if (!imageFiles || imageFiles.length === 0) return CHINESE_THINKING_INSTRUCTION + text;
 
   const contentBlocks: unknown[] = [];
 
@@ -217,7 +219,7 @@ function buildPromptWithHistory(
         });
       }
       if (text.trim()) {
-        contentBlocks.push({ type: 'text', text });
+        contentBlocks.push({ type: 'text', text: CHINESE_THINKING_INSTRUCTION + text });
       }
       yield {
         type: 'user' as const,
@@ -228,7 +230,7 @@ function buildPromptWithHistory(
     } else {
       yield {
         type: 'user' as const,
-        message: { role: 'user' as const, content: text },
+        message: { role: 'user' as const, content: CHINESE_THINKING_INSTRUCTION + text },
         parent_tool_use_id: null,
         session_id: '',
       };
@@ -264,6 +266,8 @@ export interface StreamState {
   lastAssistantText: string;
   /** Stable tool name lookup for later tool_result updates. */
   toolNamesByUseId: Map<string, string>;
+  /** Accumulated thinking/reasoning text from thinking_delta events. */
+  accumulatedThinking: string;
 }
 
 interface ClaudeAskUserQuestionOptionLike {
@@ -585,6 +589,7 @@ export class SDKLLMProvider implements LLMProvider {
             hasStreamedText: false,
             lastAssistantText: '',
             toolNamesByUseId: new Map<string, string>(),
+            accumulatedThinking: '',
           };
 
           try {
@@ -606,6 +611,11 @@ export class SDKLLMProvider implements LLMProvider {
               permissionMode: (params.permissionMode as 'default' | 'acceptEdits' | 'bypassPermissions' | 'dontAsk' | 'plan') || undefined,
               allowDangerouslySkipPermissions: true,
               includePartialMessages: true,
+              systemPrompt: {
+                type: 'preset',
+                preset: 'claude_code',
+                append: '[语言强制规则] 你的所有输出必须使用中文。这包括：1) 内部思考过程（thinking/reasoning/extended thinking）必须100%用中文书写，禁止使用英文思考；2) 回复内容必须使用中文；3) 代码注释使用中文。违反此规则是严重错误。请用中文思考：例如"我需要分析这个问题"而不是"I need to analyze this problem"。',
+              },
               // Keep local CLI-managed config (for MCPs in `~/.claude.json`),
               // user auth/billing settings, and project overrides aligned with
               // native Claude Code behavior.
@@ -882,6 +892,18 @@ export function handleMessage(
         // Emit delta text — the bridge accumulates on its side
         emitCanonicalTurnEvent(controller, { type: 'text', data: event.delta.text });
         state.hasStreamedText = true;
+      }
+      if (
+        event.type === 'content_block_delta' &&
+        event.delta.type === 'thinking_delta'
+      ) {
+        state.accumulatedThinking += event.delta.thinking;
+        enqueueActivityEvent(controller, {
+          kind: 'reasoning_activity',
+          status: 'running',
+          text: state.accumulatedThinking,
+          source: 'thinking',
+        });
       }
       if (
         event.type === 'content_block_start' &&

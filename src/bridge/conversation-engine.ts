@@ -637,11 +637,11 @@ async function consumeStream(
               }
               if (statusData.reasoning && onActivityEvent) {
                 await onActivityEvent({
-                  kind: 'lightweight_activity',
-                  id: `lightweight:${capturedSdkSessionId || sessionId}`,
+                  kind: 'reasoning_activity',
+                  id: `reasoning:${capturedSdkSessionId || sessionId}`,
                   turnId: typeof statusData.turn_id === 'string' ? statusData.turn_id : undefined,
                   status: 'running',
-                  text: '正在思考…',
+                  text: typeof statusData.reasoning === 'string' ? statusData.reasoning : '正在思考…',
                   source: 'reasoning',
                 });
               }

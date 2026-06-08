@@ -77,7 +77,10 @@ export interface PreviewArtifact {
   cardId?: string;
   lastText: string;
   sequence: number;
+  noteSequence: number;
   mode: 'cardkit' | 'patch';
+  streamed: boolean;
+  streamStartedAt: number;
 }
 
 export interface ActivityArtifact {

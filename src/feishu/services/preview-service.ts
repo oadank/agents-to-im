@@ -94,7 +94,7 @@ export class PreviewService {
     return 'sent';
   }
 
-  endPreview(address: ChannelAddress, draftId: number): void {
+  endPreview(address: ChannelAddress, draftId: number, finalText?: string): void {
     const routeKey = routeKeyForAddress(address);
     const key = previewKey(routeKey, draftId);
     const artifact = this.previewArtifacts.get(key);
@@ -102,24 +102,26 @@ export class PreviewService {
     if (this.activePreviewByRoute.get(routeKey) === key) {
       this.activePreviewByRoute.delete(routeKey);
     }
-    // Close streaming_mode on the card so it stops showing "streaming" state
+    // Close streaming_mode and update summary with actual message preview text
+    // so the chat list shows the message preview instead of "[生成中...]"
     if (artifact?.cardId && artifact.mode === 'cardkit') {
       const client = this.larkClient.getClient();
       if (client) {
         artifact.sequence += 1;
+        const text = finalText || artifact.lastText || '';
+        const summaryText = text.length > 120 ? text.slice(0, 120) : text;
         client.cardkit.v1.card.settings({
           path: { card_id: artifact.cardId },
           data: {
             settings: JSON.stringify({
               streaming_mode: false,
-              summary: {
-                content: '✅ 回答完成',
-                i18n_content: { zh_cn: '✅ 回答完成', en_us: 'Done' },
-              },
+              summary: { content: summaryText || '✅ 回答完成' },
             }),
             sequence: artifact.sequence,
           },
-        }).catch(() => {});
+        }).catch((err) => {
+          console.warn('[feishu-adapter] Failed to close streaming mode:', err);
+        });
       }
     }
   }

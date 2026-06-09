@@ -77,7 +77,7 @@ interface StreamConfig {
 
 /** Default stream config per channel type. */
 const STREAM_DEFAULTS: Record<string, StreamConfig> = {
-  feishu: { intervalMs: 160, minDeltaChars: 18, maxChars: 99999, primeDelayMs: 900 },
+  feishu: { intervalMs: 160, minDeltaChars: 8, maxChars: 99999, primeDelayMs: 300 },
 };
 
 function getStreamConfig(channelType = 'feishu'): StreamConfig {
@@ -2115,18 +2115,13 @@ async function handleMessage(
     if (previewState && previewFinalDelivery === 'replace_preview') {
       const finalResponseText = result.responseText || remainingSegments.join('\n\n').trim();
       if (finalResponseText) {
-        responseDelivery = await deliverResponse(
-          adapter,
-          msg.address,
-          finalResponseText,
-          binding.codepilotSessionId,
-          msg.messageId,
-        );
-        if (responseDelivery.ok) {
-          adapter.endPreview?.(msg.address, previewState.draftId);
-          previewClosed = true;
-          hasVisibleAssistantOutput = true;
-        }
+        // Write final text to the existing streaming card (no new message)
+        const previewResult = await adapter.sendPreview?.(msg.address, finalResponseText, previewState.draftId);
+        // Close streaming_mode on the card
+        adapter.endPreview?.(msg.address, previewState.draftId);
+        previewClosed = true;
+        hasVisibleAssistantOutput = true;
+        responseDelivery = { ok: true };
       } else if (result.hasError && !stopRequestedByUser) {
         const errorResponse: OutboundMessage = {
           address: msg.address,

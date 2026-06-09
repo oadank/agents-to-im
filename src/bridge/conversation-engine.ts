@@ -456,6 +456,23 @@ async function consumeStream(
   const STUCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
   let lastActivityAt = Date.now();
   let stuckFired = false;
+
+  // Anti-thinking-loop detection
+  const REASONING_REPEAT_THRESHOLD = 5; // consecutive identical reasoning events
+  const REASONING_MAX_CHARS = 40_000; // ~10K tokens of thinking, abort if no answer yet
+  let reasoningRepeatCount = 0;
+  let lastReasoningHash = '';
+  let totalReasoningChars = 0;
+  let hasAnswered = false;
+
+  const simpleHash = (s: string): string => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return h.toString(36);
+  };
+
   let stuckTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
     stuckFired = true;
     const idle = Math.round((Date.now() - lastActivityAt) / 60000);
@@ -636,12 +653,37 @@ async function consumeStream(
                 store.updateSessionModel(sessionId, statusData.model);
               }
               if (statusData.reasoning && onActivityEvent) {
+                const reasoningText = typeof statusData.reasoning === 'string' ? statusData.reasoning : '正在思考…';
+                
+                // Anti-thinking-loop detection
+                if (!hasAnswered && reasoningText && reasoningText !== '正在思考…') {
+                  totalReasoningChars += reasoningText.length;
+                  const hash = simpleHash(reasoningText);
+                  if (hash === lastReasoningHash && reasoningText.length > 50) {
+                    reasoningRepeatCount++;
+                    if (reasoningRepeatCount >= REASONING_REPEAT_THRESHOLD) {
+                      console.warn(`[conversation-engine] Anti-loop: detected ${reasoningRepeatCount} consecutive identical reasoning events, aborting stream (session ${sessionId})`);
+                      try { reader.cancel('thinking-loop-detected'); } catch { /* best effort */ }
+                      break;
+                    }
+                  } else {
+                    reasoningRepeatCount = 0;
+                    lastReasoningHash = hash;
+                  }
+                  // Hard limit: if reasoning exceeds 40K chars without any answer, abort
+                  if (totalReasoningChars > REASONING_MAX_CHARS) {
+                    console.warn(`[conversation-engine] Anti-loop: reasoning exceeded ${totalReasoningChars} chars without answer, aborting (session ${sessionId})`);
+                    try { reader.cancel('thinking-loop-exceeded'); } catch { /* best effort */ }
+                    break;
+                  }
+                }
+                
                 await onActivityEvent({
                   kind: 'reasoning_activity',
                   id: `reasoning:${capturedSdkSessionId || sessionId}`,
                   turnId: typeof statusData.turn_id === 'string' ? statusData.turn_id : undefined,
                   status: 'running',
-                  text: typeof statusData.reasoning === 'string' ? statusData.reasoning : '正在思考…',
+                  text: reasoningText,
                   source: 'reasoning',
                 });
               }

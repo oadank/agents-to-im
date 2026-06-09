@@ -1398,24 +1398,24 @@ async function handleMessage(
     const waterfallFlush = async (state: WaterfallStreamingState): Promise<void> => {
     const text = state.bufferText;
     const delta = text.length - state.lastSentLength;
-    // Skip if no new content or too short (except first send which needs at least 1 char)
+    // Skip if no new content or too short (first send needs at least 50 chars)
     if (delta <= 0) return;
-    if (delta < 200 && state.lastSentAt > 0) {
+    if (delta < 500 && state.lastSentAt > 0) {
+      if (!state.throttleTimer) {
+        state.throttleTimer = setTimeout(() => {
+          state.throttleTimer = null;
+          waterfallFlush(state).catch(() => {});
+        }, 4000);
+      }
+      return;
+    }
+    const elapsed = Date.now() - state.lastSentAt;
+    if (elapsed < 2000 && state.lastSentAt > 0) {
       if (!state.throttleTimer) {
         state.throttleTimer = setTimeout(() => {
           state.throttleTimer = null;
           waterfallFlush(state).catch(() => {});
         }, 2000);
-      }
-      return;
-    }
-    const elapsed = Date.now() - state.lastSentAt;
-    if (elapsed < 500 && state.lastSentAt > 0) {
-      if (!state.throttleTimer) {
-        state.throttleTimer = setTimeout(() => {
-          state.throttleTimer = null;
-          waterfallFlush(state).catch(() => {});
-        }, 500);
       }
       return;
     }
@@ -1426,9 +1426,8 @@ async function handleMessage(
     // Send incremental content only (from lastSentLength to current)
     const increment = text.slice(state.lastSentLength);
     const trimmed = increment.trim();
-    // Skip empty, whitespace-only, or too-short increments (< 20 chars)
-    // Prevents sending meaningless fragments like "我是 **" or "《"
-    if (!trimmed || trimmed.length < 20) {
+    // Skip empty, whitespace-only, or too-short increments (< 50 chars)
+    if (!trimmed || trimmed.length < 50) {
       // Don't advance lastSentLength — next flush will accumulate more
       // But set trailing timer so we eventually flush if text stops growing
       if (trimmed && delta > 0 && !state.throttleTimer) {
@@ -1441,7 +1440,7 @@ async function handleMessage(
             state.lastSentAt = Date.now();
             deliver(adapter, { address: msg.address, text: finalIncrement, parseMode: 'Markdown', replyToMessageId: msg.messageId }).catch(() => {});
           }
-        }, 3000);
+        }, 4000);
       }
       return;
     }

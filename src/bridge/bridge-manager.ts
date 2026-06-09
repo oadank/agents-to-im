@@ -1395,9 +1395,11 @@ async function handleMessage(
   }
 
   // V3: Native message streaming flush for Feishu (waterfall effect)
-  const waterfallFlush = async (state: WaterfallStreamingState): Promise<void> => {
+    const waterfallFlush = async (state: WaterfallStreamingState): Promise<void> => {
     const text = state.bufferText;
     const delta = text.length - state.lastSentLength;
+    // Skip if no new content or too short (except first send which needs at least 1 char)
+    if (delta <= 0) return;
     if (delta < 200 && state.lastSentAt > 0) {
       if (!state.throttleTimer) {
         state.throttleTimer = setTimeout(() => {
@@ -1421,11 +1423,18 @@ async function handleMessage(
       clearTimeout(state.throttleTimer);
       state.throttleTimer = null;
     }
+    // Send incremental content only (from lastSentLength to current)
+    const increment = text.slice(state.lastSentLength);
+    // Skip empty or whitespace-only increments
+    if (!increment.trim()) {
+      state.lastSentLength = text.length;
+      return;
+    }
     state.lastSentLength = text.length;
     state.lastSentAt = Date.now();
     const outbound: OutboundMessage = {
       address: msg.address,
-      text,
+      text: increment,
       parseMode: 'Markdown',
       replyToMessageId: msg.messageId,
     };
@@ -1813,10 +1822,26 @@ async function handleMessage(
     // reasoning_activity — CardKit preview OR Feishu native waterfall
     if (normalized.kind === 'reasoning_activity') {
       await markProgressCardVisible();
-      // V3: Feishu native waterfall — send incremental thinking
+      // V3: Feishu native waterfall — send incremental thinking messages
       if (waterfallState) {
-        // V3: Hide reasoning_activity in waterfall mode — no incremental thinking messages
-        waterfallState.thinkingSentLength = (normalized.text || '').length;
+        const thinkingText = normalized.text || '';
+        const newLength = thinkingText.length;
+        const sentLength = waterfallState.thinkingSentLength;
+        if (newLength > sentLength + 100) {  // Only send if we have at least 100 chars of new thinking
+          const increment = thinkingText.slice(sentLength);
+          const thinkingLines = increment.split('\n').map((l: string) => `> ${l}`).join('\n');
+          const thinkingMessage: OutboundMessage = {
+            address: msg.address,
+            text: `> 💭 **思考中…**\n${thinkingLines}`,
+            parseMode: 'Markdown',
+            replyToMessageId: msg.messageId,
+          };
+          await deliver(adapter, thinkingMessage);
+          waterfallState.thinkingSentLength = newLength;
+        } else {
+          // Track progress even if not sending yet
+          waterfallState.thinkingSentLength = newLength;
+        }
       } else if (previewState) {
         const thinkingText = normalized.text || '';
         if (thinkingText && thinkingText !== previewState.lastThinkingText) {

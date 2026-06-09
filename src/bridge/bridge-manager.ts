@@ -1425,9 +1425,24 @@ async function handleMessage(
     }
     // Send incremental content only (from lastSentLength to current)
     const increment = text.slice(state.lastSentLength);
-    // Skip empty or whitespace-only increments
-    if (!increment.trim()) {
-      state.lastSentLength = text.length;
+    const trimmed = increment.trim();
+    // Skip empty, whitespace-only, or too-short increments (< 20 chars)
+    // Prevents sending meaningless fragments like "我是 **" or "《"
+    if (!trimmed || trimmed.length < 20) {
+      // Don't advance lastSentLength — next flush will accumulate more
+      // But set trailing timer so we eventually flush if text stops growing
+      if (trimmed && delta > 0 && !state.throttleTimer) {
+        state.throttleTimer = setTimeout(() => {
+          state.throttleTimer = null;
+          // Force send remaining content even if short (text stopped growing)
+          const finalIncrement = state.bufferText.slice(state.lastSentLength);
+          if (finalIncrement.trim()) {
+            state.lastSentLength = state.bufferText.length;
+            state.lastSentAt = Date.now();
+            deliver(adapter, { address: msg.address, text: finalIncrement, parseMode: 'Markdown', replyToMessageId: msg.messageId }).catch(() => {});
+          }
+        }, 3000);
+      }
       return;
     }
     state.lastSentLength = text.length;

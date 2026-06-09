@@ -14,13 +14,6 @@ export function buildStreamingCardSkeleton(): Record<string, unknown> {
         print_frequency_ms: { default: 50 },
         print_step: { default: 1 },
       },
-      summary: {
-        content: STREAM_PLACEHOLDER_TEXT,
-        i18n_content: {
-          zh_cn: STREAM_PLACEHOLDER_TEXT,
-          en_us: 'Working on it...',
-        },
-      },
     },
     body: {
       elements: [

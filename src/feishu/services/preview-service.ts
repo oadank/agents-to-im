@@ -110,7 +110,13 @@ export class PreviewService {
         client.cardkit.v1.card.settings({
           path: { card_id: artifact.cardId },
           data: {
-            settings: JSON.stringify({ streaming_mode: false }),
+            settings: JSON.stringify({
+              streaming_mode: false,
+              summary: {
+                content: '✅ 回答完成',
+                i18n_content: { zh_cn: '✅ 回答完成', en_us: 'Done' },
+              },
+            }),
             sequence: artifact.sequence,
           },
         }).catch(() => {});

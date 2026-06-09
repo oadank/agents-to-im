@@ -536,8 +536,16 @@ export class FeishuAdapter extends BaseChannelAdapter {
   }
 
   getPreviewCapabilities(address: ChannelAddress): PreviewCapabilities | null {
-    // V3: Disable CardKit preview for Feishu — use native message streaming instead
-    return null;
+    // V5: Use CardKit for single-card streaming updates (typewriter effect)
+    const store = this.getStore();
+    if (!store.getChannelBinding(this.channelType, address.chatId, this.profileId)) {
+      return null;
+    }
+    return {
+      supported: true,
+      privateOnly: false,
+      finalDelivery: 'replace_preview',
+    };
   }
 
   async sendPreview(address: ChannelAddress, text: string, draftId: number): Promise<'sent' | 'skip' | 'degrade'> {

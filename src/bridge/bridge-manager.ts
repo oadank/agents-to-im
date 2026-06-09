@@ -1371,107 +1371,6 @@ async function handleMessage(
   const previewFinalDelivery = caps?.finalDelivery || 'separate_message';
   const previewFinalizesPerSegment = previewFinalDelivery === 'segment_replace_preview';
 
-  // V3: Feishu native message streaming (waterfall) — used when CardKit preview is disabled
-  interface WaterfallStreamingState {
-    bufferText: string;
-    lastSentLength: number;
-    lastSentAt: number;
-    throttleTimer: ReturnType<typeof setTimeout> | null;
-    inFlight: Promise<void> | null;
-    thinkingSentLength: number;
-    thinkingTimer: ReturnType<typeof setTimeout> | null;
-  }
-  let waterfallState: WaterfallStreamingState | null = null;
-  if (adapter.channelType === 'feishu' && !previewState) {
-    waterfallState = {
-      bufferText: '',
-      lastSentLength: 0,
-      lastSentAt: 0,
-      throttleTimer: null,
-      inFlight: null,
-      thinkingSentLength: 0,
-      thinkingTimer: null,
-    };
-  }
-
-  // V3: Paragraph-based waterfall flush for Feishu
-  // Strategy: send at paragraph boundaries (\n\n), force-send on timeout
-  const waterfallFlush = async (state: WaterfallStreamingState): Promise<void> => {
-    const text = state.bufferText;
-    const delta = text.length - state.lastSentLength;
-    if (delta <= 0) return;
-
-    const increment = text.slice(state.lastSentLength);
-    const trimmed = increment.trim();
-    if (!trimmed) {
-      state.lastSentLength = text.length;
-      return;
-    }
-
-    // Look for paragraph boundary (\n\n) in the increment
-    const paragraphBreak = increment.indexOf('\n\n');
-
-    if (paragraphBreak >= 0) {
-      // Found paragraph boundary — send up to and including \n\n
-      const sendLength = paragraphBreak + 2;
-      const toSend = increment.slice(0, sendLength);
-      if (state.throttleTimer) {
-        clearTimeout(state.throttleTimer);
-        state.throttleTimer = null;
-      }
-      state.lastSentLength = state.lastSentLength + sendLength;
-      state.lastSentAt = Date.now();
-      const outbound: OutboundMessage = {
-        address: msg.address,
-        text: toSend,
-        parseMode: 'Markdown',
-        replyToMessageId: msg.messageId,
-      };
-      const previous = state.inFlight;
-      const next = (previous ? previous.catch(() => undefined).then(() => deliver(adapter, outbound)) : deliver(adapter, outbound))
-        .finally(() => { if (state.inFlight === next) state.inFlight = null; });
-      state.inFlight = next;
-    } else {
-      // No paragraph boundary found yet.
-      // If we have substantial new content (>= 400 chars), send it as partial paragraph.
-      // Otherwise wait for paragraph boundary or timeout.
-      const isSubstantial = delta >= 400;
-      const elapsedSinceLastSend = state.lastSentAt > 0 ? Date.now() - state.lastSentAt : 0;
-      const timeoutReached = state.lastSentAt > 0 && elapsedSinceLastSend >= 5000;
-
-      if (isSubstantial || timeoutReached) {
-        // Send current increment
-        if (state.throttleTimer) {
-          clearTimeout(state.throttleTimer);
-          state.throttleTimer = null;
-        }
-        state.lastSentLength = text.length;
-        state.lastSentAt = Date.now();
-        const outbound: OutboundMessage = {
-          address: msg.address,
-          text: increment,
-          parseMode: 'Markdown',
-          replyToMessageId: msg.messageId,
-        };
-        const previous = state.inFlight;
-        const next = (previous ? previous.catch(() => undefined).then(() => deliver(adapter, outbound)) : deliver(adapter, outbound))
-          .finally(() => { if (state.inFlight === next) state.inFlight = null; });
-        state.inFlight = next;
-      } else {
-        // Not enough content yet — set trailing timer and wait
-        if (!state.throttleTimer) {
-          // Record first touch time so timeout works
-          if (state.lastSentAt === 0) {
-            state.lastSentAt = Date.now();
-          }
-          state.throttleTimer = setTimeout(() => {
-            state.throttleTimer = null;
-            waterfallFlush(state).catch(() => {});
-          }, 1500);
-        }
-      }
-    }
-  };
   const lightweightActivityState: LightweightActivityState | null = adapter.upsertActivityEvent
     ? {
         current: null,
@@ -1851,27 +1750,7 @@ async function handleMessage(
     // reasoning_activity — CardKit preview OR Feishu native waterfall
     if (normalized.kind === 'reasoning_activity') {
       await markProgressCardVisible();
-      // V3: Feishu native waterfall — send incremental thinking messages
-      if (waterfallState) {
-        const thinkingText = normalized.text || '';
-        const newLength = thinkingText.length;
-        const sentLength = waterfallState.thinkingSentLength;
-        if (newLength > sentLength + 100) {  // Only send if we have at least 100 chars of new thinking
-          const increment = thinkingText.slice(sentLength);
-          const thinkingLines = increment.split('\n').map((l: string) => `> ${l}`).join('\n');
-          const thinkingMessage: OutboundMessage = {
-            address: msg.address,
-            text: `> 💭 **思考中…**\n${thinkingLines}`,
-            parseMode: 'Markdown',
-            replyToMessageId: msg.messageId,
-          };
-          await deliver(adapter, thinkingMessage);
-          waterfallState.thinkingSentLength = newLength;
-        } else {
-          // Track progress even if not sending yet
-          waterfallState.thinkingSentLength = newLength;
-        }
-      } else if (previewState) {
+      if (previewState) {
         const thinkingText = normalized.text || '';
         if (thinkingText && thinkingText !== previewState.lastThinkingText) {
           previewState.lastThinkingText = thinkingText;
@@ -1913,13 +1792,7 @@ async function handleMessage(
   };
 
   // Build the onPartialText callback — Feishu uses native waterfall, others use CardKit preview
-  const onPartialText = waterfallState ? (fullText: string) => {
-    // V3: Feishu native message streaming (waterfall)
-    if (!planAttemptIsCurrent()) return;
-    const ws = waterfallState!;
-    ws.bufferText = fullText;
-    waterfallFlush(ws).catch(() => {});
-  } : (previewState && streamCfg) ? (fullText: string) => {
+  const onPartialText = (previewState && streamCfg) ? (fullText: string) => {
     if (!planAttemptIsCurrent()) return;
     const ps = previewState!;
     const cfg = streamCfg!;
@@ -2235,33 +2108,6 @@ async function handleMessage(
     if (hasVisibleResponseBody) {
       await finalizeVisibleLightweightActivity();
     }
-    // V3: Feishu waterfall — flush remaining buffer at end of stream
-    if (waterfallState) {
-      const ws = waterfallState;
-      if (ws.throttleTimer) {
-        clearTimeout(ws.throttleTimer);
-        ws.throttleTimer = null;
-      }
-      ws.lastSentAt = 0;
-      if (ws.bufferText.length > ws.lastSentLength) {
-        await waterfallFlush(ws);
-      }
-      if (ws.inFlight) {
-        await ws.inFlight.catch(() => {});
-      }
-      if (ws.bufferText.trim()) {
-        hasVisibleAssistantOutput = true;
-        responseDelivery = { ok: true };
-      } else if (result.hasError && !stopRequestedByUser) {
-        const errorResponse: OutboundMessage = {
-          address: msg.address,
-          text: escapeHtml(result.errorMessage),
-          parseMode: "plain",
-          replyToMessageId: msg.messageId,
-        };
-        await deliver(adapter, errorResponse);
-      }
-    } else 
     if (previewState && previewFinalDelivery === 'replace_preview') {
       const finalResponseText = result.responseText || remainingSegments.join('\n\n').trim();
       if (finalResponseText) {

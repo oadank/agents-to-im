@@ -1370,6 +1370,70 @@ async function handleMessage(
   const activityDelayMs = getStreamConfig(adapter.channelType).primeDelayMs;
   const previewFinalDelivery = caps?.finalDelivery || 'separate_message';
   const previewFinalizesPerSegment = previewFinalDelivery === 'segment_replace_preview';
+
+  // V3: Feishu native message streaming (waterfall) — used when CardKit preview is disabled
+  interface WaterfallStreamingState {
+    bufferText: string;
+    lastSentLength: number;
+    lastSentAt: number;
+    throttleTimer: ReturnType<typeof setTimeout> | null;
+    inFlight: Promise<void> | null;
+    thinkingSentLength: number;
+    thinkingTimer: ReturnType<typeof setTimeout> | null;
+  }
+  let waterfallState: WaterfallStreamingState | null = null;
+  if (adapter.channelType === 'feishu' && !previewState) {
+    waterfallState = {
+      bufferText: '',
+      lastSentLength: 0,
+      lastSentAt: 0,
+      throttleTimer: null,
+      inFlight: null,
+      thinkingSentLength: 0,
+      thinkingTimer: null,
+    };
+  }
+
+  // V3: Native message streaming flush for Feishu (waterfall effect)
+  const waterfallFlush = async (state: WaterfallStreamingState): Promise<void> => {
+    const text = state.bufferText;
+    const delta = text.length - state.lastSentLength;
+    if (delta < 200 && state.lastSentAt > 0) {
+      if (!state.throttleTimer) {
+        state.throttleTimer = setTimeout(() => {
+          state.throttleTimer = null;
+          waterfallFlush(state).catch(() => {});
+        }, 2000);
+      }
+      return;
+    }
+    const elapsed = Date.now() - state.lastSentAt;
+    if (elapsed < 500 && state.lastSentAt > 0) {
+      if (!state.throttleTimer) {
+        state.throttleTimer = setTimeout(() => {
+          state.throttleTimer = null;
+          waterfallFlush(state).catch(() => {});
+        }, 500);
+      }
+      return;
+    }
+    if (state.throttleTimer) {
+      clearTimeout(state.throttleTimer);
+      state.throttleTimer = null;
+    }
+    state.lastSentLength = text.length;
+    state.lastSentAt = Date.now();
+    const outbound: OutboundMessage = {
+      address: msg.address,
+      text,
+      parseMode: 'Markdown',
+      replyToMessageId: msg.messageId,
+    };
+    const previous = state.inFlight;
+    const next = (previous ? previous.catch(() => undefined).then(() => deliver(adapter, outbound)) : deliver(adapter, outbound))
+      .finally(() => { if (state.inFlight === next) state.inFlight = null; });
+    state.inFlight = next;
+  };
   const lightweightActivityState: LightweightActivityState | null = adapter.upsertActivityEvent
     ? {
         current: null,
@@ -1746,10 +1810,29 @@ async function handleMessage(
     const normalized = normalizeActivityEvent(event);
     const shouldProjectActivity = adapter.shouldProjectActivityEvent?.(normalized) ?? true;
     if (!shouldProjectActivity) return;
-    // reasoning_activity ALWAYS goes to streaming card, NEVER creates activity cards
+    // reasoning_activity — CardKit preview OR Feishu native waterfall
     if (normalized.kind === 'reasoning_activity') {
       await markProgressCardVisible();
-      if (previewState) {
+      // V3: Feishu native waterfall — send incremental thinking
+      if (waterfallState) {
+        const thinkingText = normalized.text || '';
+        const newLength = thinkingText.length;
+        const sentLength = waterfallState.thinkingSentLength;
+        if (newLength > sentLength) {
+          const increment = thinkingText.slice(sentLength);
+          if (increment.trim()) {
+            const thinkingLines = increment.split('\n').map((l: string) => `> ${l}`).join('\n');
+            const thinkingMessage: OutboundMessage = {
+              address: msg.address,
+              text: `> 💭 **思考中…**\n${thinkingLines}`,
+              parseMode: 'Markdown',
+              replyToMessageId: msg.messageId,
+            };
+            await deliver(adapter, thinkingMessage);
+            waterfallState.thinkingSentLength = newLength;
+          }
+        }
+      } else if (previewState) {
         const thinkingText = normalized.text || '';
         if (thinkingText && thinkingText !== previewState.lastThinkingText) {
           previewState.lastThinkingText = thinkingText;
@@ -1757,8 +1840,6 @@ async function handleMessage(
           const thinkingBlock = `> 💭 **思考中…**\n${windowThinking.split('\n').map((l: string) => `> ${l}`).join('\n')}`;
           const answer = previewState.lastSentText || previewState.pendingText;
           const combined = answer ? `${thinkingBlock}\n\n---\n\n${answer}` : thinkingBlock;
-          // Only send if card already primed; otherwise buffer thinking
-          // for primePreview to flush once the card is created.
           if (previewState.placeholderPrimed && adapter.sendPreview) {
             await adapter.sendPreview(msg.address, combined, previewState.draftId).catch(() => {});
           } else {
@@ -1771,7 +1852,6 @@ async function handleMessage(
       }
       return; // ALWAYS return — never create activity card for reasoning
     }
-    await markProgressCardVisible();
     // When streaming card is active, skip ALL other activity card creation
     if (previewState?.placeholderPrimed) return;
     if (normalized.kind === 'lightweight_activity') {
@@ -1793,8 +1873,14 @@ async function handleMessage(
     await adapter.upsertActivityEvent(msg.address, normalized, msg.messageId);
   };
 
-  // Build the onPartialText callback (or undefined if preview not supported)
-  const onPartialText = (previewState && streamCfg) ? (fullText: string) => {
+  // Build the onPartialText callback — Feishu uses native waterfall, others use CardKit preview
+  const onPartialText = waterfallState ? (fullText: string) => {
+    // V3: Feishu native message streaming (waterfall)
+    if (!planAttemptIsCurrent()) return;
+    const ws = waterfallState!;
+    ws.bufferText = fullText;
+    waterfallFlush(ws).catch(() => {});
+  } : (previewState && streamCfg) ? (fullText: string) => {
     if (!planAttemptIsCurrent()) return;
     const ps = previewState!;
     const cfg = streamCfg!;
@@ -1845,8 +1931,6 @@ async function handleMessage(
     }
     flushPreview(adapter, ps, cfg);
   } : undefined;
-
-  let previewClosed = false;
   let streamedSegmentCount = 0;
   let streamedSegmentDelivery: SendResult | null = null;
   let hasVisibleAssistantOutput = false;
@@ -2112,6 +2196,33 @@ async function handleMessage(
     if (hasVisibleResponseBody) {
       await finalizeVisibleLightweightActivity();
     }
+    // V3: Feishu waterfall — flush remaining buffer at end of stream
+    if (waterfallState) {
+      const ws = waterfallState;
+      if (ws.throttleTimer) {
+        clearTimeout(ws.throttleTimer);
+        ws.throttleTimer = null;
+      }
+      ws.lastSentAt = 0;
+      if (ws.bufferText.length > ws.lastSentLength) {
+        await waterfallFlush(ws);
+      }
+      if (ws.inFlight) {
+        await ws.inFlight.catch(() => {});
+      }
+      if (ws.bufferText.trim()) {
+        hasVisibleAssistantOutput = true;
+        responseDelivery = { ok: true };
+      } else if (result.hasError && !stopRequestedByUser) {
+        const errorResponse: OutboundMessage = {
+          address: msg.address,
+          text: escapeHtml(result.errorMessage),
+          parseMode: "plain",
+          replyToMessageId: msg.messageId,
+        };
+        await deliver(adapter, errorResponse);
+      }
+    } else 
     if (previewState && previewFinalDelivery === 'replace_preview') {
       const finalResponseText = result.responseText || remainingSegments.join('\n\n').trim();
       if (finalResponseText) {

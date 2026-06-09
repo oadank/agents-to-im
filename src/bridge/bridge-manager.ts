@@ -1394,68 +1394,83 @@ async function handleMessage(
     };
   }
 
-  // V3: Native message streaming flush for Feishu (waterfall effect)
-    const waterfallFlush = async (state: WaterfallStreamingState): Promise<void> => {
+  // V3: Paragraph-based waterfall flush for Feishu
+  // Strategy: send at paragraph boundaries (\n\n), or force-send after timeout
+  const waterfallFlush = async (state: WaterfallStreamingState): Promise<void> => {
     const text = state.bufferText;
     const delta = text.length - state.lastSentLength;
-    // Skip if no new content or too short (first send needs at least 50 chars)
     if (delta <= 0) return;
-    if (delta < 500 && state.lastSentAt > 0) {
-      if (!state.throttleTimer) {
-        state.throttleTimer = setTimeout(() => {
-          state.throttleTimer = null;
-          waterfallFlush(state).catch(() => {});
-        }, 4000);
-      }
-      return;
-    }
-    const elapsed = Date.now() - state.lastSentAt;
-    if (elapsed < 2000 && state.lastSentAt > 0) {
-      if (!state.throttleTimer) {
-        state.throttleTimer = setTimeout(() => {
-          state.throttleTimer = null;
-          waterfallFlush(state).catch(() => {});
-        }, 2000);
-      }
-      return;
-    }
-    if (state.throttleTimer) {
-      clearTimeout(state.throttleTimer);
-      state.throttleTimer = null;
-    }
-    // Send incremental content only (from lastSentLength to current)
+
     const increment = text.slice(state.lastSentLength);
     const trimmed = increment.trim();
-    // Skip empty, whitespace-only, or too-short increments (< 50 chars)
-    if (!trimmed || trimmed.length < 50) {
-      // Don't advance lastSentLength — next flush will accumulate more
-      // But set trailing timer so we eventually flush if text stops growing
-      if (trimmed && delta > 0 && !state.throttleTimer) {
-        state.throttleTimer = setTimeout(() => {
-          state.throttleTimer = null;
-          // Force send remaining content even if short (text stopped growing)
-          const finalIncrement = state.bufferText.slice(state.lastSentLength);
-          if (finalIncrement.trim()) {
-            state.lastSentLength = state.bufferText.length;
-            state.lastSentAt = Date.now();
-            deliver(adapter, { address: msg.address, text: finalIncrement, parseMode: 'Markdown', replyToMessageId: msg.messageId }).catch(() => {});
-          }
-        }, 4000);
-      }
+    // Skip empty increments
+    if (!trimmed) {
+      state.lastSentLength = text.length;
       return;
     }
-    state.lastSentLength = text.length;
-    state.lastSentAt = Date.now();
-    const outbound: OutboundMessage = {
-      address: msg.address,
-      text: increment,
-      parseMode: 'Markdown',
-      replyToMessageId: msg.messageId,
-    };
-    const previous = state.inFlight;
-    const next = (previous ? previous.catch(() => undefined).then(() => deliver(adapter, outbound)) : deliver(adapter, outbound))
-      .finally(() => { if (state.inFlight === next) state.inFlight = null; });
-    state.inFlight = next;
+
+    // Check if we have a complete paragraph (ends with \n\n or \n followed by non-whitespace)
+    const paragraphBreak = increment.indexOf('\n\n');
+    const hasCompleteParagraph = paragraphBreak >= 0 && paragraphBreak < increment.length - 5;
+
+    if (hasCompleteParagraph) {
+      // Send up to the paragraph boundary
+      const sendLength = paragraphBreak + 2; // include \n\n
+      const toSend = increment.slice(0, sendLength);
+      if (state.throttleTimer) {
+        clearTimeout(state.throttleTimer);
+        state.throttleTimer = null;
+      }
+      state.lastSentLength = state.lastSentLength + sendLength;
+      state.lastSentAt = Date.now();
+      const outbound: OutboundMessage = {
+        address: msg.address,
+        text: toSend,
+        parseMode: 'Markdown',
+        replyToMessageId: msg.messageId,
+      };
+      const previous = state.inFlight;
+      const next = (previous ? previous.catch(() => undefined).then(() => deliver(adapter, outbound)) : deliver(adapter, outbound))
+        .finally(() => { if (state.inFlight === next) state.inFlight = null; });
+      state.inFlight = next;
+    } else if (state.lastSentAt > 0) {
+      // No paragraph break yet — set trailing timer (5s) to force-send
+      const elapsed = Date.now() - state.lastSentAt;
+      if (elapsed < 5000) {
+        if (!state.throttleTimer) {
+          state.throttleTimer = setTimeout(() => {
+            state.throttleTimer = null;
+            waterfallFlush(state).catch(() => {});
+          }, 5000);
+        }
+        return;
+      }
+      // Timeout reached — force send whatever we have
+      if (state.throttleTimer) {
+        clearTimeout(state.throttleTimer);
+        state.throttleTimer = null;
+      }
+      state.lastSentLength = text.length;
+      state.lastSentAt = Date.now();
+      const outbound: OutboundMessage = {
+        address: msg.address,
+        text: increment,
+        parseMode: 'Markdown',
+        replyToMessageId: msg.messageId,
+      };
+      const previous = state.inFlight;
+      const next = (previous ? previous.catch(() => undefined).then(() => deliver(adapter, outbound)) : deliver(adapter, outbound))
+        .finally(() => { if (state.inFlight === next) state.inFlight = null; });
+      state.inFlight = next;
+    } else {
+      // First send — set trailing timer, wait for more content or paragraph break
+      if (!state.throttleTimer) {
+        state.throttleTimer = setTimeout(() => {
+          state.throttleTimer = null;
+          waterfallFlush(state).catch(() => {});
+        }, 5000);
+      }
+    }
   };
   const lightweightActivityState: LightweightActivityState | null = adapter.upsertActivityEvent
     ? {

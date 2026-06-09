@@ -1747,25 +1747,18 @@ async function handleMessage(
     const normalized = normalizeActivityEvent(event);
     const shouldProjectActivity = adapter.shouldProjectActivityEvent?.(normalized) ?? true;
     if (!shouldProjectActivity) return;
-    // reasoning_activity — CardKit preview OR Feishu native waterfall
+    // reasoning_activity — CardKit preview
+    // V5 FIX: Do NOT call sendPreview here — it races with flushPreview and causes duplicate content.
+    // Only store pendingThinkingText. The card will be updated by onPartialText→flushPreview.
     if (normalized.kind === 'reasoning_activity') {
       await markProgressCardVisible();
       if (previewState) {
         const thinkingText = normalized.text || '';
         if (thinkingText && thinkingText !== previewState.lastThinkingText) {
           previewState.lastThinkingText = thinkingText;
+          // Store for flushPreview to combine with answer text
           const windowThinking = thinkingText.length > 1500 ? thinkingText.slice(-1500) : thinkingText;
-          const thinkingBlock = `> 💭 **思考中…**\n${windowThinking.split('\n').map((l: string) => `> ${l}`).join('\n')}`;
-          const answer = previewState.lastSentText || previewState.pendingText;
-          const combined = answer ? `${thinkingBlock}\n\n---\n\n${answer}` : thinkingBlock;
-          if (previewState.placeholderPrimed && adapter.sendPreview) {
-            await adapter.sendPreview(msg.address, combined, previewState.draftId).catch(() => {});
-          } else {
-            previewState.pendingThinkingText = combined;
-            if (adapter.primePreview) {
-              primePreview(adapter, previewState);
-            }
-          }
+          previewState.pendingThinkingText = `> 💭 **思考中…**\n${windowThinking.split('\n').map((l: string) => `> ${l}`).join('\n')}`;
         }
       }
       return; // ALWAYS return — never create activity card for reasoning

@@ -1815,23 +1815,8 @@ async function handleMessage(
       await markProgressCardVisible();
       // V3: Feishu native waterfall — send incremental thinking
       if (waterfallState) {
-        const thinkingText = normalized.text || '';
-        const newLength = thinkingText.length;
-        const sentLength = waterfallState.thinkingSentLength;
-        if (newLength > sentLength) {
-          const increment = thinkingText.slice(sentLength);
-          if (increment.trim()) {
-            const thinkingLines = increment.split('\n').map((l: string) => `> ${l}`).join('\n');
-            const thinkingMessage: OutboundMessage = {
-              address: msg.address,
-              text: `> 💭 **思考中…**\n${thinkingLines}`,
-              parseMode: 'Markdown',
-              replyToMessageId: msg.messageId,
-            };
-            await deliver(adapter, thinkingMessage);
-            waterfallState.thinkingSentLength = newLength;
-          }
-        }
+        // V3: Hide reasoning_activity in waterfall mode — no incremental thinking messages
+        waterfallState.thinkingSentLength = (normalized.text || '').length;
       } else if (previewState) {
         const thinkingText = normalized.text || '';
         if (thinkingText && thinkingText !== previewState.lastThinkingText) {

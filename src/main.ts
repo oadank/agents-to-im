@@ -138,6 +138,7 @@ async function main(): Promise<void> {
       store,
       getUptime: () => (Date.now() - startTime) / 1000,
       getBridgeStatus: bridgeManager.getStatus,
+      larkClient: feishuAdapter.getLarkClient(),
     });
   } catch (err) {
     console.warn('[agents-to-im] Dashboard failed to start:', err instanceof Error ? err.message : err);

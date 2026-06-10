@@ -81,7 +81,7 @@ This project no longer has a multi-platform setup wizard. Setup means:
 
 ## Execution
 
-Use:
+使用:
 
 - `agents-to-im onboard`
 - `bash "SKILL_DIR/scripts/daemon.sh" start`
@@ -90,4 +90,24 @@ Use:
 - `bash "SKILL_DIR/scripts/daemon.sh" logs 50`
 - `bash "SKILL_DIR/scripts/doctor.sh"`
 
-When showing logs or doctor output, summarize the important lines instead of dumping excessive raw output.
+当显示日志或 doctor 输出时，总结重要行而不是转储过多的原始输出。
+
+## 文件结构
+
+```
+opt/agents-to-im/
+├── backup.sh          # 统一入口：备份整个 agents-to-im 目录到 /tmp/backups/
+├── SKILL.md           # 本文件
+├── README.md          # 项目说明
+├── package.json       # 依赖和 CLI 配置
+├── config.env.example # 配置示例
+├── src/               # 源代码
+├── scripts/           # 脚本目录
+│   ├── daemon.sh      # 守护进程管理 (start/stop/status/logs)
+│   ├── doctor.sh      # 诊断脚本
+│   ├── install-codex.sh  # Codex 安装脚本
+│   └── supervisor-*.sh   # 各平台守护进程脚本
+├── references/        # 参考文档
+├── instances/         # 实例目录
+└── systemd/           # systemd 服务文件
+```

@@ -20,6 +20,8 @@ Claude Code 和 Codex 都是好用的终端 AI 编码工具，但有几个痛点
 - ✅ systemd 用户服务自动启动，重启不丢失
 - ✅ 命令白名单机制，路径不再被误判为命令
 - ✅ 独立工作目录，互不干扰
+- ✅ 飞书用户身份发送消息（OAuth 授权，以用户而非机器人身份发消息）
+- ✅ 多 Agent 路由（GLM / Gemini / Opencode 通过 MiMo 网关统一调度）
 
 ---
 
@@ -31,8 +33,11 @@ Claude Code 和 Codex 都是好用的终端 AI 编码工具，但有几个痛点
   ├─ Claude Bot ──→ feishu-claude.service ──→ Claude Code CLI
   │   (独立配置)      (端口 13579)           (工作目录: /opt)
   │
-  └─ Codex Bot ──→ feishu-codex.service ──→ Codex CLI
-      (独立配置)      (端口 13580)           (工作目录: /opt)
+  ├─ Codex Bot ──→ feishu-codex.service ──→ Codex CLI
+  │   (独立配置)      (端口 13580)           (工作目录: /opt)
+  │
+  └─ OpenHuman ──→ feishu-openhuman.service ──→ MiMo 网关 ──→ GLM / Gemini / Opencode
+      (用户身份)      (端口 13581)              (统一调度)
 ```
 
 每个实例独立运行，有自己的：
@@ -52,8 +57,8 @@ Claude Code 和 Codex 都是好用的终端 AI 编码工具，但有几个痛点
 **修改：** 加入命令白名单，只有这些命令才触发处理：
 
 ```
-/new  /new:claude  /new:codex  /reset  /stop
-/start  /help  /status  /cwd  /mode  /bind  /sessions
+/new  /new:claude  /new:codex  /new:glm  /new:gemini  /new:opencode
+/reset  /stop  /start  /help  /status  /cwd  /mode  /bind  /sessions
 ```
 
 其他 `/` 开头的文本（如路径）都当作普通消息处理。
@@ -70,6 +75,37 @@ Claude Code 和 Codex 都是好用的终端 AI 编码工具，但有几个痛点
 ### 3. 多实例部署支持
 
 新增配置模板和服务文件，支持同时部署 Claude 和 Codex 两个实例。
+
+### 4. 飞书用户身份发送消息
+
+支持以飞书用户身份（而非机器人身份）发送消息，让 AI 回复显示为用户自己发出，适用于 OpenHuman 等场景。
+
+**工作原理：**
+- 通过飞书 OAuth 2.0 授权流程获取 `user_access_token`
+- Dashboard 提供 `/api/auth/url` 生成授权链接，`/oauth/callback` 处理回调
+- `lark-client.ts` 中 `withUserAccessToken` 方法自动附加用户令牌
+- `adapter.ts` 中 `shouldUseUserToken()` 判断是否使用用户身份
+
+**新增配置项：**
+
+| 变量 | 说明 |
+|------|------|
+| `CTI_OAUTH_REDIRECT_URI` | OAuth 回调地址 |
+| `CTI_ENABLE_USER_MODE` | 启用用户身份模式 |
+
+### 5. 多 Agent 路由
+
+支持多个 AI Agent 通过 MiMo 网关统一调度，每个 Agent 独立身份和能力：
+
+| Agent | 协议 | 说明 |
+|-------|------|------|
+| GLM | zcode-acp (ACP) | initialize -> session/new -> session/prompt |
+| Gemini | gemini.js -> mimo-gemini-proxy | Google API 与 OpenAI 格式互转 |
+| Opencode | OpenAI 格式 | 原生 stdin/stdout |
+
+- `/new:glm`、`/new:gemini`、`/new:opencode` 创建对应 Agent 会话
+- 各 Agent 共享 ZCode memory，跨会话保持上下文
+- Agent 间通过 signal 消息机制实现通信和 handoff
 
 ---
 
@@ -195,6 +231,9 @@ CTI_DISABLE_PERMISSION_CHECK=true
 ```
 /new:claude     # 创建 Claude 会话
 /new:codex      # 创建 Codex 会话
+/new:glm        # 创建 GLM Agent 会话
+/new:gemini     # 创建 Gemini Agent 会话
+/new:opencode   # 创建 Opencode Agent 会话
 /reset          # 重置当前会话
 /stop           # 停止当前输出
 /status         # 查看状态

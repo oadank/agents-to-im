@@ -24,6 +24,26 @@ import path from 'node:path';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
+/** 从 $CTI_HOME/mcpServers.json 加载 MCP 服务器配置 */
+function loadMcpServers(): Record<string, unknown>[] {
+  const ctiHome = process.env.CTI_HOME || '';
+  const configPath = path.join(ctiHome, 'mcpServers.json');
+  try {
+    if (!fs.existsSync(configPath)) return [];
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    // 转换为 ACP 协议格式: [{name, command, args, env}]
+    return Object.entries(raw).map(([name, cfg]: [string, any]) => ({
+      name,
+      command: cfg.command,
+      args: cfg.args || [],
+      env: cfg.env || {},
+    }));
+  } catch (err) {
+    console.warn(`[zcode-provider] 加载 mcpServers.json 失败:`, err);
+    return [];
+  }
+}
+
 /**
  * 查找 ZCode agent 沙箱目录
  * 只选包含有效配置文件的目录，避免选到空目录
@@ -311,7 +331,7 @@ export class ZCodeProvider implements LLMProvider {
         sessionId2 = 99; // 用新 ID 避免冲突
         child.stdin!.write(JSON.stringify({
           jsonrpc: '2.0', id: sessionId2, method: 'session/new',
-          params: { cwd, mcpServers: [] },
+          params: { cwd, mcpServers: loadMcpServers() },
         }) + '\n');
       };
 
@@ -349,13 +369,13 @@ export class ZCodeProvider implements LLMProvider {
                 console.log(`[zcode-provider] Attempting session/load: ${saved.sessionId}`);
                 child.stdin!.write(JSON.stringify({
                   jsonrpc: '2.0', id: sessionId2, method: 'session/load',
-                  params: { sessionId: saved.sessionId, cwd: saved.cwd, mcpServers: [] },
+                  params: { sessionId: saved.sessionId, cwd: saved.cwd, mcpServers: loadMcpServers() },
                 }) + '\n');
               } else {
                 // 无旧 session，直接新建
                 child.stdin!.write(JSON.stringify({
                   jsonrpc: '2.0', id: sessionId2, method: 'session/new',
-                  params: { cwd, mcpServers: [] },
+                  params: { cwd, mcpServers: loadMcpServers() },
                 }) + '\n');
               }
               continue;
@@ -452,7 +472,7 @@ export class ZCodeProvider implements LLMProvider {
               cached.currentPromptId = newSessionId; // 临时占用，等 session/new 回来
               cached.child.stdin!.write(JSON.stringify({
                 jsonrpc: '2.0', id: newSessionId, method: 'session/new',
-                params: { cwd: cached.cwd, mcpServers: [] },
+                params: { cwd: cached.cwd, mcpServers: loadMcpServers() },
               }) + '\n');
               // 等 session/new 回来后自动重试 prompt（在下面的 session/new 响应处理中）
               continue;

@@ -247,7 +247,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return this.larkClient.lastOutboundMessageAt;
   }
 
-  private getLarkClient(): LarkClient {
+  getLarkClient(): LarkClient {
     return this.larkClient;
   }
 
@@ -1622,9 +1622,14 @@ export class FeishuAdapter extends BaseChannelAdapter {
     };
   }
 
+  private shouldUseUserToken(): boolean {
+    return this.options.profile.enableUserMode === true && this.larkClient.getUserAccessToken() !== null;
+  }
+
   private async sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult> {
     const content = buildPostContent(text);
-    const response = await this.sendLarkMessage(this.withInstance(address), 'post', content, replyToMessageId);
+    const useUserToken = this.shouldUseUserToken();
+    const response = await this.sendLarkMessage(this.withInstance(address), 'post', content, replyToMessageId, undefined, useUserToken);
     assertLarkOk(response, 'im.message.sendPost');
     return {
       ok: true,
@@ -1639,11 +1644,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
     replyToMessageId?: string,
     requestUuid?: string,
   ): Promise<{ messageId: string; openMessageId?: string }> {
+    const useUserToken = this.shouldUseUserToken();
     return this.larkClient.sendCard(
       this.withInstance(address),
       card,
       replyToMessageId,
       requestUuid,
+      useUserToken,
     );
   }
 
@@ -1657,8 +1664,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
     content: string,
     replyToMessageId?: string,
     requestUuid?: string,
+    useUserToken?: boolean,
   ): Promise<{ code?: number; msg?: string; data?: { message_id?: string; open_message_id?: string; chat_id?: string } }> {
-    return this.larkClient.sendMessage(address, msgType, content, replyToMessageId, requestUuid);
+    return this.larkClient.sendMessage(address, msgType, content, replyToMessageId, requestUuid, useUserToken);
   }
 
   private async patchInteractiveCard(

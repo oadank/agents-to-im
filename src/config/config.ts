@@ -11,6 +11,8 @@ export interface FeishuProfileConfig {
   domain?: 'lark';
   allowedUsers?: string[];
   showToolCallCards?: boolean;
+  oauthRedirectUri?: string;
+  enableUserMode?: boolean;
 }
 
 export interface CompactConfig {
@@ -76,6 +78,8 @@ function loadFeishuConfig(env: Map<string, string>): FeishuProfileConfig {
     domain: env.get('CTI_FEISHU_DOMAIN') === 'lark' ? 'lark' : undefined,
     allowedUsers: splitCsv(env.get('CTI_FEISHU_ALLOWED_USERS') || undefined),
     showToolCallCards: parseBoolean(env.get('CTI_FEISHU_SHOW_TOOL_CALL_CARDS')) ?? false,
+    oauthRedirectUri: env.get('CTI_FEISHU_OAUTH_REDIRECT_URI') || undefined,
+    enableUserMode: parseBoolean(env.get('CTI_FEISHU_ENABLE_USER_MODE')) ?? false,
   };
 }
 
@@ -130,6 +134,8 @@ function formatFeishuLines(profile: FeishuProfileConfig): string {
   out += formatEnvLine('CTI_FEISHU_DOMAIN', profile.domain);
   out += formatEnvLine('CTI_FEISHU_ALLOWED_USERS', profile.allowedUsers?.join(','));
   out += formatBooleanEnvLine('CTI_FEISHU_SHOW_TOOL_CALL_CARDS', profile.showToolCallCards);
+  out += formatEnvLine('CTI_FEISHU_OAUTH_REDIRECT_URI', profile.oauthRedirectUri);
+  out += formatBooleanEnvLine('CTI_FEISHU_ENABLE_USER_MODE', profile.enableUserMode);
   return out;
 }
 

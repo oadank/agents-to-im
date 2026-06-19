@@ -9,6 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { ClaudePermissionMode } from '../runtime/claude-mode.js';
+import type { RuntimeName } from '../runtime/types.js';
 import { normalizeClaudePermissionMode } from '../runtime/claude-mode.js';
 import type { ChannelBinding } from './types.js';
 import type {
@@ -345,7 +346,7 @@ export async function processMessage(
 async function consumeStream(
   stream: ReadableStream<string>,
   sessionId: string,
-  runtime: 'claude' | 'codex' | 'openhuman' | 'zcode',
+  runtime: RuntimeName,
   collaborationModeOverride?: ProcessMessageOptions['collaborationModeOverride'],
   onPermissionRequest?: OnPermissionRequest,
   onPartialText?: OnPartialText,

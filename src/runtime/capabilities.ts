@@ -47,4 +47,13 @@ export const RUNTIME_CAPABILITIES: Record<RuntimeName, ProviderCapabilities> = {
     resumeKinds: ['sdkSessionId'],
     elicitation: false,
   },
+  mimo: {
+    nativePlanProtocol: false,
+    askUserQuestion: false,
+    structuredInput: false,
+    approvalKinds: 'permission_callback',
+    activityGranularity: 'basic',
+    resumeKinds: ['sdkSessionId'],
+    elicitation: false,
+  },
 };

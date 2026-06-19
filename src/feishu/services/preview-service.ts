@@ -3,6 +3,7 @@ import { buildSimpleCard, buildStreamingCardSkeleton } from '../cards/index.js';
 import { STREAM_ELEMENT_ID, STREAM_PLACEHOLDER_TEXT } from '../constants.js';
 import { LarkClient } from '../lark-client.js';
 import type { PreviewArtifact } from '../types.js';
+import type { AgentDividerInfo } from '../../bridge/markdown/feishu.js';
 import {
   assertLarkOk,
   previewKey,
@@ -16,6 +17,7 @@ export class PreviewService {
   constructor(
     private readonly larkClient: LarkClient,
     private readonly getReplyToMessageId: (routeKey: string) => string | undefined,
+    private readonly getDividerInfo?: (address: ChannelAddress) => AgentDividerInfo | undefined,
   ) {}
 
   reset(): void {
@@ -172,12 +174,13 @@ export class PreviewService {
     if (!client) return null;
     const routeKey = routeKeyForAddress(address);
     const replyToMessageId = this.getReplyToMessageId(routeKey);
+    const dividerInfo = this.getDividerInfo?.(address);
     console.log(`[preview-service] createPreviewArtifact: chatId=${address.chatId}, draftId=${draftId}, existingArtifacts=${this.previewArtifacts.size}`);
     try {
       const createResponse = await client.cardkit.v1.card.create({
         data: {
           type: 'card_json',
-          data: JSON.stringify(buildStreamingCardSkeleton()),
+          data: JSON.stringify(buildStreamingCardSkeleton(dividerInfo)),
         },
       });
       assertLarkOk(createResponse, 'cardkit.card.create');

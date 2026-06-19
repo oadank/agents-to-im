@@ -228,6 +228,10 @@ export interface AdapterContext {
       cwd?: string;
       bindingMode?: 'code' | 'plan' | 'ask';
       skipReadyMessage?: boolean;
+      /** Bind to an existing chat instead of creating a new group (e.g. for mimo p2p) */
+      existingChatId?: string;
+      /** Override the model field for the session binding */
+      model?: string;
     },
   ): Promise<{ chatId: string; binding: ChannelBinding }>;
   ensureRuntimeAvailable(runtime: RuntimeName): Promise<void>;
@@ -246,6 +250,8 @@ export interface AdapterContext {
   syncChatName(chatId: string): Promise<void>;
   findBindingById(bindingId: string): ChannelBinding | null;
   extractActionSenderIdentity(event: StructuredActionEvent): SenderIdentity | null;
+  /** Extract the chat_id from a card action event (for binding to existing chat) */
+  resolveActionChatId(event: StructuredActionEvent): string | undefined;
   replayNativeSessionHistory(address: ChannelAddress, runtime: RuntimeName, items: NativeReplayItem[]): Promise<void>;
   buildPlanRequestInbound(
     address: ChannelAddress,

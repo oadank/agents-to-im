@@ -13,6 +13,10 @@ export interface FeishuProfileConfig {
   showToolCallCards?: boolean;
   oauthRedirectUri?: string;
   enableUserMode?: boolean;
+  /** 是否在消息底部显示分割线（Agent/Model/Provider 信息） */
+  showAgentDivider?: boolean;
+  /** Agent 名称（如 feishu-mimo），用于分割线显示 */
+  agentName?: string;
 }
 
 export interface CompactConfig {
@@ -24,7 +28,7 @@ export interface CompactConfig {
 
 export interface Config {
   defaultWorkDir: string;
-  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode';
+  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo';
   feishu: FeishuProfileConfig;
   claudeCliExecutable?: string;
   compact: CompactConfig;
@@ -80,6 +84,8 @@ function loadFeishuConfig(env: Map<string, string>): FeishuProfileConfig {
     showToolCallCards: parseBoolean(env.get('CTI_FEISHU_SHOW_TOOL_CALL_CARDS')) ?? false,
     oauthRedirectUri: env.get('CTI_FEISHU_OAUTH_REDIRECT_URI') || undefined,
     enableUserMode: parseBoolean(env.get('CTI_FEISHU_ENABLE_USER_MODE')) ?? false,
+    showAgentDivider: parseBoolean(env.get('CTI_FEISHU_SHOW_AGENT_DIVIDER')) ?? true,
+    agentName: env.get('CTI_AGENT_NAME') || undefined,
   };
 }
 
@@ -102,11 +108,12 @@ export function loadConfig(): Config {
   }
 
   const runtimeStr = env.get('CTI_DEFAULT_RUNTIME') || 'claude';
-  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' =
+  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' =
     runtimeStr === 'codex' ? 'codex'
       : runtimeStr === 'openhuman' ? 'openhuman'
         : runtimeStr === 'zcode' ? 'zcode'
-          : 'claude';
+          : runtimeStr === 'mimo' ? 'mimo'
+            : 'claude';
 
   return {
     defaultWorkDir: env.get('CTI_DEFAULT_WORKDIR') || process.cwd(),
@@ -136,6 +143,8 @@ function formatFeishuLines(profile: FeishuProfileConfig): string {
   out += formatBooleanEnvLine('CTI_FEISHU_SHOW_TOOL_CALL_CARDS', profile.showToolCallCards);
   out += formatEnvLine('CTI_FEISHU_OAUTH_REDIRECT_URI', profile.oauthRedirectUri);
   out += formatBooleanEnvLine('CTI_FEISHU_ENABLE_USER_MODE', profile.enableUserMode);
+  out += formatBooleanEnvLine('CTI_FEISHU_SHOW_AGENT_DIVIDER', profile.showAgentDivider);
+  out += formatEnvLine('CTI_AGENT_NAME', profile.agentName);
   return out;
 }
 

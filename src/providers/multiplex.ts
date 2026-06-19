@@ -5,6 +5,7 @@ import { CodexProvider } from './codex/codex-provider.js';
 import { SDKLLMProvider } from './claude/sdk-provider.js';
 import { OpenHumanProvider, createOpenHumanProvider } from './openhuman/openhuman-provider.js';
 import { ZCodeProvider, createZCodeProvider } from './zcode/zcode-provider.js';
+import { MiMoProvider } from './mimo/mimo-provider.js';
 import { preflightCheck, resolveClaudeCliPath } from './claude/cli-support.js';
 import { PendingApprovals, type PendingPermissions, PendingStructuredInputs } from './claude/permission-gateway.js';
 import {
@@ -12,6 +13,7 @@ import {
   CodexRuntimeDriver,
   OpenHumanRuntimeDriver,
   ZCodeRuntimeDriver,
+  MiMoRuntimeDriver,
   type RuntimeDriver,
 } from '../runtime/driver.js';
 import {
@@ -28,10 +30,12 @@ export class MultiplexLLMProvider implements LLMProvider {
   private codexProvider: CodexProvider | null = null;
   private openhumanProvider: OpenHumanProvider | null = null;
   private zcodeProvider: ZCodeProvider | null = null;
+  private mimoProvider: MiMoProvider | null = null;
   private claudeDriver: ClaudeRuntimeDriver | null = null;
   private codexDriver: CodexRuntimeDriver | null = null;
   private openhumanDriver: OpenHumanRuntimeDriver | null = null;
   private zcodeDriver: ZCodeRuntimeDriver | null = null;
+  private mimoDriver: MiMoRuntimeDriver | null = null;
   private claudeCliPath: string | null = null;
   private readonly pendingApprovals: PendingApprovals;
   private readonly pendingStructuredInputs: PendingStructuredInputs;
@@ -116,10 +120,17 @@ export class MultiplexLLMProvider implements LLMProvider {
     return this.zcodeProvider;
   }
 
+  private async getMiMoProvider(): Promise<MiMoProvider> {
+    if (this.mimoProvider) return this.mimoProvider;
+    this.mimoProvider = new MiMoProvider();
+    return this.mimoProvider;
+  }
+
   protected async getProvider(runtime: RuntimeName): Promise<LLMProvider> {
     if (runtime === 'codex') return this.getCodexProvider();
     if (runtime === 'openhuman') return this.getOpenHumanProvider();
     if (runtime === 'zcode') return this.getZCodeProvider();
+    if (runtime === 'mimo') return this.getMiMoProvider();
     return this.getClaudeProvider();
   }
 
@@ -153,6 +164,16 @@ export class MultiplexLLMProvider implements LLMProvider {
         );
       }
       return this.zcodeDriver;
+    }
+    if (runtime === 'mimo') {
+      if (!this.mimoDriver) {
+        this.mimoDriver = new MiMoRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('mimo') as Promise<MiMoProvider>,
+        );
+      }
+      return this.mimoDriver;
     }
     if (!this.claudeDriver) {
       this.claudeDriver = new ClaudeRuntimeDriver(

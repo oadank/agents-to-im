@@ -26,6 +26,7 @@ import {
   buildPostContent,
   hasComplexMarkdown,
   preprocessFeishuMarkdown,
+  type AgentDividerInfo,
 } from '../bridge/markdown/feishu.js';
 import {
   CLAUDE_PLAN_FOLLOW_UP_REJECT_MESSAGE,
@@ -81,6 +82,7 @@ import {
   buildHandledPlanCard,
   buildNewClaudeSessionCard,
   buildNewCodexSessionCard,
+  buildNewMimoSessionCard,
   buildPermissionCard,
   buildReplayMessageText,
   buildResumeSessionCard,
@@ -173,6 +175,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
   private readonly previewService = new PreviewService(
     this.larkClient,
     (routeKey) => this.lastIncomingMessageId.get(routeKey),
+    (address) => this.buildDividerInfo(address),
   );
   private readonly activityService = new ActivityService(
     this.larkClient,
@@ -322,6 +325,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       syncChatName: this.syncChatName.bind(this),
       findBindingById: this.findBindingById.bind(this),
       extractActionSenderIdentity: this.extractActionSenderIdentity.bind(this),
+      resolveActionChatId: this.resolveActionChatId.bind(this),
       replayNativeSessionHistory: this.replayNativeSessionHistory.bind(this),
       buildPlanRequestInbound: this.buildPlanRequestInbound.bind(this),
       buildNativePlanRequestInbound: this.buildNativePlanRequestInbound.bind(this),
@@ -694,9 +698,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
     }
 
     const text = normalizeMarkdown(message);
-    const result = hasComplexMarkdown(text)
-      ? await this.sendAsInteractiveCard(address, text, message.replyToMessageId)
-      : await this.sendAsPost(address, text, message.replyToMessageId);
+    // Always use interactive card (shows Agent/Model/Provider info in footer)
+    const result = await this.sendAsInteractiveCard(address, text, message.replyToMessageId);
     if (result.ok) {
       void this.maybeSyncSessionTitle(address.chatId);
     }
@@ -874,6 +877,10 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return extractActionSenderIdentityWithContext(this.getHandlerContext(), event);
   }
 
+  private resolveActionChatId(event: StructuredActionEvent): string | undefined {
+    return event.context?.open_chat_id || undefined;
+  }
+
   private getRecentWorkspaceOptions(): RecentWorkspaceOption[] {
     const store = this.getStore();
     return listRecentWorkspaces(
@@ -911,6 +918,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
         '可用命令：`/stop` 中断当前输出、`/reset` 重置会话。',
       ].join('\n');
     }
+    if (runtime === 'mimo') {
+      return [
+        '已创建 MiMo 会话，已绑定当前私聊窗口。',
+        '后续直接发消息继续对话。',
+        '可用命令：`/stop` 中断当前输出、`/reset` 重置会话。',
+      ].join('\n');
+    }
     return [
       `已创建 codex 会话，当前模式：**${binding.mode === 'plan' ? 'Plan' : '默认'}**。`,
       '后续请直接在本群继续对话。',
@@ -933,14 +947,17 @@ export class FeishuAdapter extends BaseChannelAdapter {
       cwd?: string;
       bindingMode?: 'code' | 'plan' | 'ask';
       skipReadyMessage?: boolean;
+      existingChatId?: string;
+      model?: string;
     },
   ): Promise<{ chatId: string; binding: ChannelBinding }> {
     await this.ensureRuntimeAvailable(runtime);
     const store = this.getStore();
-    const chatId = await this.createSessionGroup(runtime, sender, options?.claudePermissionMode);
+    // Use existing chat ID if provided (e.g., for mimo p2p binding), otherwise create new group
+    const chatId = options?.existingChatId || await this.createSessionGroup(runtime, sender, options?.claudePermissionMode);
     const session = store.createRuntimeSession({
       runtime,
-      model: '',
+      model: options?.model || '',
       cwd: options?.cwd || store.getSetting('bridge_default_work_dir') || process.cwd(),
     });
     const initialBinding = store.upsertChannelBinding({
@@ -950,7 +967,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       codepilotSessionId: session.id,
       workingDirectory: session.working_directory,
       model: session.model,
-      chatType: 'group',
+      chatType: options?.existingChatId ? 'p2p' : 'group',
       ...(runtime === 'claude'
         ? { claudePermissionMode: options?.claudePermissionMode || 'default' }
         : {}),
@@ -999,7 +1016,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
     const workspaces = this.getRecentWorkspaceOptions();
     const card = runtime === 'codex'
       ? buildNewCodexSessionCard(workspaces)
-      : buildNewClaudeSessionCard(workspaces);
+      : runtime === 'mimo'
+        ? buildNewMimoSessionCard(workspaces)
+        : buildNewClaudeSessionCard(workspaces);
     const result = await this.sendInteractiveCard(address, card, replyToMessageId);
     return {
       ok: true,
@@ -1611,8 +1630,44 @@ export class FeishuAdapter extends BaseChannelAdapter {
     };
   }
 
+  private buildDividerInfo(address: ChannelAddress): AgentDividerInfo | undefined {
+    // Build divider info if enabled (same logic as sendAsInteractiveCard/sendAsPost)
+    if (this.options.profile.showAgentDivider ?? true) {
+      const store = this.getStore();
+      const binding = store.getChannelBinding(this.channelType, address.chatId, this.profileId);
+      const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
+
+      // Prefer session.model (actual model used) over binding.model (initial value)
+      const modelName = session?.model || binding?.model || 'N/A';
+
+      return {
+        agent: this.options.profile.agentName || this.profileId,
+        model: modelName,
+        provider: 'LiteLLM',
+      };
+    }
+    return undefined;
+  }
+
   private async sendAsInteractiveCard(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult> {
-    const content = buildCardContent(text);
+    // Build divider info if enabled
+    let dividerInfo: AgentDividerInfo | undefined;
+    if (this.options.profile.showAgentDivider ?? true) {
+      const store = this.getStore();
+      const binding = store.getChannelBinding(this.channelType, address.chatId, this.profileId);
+      const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
+
+      // Prefer session.model (actual model used) over binding.model (initial value)
+      const modelName = session?.model || binding?.model || 'N/A';
+
+      dividerInfo = {
+        agent: this.options.profile.agentName || this.profileId,
+        model: modelName,
+        provider: 'LiteLLM',
+      };
+    }
+
+    const content = buildCardContent(text, dividerInfo);
     const response = await this.sendLarkMessage(this.withInstance(address), 'interactive', content, replyToMessageId);
     assertLarkOk(response, 'im.message.sendInteractive');
     return {
@@ -1627,7 +1682,24 @@ export class FeishuAdapter extends BaseChannelAdapter {
   }
 
   private async sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult> {
-    const content = buildPostContent(text);
+    // Build divider info if enabled (same logic as sendAsInteractiveCard)
+    let dividerInfo: AgentDividerInfo | undefined;
+    if (this.options.profile.showAgentDivider ?? true) {
+      const store = this.getStore();
+      const binding = store.getChannelBinding(this.channelType, address.chatId, this.profileId);
+      const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
+
+      // Prefer session.model (actual model used) over binding.model (initial value)
+      const modelName = session?.model || binding?.model || 'N/A';
+
+      dividerInfo = {
+        agent: this.options.profile.agentName || this.profileId,
+        model: modelName,
+        provider: 'LiteLLM',
+      };
+    }
+
+    const content = buildPostContent(text, dividerInfo);
     const useUserToken = this.shouldUseUserToken();
     const response = await this.sendLarkMessage(this.withInstance(address), 'post', content, replyToMessageId, undefined, useUserToken);
     assertLarkOk(response, 'im.message.sendPost');

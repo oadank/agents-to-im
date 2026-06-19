@@ -273,6 +273,10 @@ export async function handleDirectMessage(
     await ctx.handleCreateSessionCommand(sender, inbound, 'zcode');
     return;
   }
+  if (command === '/new:mimo') {
+    await ctx.handleCreateSessionCommand(sender, inbound, 'mimo');
+    return;
+  }
   if (command === '/resume:claude') {
     await ctx.handleResumeSessionCommand(sender, inbound, 'claude');
     return;

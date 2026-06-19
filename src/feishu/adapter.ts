@@ -1,6 +1,3 @@
-import { randomUUID } from 'node:crypto';
-import fs from 'node:fs';
-
 import * as lark from '@larksuiteoapi/node-sdk';
 
 import type {
@@ -16,24 +13,18 @@ import type {
   SendResult,
 } from '../bridge/types.js';
 import { DEFAULT_CHANNEL_INSTANCE_ID, resolveChannelInstanceId } from '../bridge/types.js';
-import type { StructuredInputRequestInfo, StructuredInputResponse } from '../bridge/host.js';
+import type { StructuredInputRequestInfo } from '../bridge/host.js';
 import { BaseChannelAdapter } from '../bridge/channel-adapter.js';
 import { getBridgeContext } from '../bridge/context.js';
 import { appendLocalCommandExchange } from '../bridge/local-command-history.js';
-import { validateMode } from '../bridge/security/validators.js';
 import {
   buildCardContent,
   buildPostContent,
-  hasComplexMarkdown,
   preprocessFeishuMarkdown,
   type AgentDividerInfo,
 } from '../bridge/markdown/feishu.js';
 import {
-  CLAUDE_PLAN_FOLLOW_UP_REJECT_MESSAGE,
-  buildHandledClaudePlanExitCard,
   buildClaudePlanExecutionPrompt,
-  buildClaudePlanFollowUpPrompt,
-  buildClaudePlanModeUpdates,
 } from '../runtime/claude-plan-exit.js';
 import {
   getClaudeModeSuffix,
@@ -44,7 +35,6 @@ import type { ClaudePermissionMode } from '../runtime/claude-mode.js';
 import {
   listClaudeNativeWorkspaces,
   listCodexNativeWorkspaces,
-  listRecentNativeSessions,
   type NativeReplayItem,
 } from '../infra/native-session-history.js';
 import { getRuntimeConfig } from '../config/runtime-configs.js';
@@ -76,16 +66,12 @@ import {
 } from './handlers/index.js';
 import { LarkClient } from './lark-client.js';
 import {
-  buildActivityCard,
   buildActionCard,
   buildClaudeModeCard,
-  buildHandledPermissionCard,
-  buildHandledPlanCard,
   buildNewClaudeSessionCard,
   buildNewCodexSessionCard,
   buildNewMimoSessionCard,
   buildPermissionCard,
-  buildReplayMessageText,
   buildResumeSessionCard,
   buildSimpleCard,
   buildStatusCard,

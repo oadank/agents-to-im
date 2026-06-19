@@ -89,10 +89,11 @@ export async function handleNewSessionCardAction(
   const actionMessageId = resolveActionOpenMessageId(event);
   const cwd = ctx.resolveSelectedWorkdir(event.action?.form_value as Record<string, unknown> | undefined);
   try {
-    // For mimo runtime, bind to existing chat and set model to 'mimocode'
+    // For mimo runtime, bind to existing chat and set model to actual configured model
+    const mimoModel = ctx.getStore().getSetting('compact_model') || 'MiMo-OpenAI';
     const mimoOptions = runtime === 'mimo' ? {
       existingChatId: ctx.resolveActionChatId(event),
-      model: 'mimocode',
+      model: mimoModel,
     } : {};
     await ctx.createBoundSession(runtime, sender, {
       cwd,

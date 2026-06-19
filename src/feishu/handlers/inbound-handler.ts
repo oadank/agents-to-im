@@ -276,11 +276,12 @@ export async function handleDirectMessage(
   if (command === '/new' || command === '/new:mimo') {
     const store = ctx.getStore();
     const cwd = store.getSetting('bridge_default_work_dir') || process.cwd();
+    const mimoModel = store.getSetting('compact_model') || 'mimocode';
     try {
       await ctx.ensureRuntimeAvailable('mimo');
       const session = store.createRuntimeSession({
         runtime: 'mimo',
-        model: 'mimocode',
+        model: mimoModel,
         cwd,
       });
       store.upsertChannelBinding({
@@ -289,7 +290,7 @@ export async function handleDirectMessage(
         chatId: inbound.address.chatId,
         codepilotSessionId: session.id,
         workingDirectory: session.working_directory,
-        model: 'mimocode',
+        model: mimoModel,
         chatType: 'p2p',
       });
       await ctx.sendAsPost(
@@ -297,7 +298,7 @@ export async function handleDirectMessage(
         `✅ MiMo 会话已创建\n\n工作区：\`${cwd}\`\n直接发消息即可开始对话。`,
         inbound.messageId,
       );
-      console.log(`[feishu-adapter] Created and bound mimo session ${session.id} (model=mimocode) to p2p chat ${inbound.address.chatId}`);
+      console.log(`[feishu-adapter] Created and bound mimo session ${session.id} (model=${mimoModel}) to p2p chat ${inbound.address.chatId}`);
     } catch (error) {
       console.error('[feishu-adapter] Failed to create mimo session:', error);
       await ctx.sendAsPost(

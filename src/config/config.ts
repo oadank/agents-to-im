@@ -17,6 +17,10 @@ export interface FeishuProfileConfig {
   showAgentDivider?: boolean;
   /** Agent 名称（如 feishu-mimo），用于分割线显示 */
   agentName?: string;
+  /** 模型组名（如 MiMo-OpenAI, codex-model, MiMogo），用于分割线显示 */
+  modelGroup?: string;
+  /** 服务商名（如 LiteLLM, Volcengine），用于分割线显示 */
+  modelProvider?: string;
 }
 
 export interface CompactConfig {
@@ -86,6 +90,8 @@ function loadFeishuConfig(env: Map<string, string>): FeishuProfileConfig {
     enableUserMode: parseBoolean(env.get('CTI_FEISHU_ENABLE_USER_MODE')) ?? false,
     showAgentDivider: parseBoolean(env.get('CTI_FEISHU_SHOW_AGENT_DIVIDER')) ?? true,
     agentName: env.get('CTI_AGENT_NAME') || undefined,
+    modelGroup: env.get('CTI_MODEL_GROUP') || undefined,
+    modelProvider: env.get('CTI_MODEL_PROVIDER') || undefined,
   };
 }
 

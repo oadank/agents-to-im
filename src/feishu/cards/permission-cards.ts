@@ -1,8 +1,30 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 
 import type { OutboundMessage } from '../../bridge/types.js';
+import type { AgentDividerInfo } from '../../bridge/markdown/feishu.js';
 
-export function buildSimpleCard(text: string): Record<string, unknown> {
+export function buildSimpleCard(text: string, dividerInfo?: AgentDividerInfo): Record<string, unknown> {
+  const elements: Array<Record<string, unknown>> = [
+    {
+      tag: 'markdown',
+      content: text,
+    },
+  ];
+
+  // Add agent info if provided (use markdown separator, not divider tag — reply API doesn't support divider)
+  if (dividerInfo) {
+    const parts: string[] = [];
+    if (dividerInfo.agent) parts.push(`Agent: ${dividerInfo.agent}`);
+    if (dividerInfo.model) parts.push(`Model: ${dividerInfo.model}`);
+    if (dividerInfo.provider) parts.push(`Provider: ${dividerInfo.provider}`);
+
+    const infoText = parts.join(' | ') || 'Agent: N/A';
+    elements.push({
+      tag: 'markdown',
+      content: `---\n${infoText}`,
+    });
+  }
+
   return {
     schema: '2.0',
     config: {
@@ -10,12 +32,7 @@ export function buildSimpleCard(text: string): Record<string, unknown> {
       update_multi: true,
     },
     body: {
-      elements: [
-        {
-          tag: 'markdown',
-          content: text,
-        },
-      ],
+      elements,
     },
   };
 }

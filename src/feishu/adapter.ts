@@ -47,6 +47,7 @@ import {
   listRecentNativeSessions,
   type NativeReplayItem,
 } from '../infra/native-session-history.js';
+import { getRuntimeConfig } from '../config/runtime-configs.js';
 
 import type { MultiplexLLMProvider } from '../providers/multiplex.js';
 import { listRecentWorkspaces, type RecentWorkspaceOption } from '../infra/recent-workspaces.js';
@@ -1636,14 +1637,20 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const store = this.getStore();
       const binding = store.getChannelBinding(this.channelType, address.chatId, this.profileId);
       const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
+      const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
 
-      // Prefer session.model (actual model used) over binding.model (initial value)
-      const modelName = session?.model || binding?.model || 'N/A';
+      // Get runtime from session extension, default to 'mimo'
+      const runtime = sessionExt?.runtime || 'mimo';
+      const runtimeConfig = getRuntimeConfig(runtime);
+
+      // Use runtime config for model and provider
+      const modelName = runtimeConfig.model || session?.model || binding?.model || 'N/A';
+      const providerName = runtimeConfig.provider || 'N/A';
 
       return {
         agent: this.options.profile.agentName || this.profileId,
         model: modelName,
-        provider: 'LiteLLM',
+        provider: providerName,
       };
     }
     return undefined;
@@ -1656,14 +1663,20 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const store = this.getStore();
       const binding = store.getChannelBinding(this.channelType, address.chatId, this.profileId);
       const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
+      const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
 
-      // Prefer session.model (actual model used) over binding.model (initial value)
-      const modelName = session?.model || binding?.model || 'N/A';
+      // Get runtime from session extension, default to 'mimo'
+      const runtime = sessionExt?.runtime || 'mimo';
+      const runtimeConfig = getRuntimeConfig(runtime);
+
+      // Use runtime config for model and provider
+      const modelName = runtimeConfig.model || session?.model || binding?.model || 'N/A';
+      const providerName = runtimeConfig.provider || 'N/A';
 
       dividerInfo = {
         agent: this.options.profile.agentName || this.profileId,
         model: modelName,
-        provider: 'LiteLLM',
+        provider: providerName,
       };
     }
 
@@ -1688,14 +1701,20 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const store = this.getStore();
       const binding = store.getChannelBinding(this.channelType, address.chatId, this.profileId);
       const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
+      const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
 
-      // Prefer session.model (actual model used) over binding.model (initial value)
-      const modelName = session?.model || binding?.model || 'N/A';
+      // Get runtime from session extension, default to 'mimo'
+      const runtime = sessionExt?.runtime || 'mimo';
+      const runtimeConfig = getRuntimeConfig(runtime);
+
+      // Use runtime config for model and provider
+      const modelName = runtimeConfig.model || session?.model || binding?.model || 'N/A';
+      const providerName = runtimeConfig.provider || 'N/A';
 
       dividerInfo = {
         agent: this.options.profile.agentName || this.profileId,
         model: modelName,
-        provider: 'LiteLLM',
+        provider: providerName,
       };
     }
 

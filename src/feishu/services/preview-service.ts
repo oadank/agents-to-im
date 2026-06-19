@@ -40,6 +40,7 @@ export class PreviewService {
     const routeKey = routeKeyForAddress(address);
     const key = previewKey(routeKey, draftId);
     let artifact = this.previewArtifacts.get(key);
+    const dividerInfo = this.getDividerInfo?.(address);
     console.log(`[preview-service] sendPreview: key=${key}, exists=${!!artifact}, total=${this.previewArtifacts.size}`);
     if (!artifact) {
       const createdArtifact = await this.createPreviewArtifact(address, draftId, text);
@@ -61,7 +62,7 @@ export class PreviewService {
         });
         assertLarkOk(response, 'cardkit.cardElement.content');
       } else if (artifact.messageId) {
-        await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(text));
+        await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(text, dividerInfo));
       }
       artifact.lastText = text;
       artifact.streamed = true;
@@ -70,7 +71,7 @@ export class PreviewService {
       if (artifact.mode === 'cardkit' && artifact.messageId) {
         artifact.mode = 'patch';
         try {
-          await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(text));
+          await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(text, dividerInfo));
           artifact.lastText = text;
           artifact.streamed = true;
           return 'sent';
@@ -130,6 +131,7 @@ export class PreviewService {
 
   async finalizePreview(address: ChannelAddress, _finalText: string, draftId?: number): Promise<SendResult | null> {
     const client = this.larkClient.getClient();
+    const dividerInfo = this.getDividerInfo?.(address);
     // Find the correct artifact
     let artifact: PreviewArtifact | null = null;
     if (draftId) {
@@ -154,7 +156,7 @@ export class PreviewService {
         assertLarkOk(settingsResponse, 'cardkit.card.settings');
       } else if (artifact.messageId) {
         // Fallback: patch card with final text
-        await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(_finalText));
+        await this.larkClient.patchCard(artifact.messageId, buildSimpleCard(_finalText, dividerInfo));
       }
       artifact.lastText = _finalText;
       artifact.streamed = true;
@@ -218,7 +220,7 @@ export class PreviewService {
         const fallbackText = text.trim() ? text : STREAM_PLACEHOLDER_TEXT;
         const sendResult = await this.larkClient.sendCard(
           address,
-          buildSimpleCard(fallbackText),
+          buildSimpleCard(fallbackText, dividerInfo),
           replyToMessageId,
         );
         return {

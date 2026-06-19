@@ -1,8 +1,8 @@
 # agents-to-im
 
-> 把 Claude Code 和 Codex 桥接到飞书，让团队在 IM 里直接用 AI 编码。
+> 把 AI 编码 Agent 桥接到飞书（Claude / Codex / MiMo / OpenHuman）
 
-基于 [francize/agents-to-im](https://github.com/francize/agents-to-im) 二次开发，针对多实例部署做了优化。
+基于 [francize/agents-to-im](https://github.com/francize/agents-to-im) 二次开发，支持多 Runtime、多实例部署、动态模型显示。
 
 ---
 
@@ -30,14 +30,17 @@ Claude Code 和 Codex 都是好用的终端 AI 编码工具，但有几个痛点
 ```
 用户 (飞书)
   │
-  ├─ Claude Bot ──→ feishu-claude.service ──→ Claude Code CLI
-  │   (独立配置)      (端口 13579)           (工作目录: /opt)
+  ├─ feishu-mimo ──→ LiteLLM ──→ MiMo-Go / DsV4go / codex-model
+  │   (独立配置)      (代理层)
   │
-  ├─ Codex Bot ──→ feishu-codex.service ──→ Codex CLI
-  │   (独立配置)      (端口 13580)           (工作目录: /opt)
+  ├─ feishu-claude ──→ LiteLLM ──→ claude-model / MiMo-Anthropic
+  │   (独立配置)      (代理层)
   │
-  └─ OpenHuman ──→ feishu-openhuman.service ──→ MiMo 网关 ──→ GLM / Gemini / Opencode
-      (用户身份)      (端口 13581)              (统一调度)
+  ├─ feishu-codex ──→ LiteLLM ──→ codex-model
+  │   (独立配置)      (代理层)
+  │
+  └─ feishu-openhuman ──→ LiteLLM ──→ claude-model
+      (独立配置)      (代理层)
 ```
 
 每个实例独立运行，有自己的：
@@ -45,6 +48,7 @@ Claude Code 和 Codex 都是好用的终端 AI 编码工具，但有几个痛点
 - 端口（Dashboard 互不冲突）
 - 工作目录
 - 会话状态
+- 模型配置（通过 LiteLLM 代理）
 
 ---
 
@@ -93,19 +97,42 @@ Claude Code 和 Codex 都是好用的终端 AI 编码工具，但有几个痛点
 | `CTI_OAUTH_REDIRECT_URI` | OAuth 回调地址 |
 | `CTI_ENABLE_USER_MODE` | 启用用户身份模式 |
 
-### 5. 多 Agent 路由
+### 5. 多 Runtime 支持
 
-支持多个 AI Agent 通过 MiMo 网关统一调度，每个 Agent 独立身份和能力：
+支持多种 AI 编码工具作为 Runtime：
 
-| Agent | 协议 | 说明 |
-|-------|------|------|
-| GLM | zcode-acp (ACP) | initialize -> session/new -> session/prompt |
-| Gemini | gemini.js -> mimo-gemini-proxy | Google API 与 OpenAI 格式互转 |
-| Opencode | OpenAI 格式 | 原生 stdin/stdout |
+| Runtime | 说明 | 命令 |
+|---------|------|------|
+| claude | Claude Code CLI | `/new:claude` |
+| codex | Codex CLI | `/new:codex` |
+| mimo | MiMo 通过 LiteLLM | `/new:mimo` |
+| openhuman | OpenHuman Agent | `/new:openhuman` |
 
-- `/new:glm`、`/new:gemini`、`/new:opencode` 创建对应 Agent 会话
-- 各 Agent 共享 ZCode memory，跨会话保持上下文
-- Agent 间通过 signal 消息机制实现通信和 handoff
+- 每个 Runtime 独立配置模型和 Provider
+- 通过 LiteLLM 代理层统一管理模型路由
+- 支持动态切换模型（修改配置后重启服务）
+
+### 6. Divider 动态显示
+
+每条消息底部自动显示 Agent 信息：
+
+```
+Agent: feishu-mimo | Model: MiMogo | Provider: LiteLLM
+```
+
+**配置项：**
+
+| 变量 | 说明 | 示例 |
+|------|------|------|
+| `CTI_FEISHU_SHOW_AGENT_DIVIDER` | 是否显示消息底部 divider | `true` |
+| `CTI_AGENT_NAME` | Agent 名称（显示在 divider） | `feishu-mimo` |
+| `CTI_MODEL_GROUP` | 模型组名（显示在 divider） | `MiMogo` |
+| `CTI_MODEL_PROVIDER` | 服务商名（显示在 divider） | `LiteLLM` |
+
+**特点：**
+- 所有 Runtime 统一配置方式
+- 修改配置后重启服务即生效
+- 支持动态切换模型，divider 自动更新
 
 ---
 
@@ -203,9 +230,13 @@ CTI_DISABLE_PERMISSION_CHECK=true
 |------|------|
 | `CTI_FEISHU_APP_ID` | 飞书开放平台的应用 ID |
 | `CTI_FEISHU_APP_SECRET` | 飞书应用密钥 |
-| `CTI_DEFAULT_RUNTIME` | `claude` 或 `codex` |
+| `CTI_DEFAULT_RUNTIME` | `claude`、`codex`、`mimo` 或 `openhuman` |
 | `CTI_DASHBOARD_PORT` | 控制面板端口，每个实例必须不同 |
 | `CTI_DEFAULT_WORKDIR` | 默认工作目录 |
+| `CTI_FEISHU_SHOW_AGENT_DIVIDER` | 是否显示消息底部 divider（默认 `true`） |
+| `CTI_AGENT_NAME` | Agent 名称，显示在 divider |
+| `CTI_MODEL_GROUP` | 模型组名，显示在 divider |
+| `CTI_MODEL_PROVIDER` | 服务商名，显示在 divider |
 
 ---
 
@@ -231,9 +262,8 @@ CTI_DISABLE_PERMISSION_CHECK=true
 ```
 /new:claude     # 创建 Claude 会话
 /new:codex      # 创建 Codex 会话
-/new:glm        # 创建 GLM Agent 会话
-/new:gemini     # 创建 Gemini Agent 会话
-/new:opencode   # 创建 Opencode Agent 会话
+/new:mimo       # 创建 MiMo 会话
+/new:openhuman  # 创建 OpenHuman 会话
 /reset          # 重置当前会话
 /stop           # 停止当前输出
 /status         # 查看状态

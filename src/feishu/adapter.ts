@@ -1,6 +1,3 @@
-import { randomUUID } from 'node:crypto';
-import fs from 'node:fs';
-
 import * as lark from '@larksuiteoapi/node-sdk';
 
 import type {
@@ -16,23 +13,18 @@ import type {
   SendResult,
 } from '../bridge/types.js';
 import { DEFAULT_CHANNEL_INSTANCE_ID, resolveChannelInstanceId } from '../bridge/types.js';
-import type { StructuredInputRequestInfo, StructuredInputResponse } from '../bridge/host.js';
+import type { StructuredInputRequestInfo } from '../bridge/host.js';
 import { BaseChannelAdapter } from '../bridge/channel-adapter.js';
 import { getBridgeContext } from '../bridge/context.js';
 import { appendLocalCommandExchange } from '../bridge/local-command-history.js';
-import { validateMode } from '../bridge/security/validators.js';
 import {
   buildCardContent,
   buildPostContent,
-  hasComplexMarkdown,
   preprocessFeishuMarkdown,
+  type AgentDividerInfo,
 } from '../bridge/markdown/feishu.js';
 import {
-  CLAUDE_PLAN_FOLLOW_UP_REJECT_MESSAGE,
-  buildHandledClaudePlanExitCard,
   buildClaudePlanExecutionPrompt,
-  buildClaudePlanFollowUpPrompt,
-  buildClaudePlanModeUpdates,
 } from '../runtime/claude-plan-exit.js';
 import {
   getClaudeModeSuffix,
@@ -43,9 +35,9 @@ import type { ClaudePermissionMode } from '../runtime/claude-mode.js';
 import {
   listClaudeNativeWorkspaces,
   listCodexNativeWorkspaces,
-  listRecentNativeSessions,
   type NativeReplayItem,
 } from '../infra/native-session-history.js';
+import { getRuntimeConfig } from '../config/runtime-configs.js';
 
 import type { MultiplexLLMProvider } from '../providers/multiplex.js';
 import { listRecentWorkspaces, type RecentWorkspaceOption } from '../infra/recent-workspaces.js';
@@ -74,15 +66,12 @@ import {
 } from './handlers/index.js';
 import { LarkClient } from './lark-client.js';
 import {
-  buildActivityCard,
   buildActionCard,
   buildClaudeModeCard,
-  buildHandledPermissionCard,
-  buildHandledPlanCard,
   buildNewClaudeSessionCard,
   buildNewCodexSessionCard,
+  buildNewMimoSessionCard,
   buildPermissionCard,
-  buildReplayMessageText,
   buildResumeSessionCard,
   buildSimpleCard,
   buildStatusCard,
@@ -103,11 +92,13 @@ import {
   TYPING_EMOJI,
   findMissingAppScopes,
 } from './constants.js';
+import { OutboundAudioService } from './services/outbound-audio-service.js';
 import type {
   ActivityArtifact,
   FeishuAdapterOptions,
   FeishuChatUpdatedEventData,
   FeishuMessageEventData,
+  FeishuMessageRecalledEventData,
   PendingActivitySend,
   PendingInboundImage,
   PreviewArtifact,
@@ -171,6 +162,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
   private readonly previewService = new PreviewService(
     this.larkClient,
     (routeKey) => this.lastIncomingMessageId.get(routeKey),
+    (address) => this.buildDividerInfo(address),
   );
   private readonly activityService = new ActivityService(
     this.larkClient,
@@ -179,6 +171,11 @@ export class FeishuAdapter extends BaseChannelAdapter {
   private readonly inboundImageService = new InboundImageService(
     () => this.restClient,
   );
+  private readonly outboundAudioService = new OutboundAudioService(
+    () => this.restClient,
+  );
+  /** Tracks chats that need audio reply (user sent audio message) */
+  private pendingAudioReply = new Map<string, boolean>();
 
   constructor(
     private readonly options: FeishuAdapterOptions = {
@@ -240,7 +237,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return this.larkClient.lastOutboundMessageAt;
   }
 
-  private getLarkClient(): LarkClient {
+  getLarkClient(): LarkClient {
     return this.larkClient;
   }
 
@@ -286,6 +283,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       markSeenMessage: this.markSeenMessage.bind(this),
       enqueue: this.enqueue.bind(this),
       enqueueChatTask: this.enqueueChatTask.bind(this),
+      ingestToMemoryTree: this.ingestToMemoryTree.bind(this),
       sendAsPost: this.sendAsPost.bind(this),
       sendAsInteractiveCard: this.sendAsInteractiveCard.bind(this),
       sendInteractiveCard: this.sendInteractiveCard.bind(this),
@@ -314,6 +312,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       syncChatName: this.syncChatName.bind(this),
       findBindingById: this.findBindingById.bind(this),
       extractActionSenderIdentity: this.extractActionSenderIdentity.bind(this),
+      resolveActionChatId: this.resolveActionChatId.bind(this),
       replayNativeSessionHistory: this.replayNativeSessionHistory.bind(this),
       buildPlanRequestInbound: this.buildPlanRequestInbound.bind(this),
       buildNativePlanRequestInbound: this.buildNativePlanRequestInbound.bind(this),
@@ -321,8 +320,32 @@ export class FeishuAdapter extends BaseChannelAdapter {
       prunePendingInboundImages: this.prunePendingInboundImages.bind(this),
       setPendingInboundImage: this.setPendingInboundImage.bind(this),
       downloadInboundImageAttachment: this.downloadInboundImageAttachment.bind(this),
+      downloadAndTranscribe: this.downloadAndTranscribe.bind(this),
       resolveReferencedInboundImages: this.resolveReferencedInboundImages.bind(this),
+      resolveLatestPendingImageForChat: this.resolveLatestPendingImageForChat.bind(this),
+      setPendingAudioReply: this.setPendingAudioReply.bind(this),
+      clearPendingAudioReply: this.clearPendingAudioReply.bind(this),
+      needsAudioReply: this.needsAudioReply.bind(this),
     };
+  }
+
+  /**
+   * Send a plain-text notification to a feishu chat.
+   * Used by idle-compact and other background processes to notify users.
+   */
+  async sendNotification(chatId: string, text: string): Promise<boolean> {
+    try {
+      const address: ChannelAddress = {
+        channelType: this.channelType,
+        channelInstanceId: this.profileId,
+        chatId,
+      };
+      await this.sendAsPost(address, text);
+      return true;
+    } catch (err) {
+      console.warn(`[feishu-adapter] sendNotification failed for ${chatId}:`, err instanceof Error ? err.message : err);
+      return false;
+    }
   }
 
   private withInstance(address: ChannelAddress): ChannelAddress {
@@ -355,6 +378,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
         await this.handleIncomingEvent(data as FeishuMessageEventData);
       },
       'im.message.message_read_v1': async () => {},
+      'im.message.recalled_v1': async (data: unknown) => {
+        await this.handleMessageRecalledEvent(data as FeishuMessageRecalledEventData);
+      },
       'im.chat.updated_v1': async (data: unknown) => {
         await this.handleChatUpdatedEvent(data as FeishuChatUpdatedEventData);
       },
@@ -377,7 +403,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       appId,
       appSecret,
       domain,
-      loggerLevel: lark.LoggerLevel.info,
+      loggerLevel: lark.LoggerLevel.trace,  // 最详细级别，捕获 ping/pong
     });
 
     const wsClientAny = this.wsClient as unknown as {
@@ -385,9 +411,14 @@ export class FeishuAdapter extends BaseChannelAdapter {
     };
     const originalHandleEventData = wsClientAny.handleEventData.bind(wsClientAny);
     wsClientAny.handleEventData = (data: unknown) => {
-      const frame = data as { headers?: Array<{ key?: string; value?: string }> };
+      const frame = data as { headers?: Array<{ key?: string; value?: string }>; payload?: Uint8Array };
       const messageType = frame.headers?.find((header) => header.key === 'type')?.value;
+      const messageId = frame.headers?.find((header) => header.key === 'message_id')?.value;
+      // 调试：记录所有接收的数据帧类型和 payload
+      const payloadStr = frame.payload ? new TextDecoder('utf-8').decode(frame.payload) : 'undefined';
+      console.log('[feishu-adapter] WS frame received, type=', messageType, 'message_id=', messageId, 'payload=', payloadStr.slice(0, 200));
       if (messageType === 'card' && frame.headers) {
+        console.log('[feishu-adapter] Converting card type to event');
         return originalHandleEventData({
           ...frame,
           headers: frame.headers.map((header) =>
@@ -496,6 +527,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
   }
 
   getPreviewCapabilities(address: ChannelAddress): PreviewCapabilities | null {
+    // V5: Use CardKit for single-card streaming updates (typewriter effect)
     const store = this.getStore();
     if (!store.getChannelBinding(this.channelType, address.chatId, this.profileId)) {
       return null;
@@ -503,7 +535,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return {
       supported: true,
       privateOnly: false,
-      finalDelivery: 'segment_replace_preview',
+      finalDelivery: 'replace_preview',
     };
   }
 
@@ -614,6 +646,19 @@ export class FeishuAdapter extends BaseChannelAdapter {
     }
     const address = this.withInstance(message.address);
 
+    // Check if this chat needs audio reply (user sent audio message)
+    if (this.needsAudioReply(address.chatId)) {
+      const text = normalizeMarkdown(message);
+      console.log(`[feishu-adapter] Sending audio reply to chat ${address.chatId}`);
+      const audioResult = await this.outboundAudioService.sendAudioReply(address, text, message.replyToMessageId);
+      if (audioResult.success) {
+        void this.maybeSyncSessionTitle(address.chatId);
+        return { ok: true };
+      }
+      // Audio reply failed, fall back to text
+      console.warn(`[feishu-adapter] Audio reply failed, falling back to text: ${audioResult.error}`);
+    }
+
     if (message.rawCard) {
       const result = await this.sendInteractiveCard(address, message.rawCard, message.replyToMessageId);
       return {
@@ -640,9 +685,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
     }
 
     const text = normalizeMarkdown(message);
-    const result = hasComplexMarkdown(text)
-      ? await this.sendAsInteractiveCard(address, text, message.replyToMessageId)
-      : await this.sendAsPost(address, text, message.replyToMessageId);
+    // Always use interactive card (shows Agent/Model/Provider info in footer)
+    const result = await this.sendAsInteractiveCard(address, text, message.replyToMessageId);
     if (result.ok) {
       void this.maybeSyncSessionTitle(address.chatId);
     }
@@ -697,6 +741,56 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return this.inboundImageService.downloadInboundImageAttachment(messageId, imageKey);
   }
 
+  private async downloadAndTranscribe(messageId: string, fileKey: string): Promise<{ text: string }> {
+    const client = this.getLarkClient().getClient();
+    if (!client?.im?.messageResource?.get) {
+      throw new Error('Feishu 音频资源下载能力不可用');
+    }
+    
+    const tmpDir = '/tmp/feishu-audio';
+    const tmpFile = `${tmpDir}/${messageId}.opus`;
+    
+    // 确保目录存在
+    const fs = await import('node:fs/promises');
+    const nodeFs = await import('node:fs');
+    await fs.mkdir(tmpDir, { recursive: true });
+    
+    // 使用飞书 API 下载音频文件
+    const response = await client.im.messageResource.get({
+      params: { type: 'file' as never },  // 音频文件用 file 类型
+      path: {
+        message_id: messageId,
+        file_key: fileKey,
+      },
+    });
+    
+    // 从流读取数据
+    const stream = response.getReadableStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const buffer = Buffer.concat(chunks);
+    await fs.writeFile(tmpFile, buffer);
+    
+    // 调用 transcribe.sh 转写
+    const { execSync } = await import('node:child_process');
+    const transcribeScript = '/opt/.codex/skills/voice-engine/transcribe.sh';
+    try {
+      const text = execSync(`bash "${transcribeScript}" "${tmpFile}"`, {
+        encoding: 'utf-8',
+        timeout: 60000,
+        env: { ...process.env, LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || '') },
+      }).trim();
+      // 清理临时文件
+      await fs.unlink(tmpFile).catch(() => {});
+      return { text };
+    } catch (error) {
+      await fs.unlink(tmpFile).catch(() => {});
+      throw error;
+    }
+  }
+
   private resolveReferencedInboundImages(
     chatId: string,
     senderId: string,
@@ -709,6 +803,40 @@ export class FeishuAdapter extends BaseChannelAdapter {
       threadId,
       referenceIds,
     );
+  }
+
+  private resolveLatestPendingImageForChat(
+    chatId: string,
+    senderId: string,
+    threadId?: string,
+  ): { attachments?: FileAttachment[]; errorMessage?: string } | null {
+    const entry = this.inboundImageService.getLatestPendingImageForChat(
+      chatId,
+      senderId,
+      threadId,
+    );
+    if (!entry) return null;
+    if (entry.attachments?.length) {
+      return { attachments: entry.attachments };
+    }
+    return {
+      errorMessage: entry.errorMessage || '这张图片暂时无法读取，请重新发送图片后再直接回复文字。',
+    };
+  }
+
+  private setPendingAudioReply(chatId: string, needsAudio: boolean): void {
+    this.pendingAudioReply.set(chatId, needsAudio);
+  }
+
+  private clearPendingAudioReply(chatId: string): void {
+    this.pendingAudioReply.delete(chatId);
+  }
+
+  private needsAudioReply(chatId: string): boolean {
+    const needs = this.pendingAudioReply.get(chatId) || false;
+    // Clear after checking (one-time use)
+    // 持续语音模式：直到用户发文本消息才清除，而不是一次性消耗
+    return needs;
   }
 
   private async handleIncomingEvent(data: FeishuMessageEventData): Promise<void> {
@@ -734,6 +862,10 @@ export class FeishuAdapter extends BaseChannelAdapter {
 
   private extractActionSenderIdentity(event: StructuredActionEvent): SenderIdentity | null {
     return extractActionSenderIdentityWithContext(this.getHandlerContext(), event);
+  }
+
+  private resolveActionChatId(event: StructuredActionEvent): string | undefined {
+    return event.context?.open_chat_id || undefined;
   }
 
   private getRecentWorkspaceOptions(): RecentWorkspaceOption[] {
@@ -766,6 +898,20 @@ export class FeishuAdapter extends BaseChannelAdapter {
         '可用命令：`/stop` 中断当前输出、`/mode` 切换 mode、`/reset` 重置会话。权限请求请直接使用卡片按钮处理。',
       ].join('\n');
     }
+    if (runtime === 'zcode') {
+      return [
+        '已创建 ZCode 会话。',
+        '后续直接在本群发送消息继续对话。',
+        '可用命令：`/stop` 中断当前输出、`/reset` 重置会话。',
+      ].join('\n');
+    }
+    if (runtime === 'mimo') {
+      return [
+        '已创建 MiMo 会话，已绑定当前私聊窗口。',
+        '后续直接发消息继续对话。',
+        '可用命令：`/stop` 中断当前输出、`/reset` 重置会话。',
+      ].join('\n');
+    }
     return [
       `已创建 codex 会话，当前模式：**${binding.mode === 'plan' ? 'Plan' : '默认'}**。`,
       '后续请直接在本群继续对话。',
@@ -788,14 +934,17 @@ export class FeishuAdapter extends BaseChannelAdapter {
       cwd?: string;
       bindingMode?: 'code' | 'plan' | 'ask';
       skipReadyMessage?: boolean;
+      existingChatId?: string;
+      model?: string;
     },
   ): Promise<{ chatId: string; binding: ChannelBinding }> {
     await this.ensureRuntimeAvailable(runtime);
     const store = this.getStore();
-    const chatId = await this.createSessionGroup(runtime, sender, options?.claudePermissionMode);
+    // Use existing chat ID if provided (e.g., for mimo p2p binding), otherwise create new group
+    const chatId = options?.existingChatId || await this.createSessionGroup(runtime, sender, options?.claudePermissionMode);
     const session = store.createRuntimeSession({
       runtime,
-      model: '',
+      model: options?.model || '',
       cwd: options?.cwd || store.getSetting('bridge_default_work_dir') || process.cwd(),
     });
     const initialBinding = store.upsertChannelBinding({
@@ -805,6 +954,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       codepilotSessionId: session.id,
       workingDirectory: session.working_directory,
       model: session.model,
+      chatType: options?.existingChatId ? 'p2p' : 'group',
       ...(runtime === 'claude'
         ? { claudePermissionMode: options?.claudePermissionMode || 'default' }
         : {}),
@@ -853,7 +1003,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
     const workspaces = this.getRecentWorkspaceOptions();
     const card = runtime === 'codex'
       ? buildNewCodexSessionCard(workspaces)
-      : buildNewClaudeSessionCard(workspaces);
+      : runtime === 'mimo'
+        ? buildNewMimoSessionCard(workspaces)
+        : buildNewClaudeSessionCard(workspaces);
     const result = await this.sendInteractiveCard(address, card, replyToMessageId);
     return {
       ok: true,
@@ -1207,6 +1359,39 @@ export class FeishuAdapter extends BaseChannelAdapter {
     }
   }
 
+  private async handleMessageRecalledEvent(data: FeishuMessageRecalledEventData): Promise<void> {
+    const messageId = data.message_id?.trim();
+    const chatId = data.chat_id?.trim();
+    if (!messageId || !chatId) return;
+
+    console.log(`[feishu-adapter] Message recalled: ${messageId} in chat ${chatId}`);
+
+    // Clear lastIncomingMessageId if the recalled message was the last one
+    const routeKey = routeKeyForAddress({
+      channelType: this.channelType,
+      channelInstanceId: this.profileId,
+      chatId,
+    });
+    if (this.lastIncomingMessageId.get(routeKey) === messageId) {
+      this.lastIncomingMessageId.delete(routeKey);
+      console.log(`[feishu-adapter] Cleared lastIncomingMessageId for route ${routeKey}`);
+    }
+
+    // Clear typing reaction if exists
+    if (this.typingReactions.has(routeKey)) {
+      this.typingReactions.delete(routeKey);
+    }
+
+    // Clean up preview artifacts for this chat
+    const previewKeyPrefix = routeKey;
+    for (const [key, artifact] of this.previewService.previewArtifacts) {
+      if (key.startsWith(previewKeyPrefix) && artifact.messageId === messageId) {
+        this.previewService.previewArtifacts.delete(key);
+        console.log(`[feishu-adapter] Cleaned up preview artifact for recalled message`);
+      }
+    }
+  }
+
   private async maybeSyncSessionTitle(chatId: string): Promise<void> {
     if (this.pendingTitleSyncs.has(chatId)) return;
     const store = this.getStore();
@@ -1277,6 +1462,10 @@ export class FeishuAdapter extends BaseChannelAdapter {
     if (!this.restClient) return;
     const chatApi = this.restClient.im?.chat;
     if (!chatApi?.update) return;
+    // p2p 私聊不支持改名，跳过；旧绑定无 chatType 时也跳过（安全默认）
+    const store = this.getStore();
+    const binding = store.getChannelBinding(this.channelType, chatId, this.profileId);
+    if (!binding || binding.chatType !== 'group') return;
     const name = this.computeChatDisplayName(chatId);
     if (!name) return;
     if (this.knownChatNames.get(chatId) === name) return;
@@ -1288,7 +1477,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       assertLarkOk(response, 'im.chat.update');
       this.rememberObservedChatName(chatId, name);
       this.rememberSelfRename(chatId, name);
-    } catch (error) {
+    } catch (error: any) {
       console.warn('[feishu-adapter] Failed to sync chat name:', error);
     }
   }
@@ -1345,6 +1534,71 @@ export class FeishuAdapter extends BaseChannelAdapter {
     }
   }
 
+  /** Ingest message to OpenHuman memory_tree for semantic search.
+   * Called when OpenHuman runtime is active to build searchable memory index.
+   */
+  private async ingestToMemoryTree(
+    chatId: string,
+    senderId: string,
+    text: string,
+    messageId: string,
+  ): Promise<void> {
+    const coreUrl = process.env.OPENHUMAN_CORE_URL || 'http://localhost:7788/rpc';
+    const coreToken = process.env.OPENHUMAN_CORE_TOKEN || '';
+
+    // Build ChatBatch payload for memory_tree_ingest
+    // Use OpenHuman user ID (from config or default) as owner, not feishu senderId
+    const openhumanUserId = process.env.OPENHUMAN_USER_ID || '6a0bd5556b16f2d8e561ee92';
+    const payload = {
+      source_kind: 'chat',
+      source_id: `feishu:${chatId}:${senderId}`,
+      owner: openhumanUserId,
+      tags: ['feishu', 'channel'],
+      payload: {
+        platform: 'feishu',
+        channel_label: chatId,
+        messages: [
+          {
+            author: senderId,
+            timestamp: Date.now(),
+            text,
+            source_ref: `feishu://message/${messageId}`,
+          },
+        ],
+      },
+    };
+
+    try {
+      const response = await fetch(coreUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(coreToken ? { 'Authorization': `Bearer ${coreToken}` } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'openhuman.memory_tree_ingest',
+          params: payload,
+        }),
+      });
+
+      if (!response.ok) {
+        console.warn('[feishu-adapter] memory_tree_ingest HTTP error:', response.status);
+        return;
+      }
+
+      const result = await response.json() as { result?: { chunks_written?: number; chunks_dropped?: number }; error?: { message: string } };
+      if (result.error) {
+        console.warn('[feishu-adapter] memory_tree_ingest error:', result.error.message);
+      } else {
+        console.log('[feishu-adapter] memory_tree_ingest success:', result.result);
+      }
+    } catch (error) {
+      console.warn('[feishu-adapter] memory_tree_ingest failed:', error);
+    }
+  }
+
   private async sendPermissionCard(
     address: ChannelAddress,
     text: string,
@@ -1363,8 +1617,56 @@ export class FeishuAdapter extends BaseChannelAdapter {
     };
   }
 
+  private buildDividerInfo(address: ChannelAddress): AgentDividerInfo | undefined {
+    // Build divider info if enabled (same logic as sendAsInteractiveCard/sendAsPost)
+    if (this.options.profile.showAgentDivider ?? true) {
+      const store = this.getStore();
+      const binding = store.getChannelBinding(this.channelType, address.chatId, this.profileId);
+      const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
+      const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
+
+      // Get runtime from session extension, default to 'mimo'
+      const runtime = sessionExt?.runtime || 'mimo';
+      const runtimeConfig = getRuntimeConfig(runtime);
+
+      // Use runtime config for model and provider
+      const modelName = runtimeConfig.model || session?.model || binding?.model || 'N/A';
+      const providerName = runtimeConfig.provider || 'N/A';
+
+      return {
+        agent: this.options.profile.agentName || this.profileId,
+        model: modelName,
+        provider: providerName,
+      };
+    }
+    return undefined;
+  }
+
   private async sendAsInteractiveCard(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult> {
-    const content = buildCardContent(text);
+    // Build divider info if enabled
+    let dividerInfo: AgentDividerInfo | undefined;
+    if (this.options.profile.showAgentDivider ?? true) {
+      const store = this.getStore();
+      const binding = store.getChannelBinding(this.channelType, address.chatId, this.profileId);
+      const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
+      const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
+
+      // Get runtime from session extension, default to 'mimo'
+      const runtime = sessionExt?.runtime || 'mimo';
+      const runtimeConfig = getRuntimeConfig(runtime);
+
+      // Use runtime config for model and provider
+      const modelName = runtimeConfig.model || session?.model || binding?.model || 'N/A';
+      const providerName = runtimeConfig.provider || 'N/A';
+
+      dividerInfo = {
+        agent: this.options.profile.agentName || this.profileId,
+        model: modelName,
+        provider: providerName,
+      };
+    }
+
+    const content = buildCardContent(text, dividerInfo);
     const response = await this.sendLarkMessage(this.withInstance(address), 'interactive', content, replyToMessageId);
     assertLarkOk(response, 'im.message.sendInteractive');
     return {
@@ -1374,9 +1676,37 @@ export class FeishuAdapter extends BaseChannelAdapter {
     };
   }
 
+  private shouldUseUserToken(): boolean {
+    return this.options.profile.enableUserMode === true && this.larkClient.getUserAccessToken() !== null;
+  }
+
   private async sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult> {
-    const content = buildPostContent(text);
-    const response = await this.sendLarkMessage(this.withInstance(address), 'post', content, replyToMessageId);
+    // Build divider info if enabled (same logic as sendAsInteractiveCard)
+    let dividerInfo: AgentDividerInfo | undefined;
+    if (this.options.profile.showAgentDivider ?? true) {
+      const store = this.getStore();
+      const binding = store.getChannelBinding(this.channelType, address.chatId, this.profileId);
+      const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
+      const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
+
+      // Get runtime from session extension, default to 'mimo'
+      const runtime = sessionExt?.runtime || 'mimo';
+      const runtimeConfig = getRuntimeConfig(runtime);
+
+      // Use runtime config for model and provider
+      const modelName = runtimeConfig.model || session?.model || binding?.model || 'N/A';
+      const providerName = runtimeConfig.provider || 'N/A';
+
+      dividerInfo = {
+        agent: this.options.profile.agentName || this.profileId,
+        model: modelName,
+        provider: providerName,
+      };
+    }
+
+    const content = buildPostContent(text, dividerInfo);
+    const useUserToken = this.shouldUseUserToken();
+    const response = await this.sendLarkMessage(this.withInstance(address), 'post', content, replyToMessageId, undefined, useUserToken);
     assertLarkOk(response, 'im.message.sendPost');
     return {
       ok: true,
@@ -1391,11 +1721,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
     replyToMessageId?: string,
     requestUuid?: string,
   ): Promise<{ messageId: string; openMessageId?: string }> {
+    const useUserToken = this.shouldUseUserToken();
     return this.larkClient.sendCard(
       this.withInstance(address),
       card,
       replyToMessageId,
       requestUuid,
+      useUserToken,
     );
   }
 
@@ -1409,8 +1741,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
     content: string,
     replyToMessageId?: string,
     requestUuid?: string,
+    useUserToken?: boolean,
   ): Promise<{ code?: number; msg?: string; data?: { message_id?: string; open_message_id?: string; chat_id?: string } }> {
-    return this.larkClient.sendMessage(address, msgType, content, replyToMessageId, requestUuid);
+    return this.larkClient.sendMessage(address, msgType, content, replyToMessageId, requestUuid, useUserToken);
   }
 
   private async patchInteractiveCard(

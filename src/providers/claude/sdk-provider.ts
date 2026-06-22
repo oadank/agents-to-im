@@ -26,6 +26,46 @@ import type { PendingPermissions, PendingStructuredInputs } from './permission-g
 
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
+
+// ── Memory injection (since SDK doesn't trigger CLI SessionStart hooks) ──
+
+function loadMemoryContent(): string {
+  try {
+    const claudeHome = process.env.CLAUDE_HOME || (process.env.HOME + '/.claude');
+    const settingsPath = claudeHome + '/settings.json';
+    if (!fs.existsSync(settingsPath)) return '';
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const memDir = settings.autoMemoryDirectory;
+    if (!memDir || !fs.existsSync(memDir)) return '';
+    
+    const parts: string[] = [];
+    // Load MEMORY.md as the index
+    const memFile = memDir + '/MEMORY.md';
+    if (fs.existsSync(memFile)) {
+      parts.push(fs.readFileSync(memFile, 'utf-8'));
+    }
+    // Load key memory files
+    for (const name of ['user_profile.md', 'user_identity.md', 'feedback_behavior_rules.md', 'feedback_no-docker.md', 'project_2026-05-30-debian13-migration.md']) {
+      const fp = memDir + '/' + name;
+      if (fs.existsSync(fp)) {
+        parts.push('\n=== ' + name + ' ===\n' + fs.readFileSync(fp, 'utf-8'));
+      }
+    }
+    return parts.join('\n---\n');
+  } catch { return ''; }
+}
+
+// Cache memory content (load once per process)
+let _cachedMemory: string | undefined;
+function getMemoryContent(): string {
+  if (_cachedMemory === undefined) {
+    _cachedMemory = loadMemoryContent();
+    if (_cachedMemory) console.log('[llm-provider] Memory loaded (' + _cachedMemory.length + ' chars)');
+    else console.log('[llm-provider] No memory loaded');
+  }
+  return _cachedMemory;
+}
+
 // ── Auth/credential-error detection ──
 
 /** Patterns indicating the local CLI is not logged in (fixable via `claude auth login`). */
@@ -103,12 +143,14 @@ const SUPPORTED_IMAGE_TYPES = new Set<string>([
  * iterable that yields a single SDKUserMessage with multi-modal content
  * (image blocks + text). Otherwise returns the plain text string.
  */
+const CHINESE_THINKING_INSTRUCTION = '[系统指令-语言] 你必须100%使用中文进行内部思考（thinking/reasoning）和回复。禁止用英文思考。例如用"我需要分析这个问题"而非"I need to analyze this problem"。\n\n';
+
 function buildPrompt(
   text: string,
   files?: FileAttachment[],
 ): string | AsyncIterable<{ type: 'user'; message: { role: 'user'; content: unknown[] }; parent_tool_use_id: null; session_id: string }> {
   const imageFiles = files?.filter(f => SUPPORTED_IMAGE_TYPES.has(f.type));
-  if (!imageFiles || imageFiles.length === 0) return text;
+  if (!imageFiles || imageFiles.length === 0) return CHINESE_THINKING_INSTRUCTION + text;
 
   const contentBlocks: unknown[] = [];
 
@@ -135,6 +177,65 @@ function buildPrompt(
   };
 
   return (async function* () { yield msg; })();
+}
+
+/**
+ * Build a prompt stream that includes conversation history.
+ * Used when sdkSessionId is empty (session lost) to restore context.
+ *
+ * Converts conversationHistory (stored in agents-to-im) to SDKUserMessage
+ * format and yields them before the current user message.
+ */
+function buildPromptWithHistory(
+  text: string,
+  history: Array<{ role: 'user' | 'assistant'; content: string }> | undefined,
+  files?: FileAttachment[],
+): AsyncIterable<{ type: 'user' | 'assistant'; message: { role: 'user' | 'assistant'; content: unknown }; parent_tool_use_id: null; session_id: string }> {
+  return (async function* () {
+    // Yield history messages first
+    if (history && history.length > 0) {
+      for (const msg of history) {
+        yield {
+          type: msg.role,
+          message: { role: msg.role, content: typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : msg.content },
+          parent_tool_use_id: null,
+          session_id: '',
+        };
+      }
+    }
+
+    // Then yield the current user message
+    const imageFiles = files?.filter(f => SUPPORTED_IMAGE_TYPES.has(f.type));
+    if (imageFiles && imageFiles.length > 0) {
+      const contentBlocks: unknown[] = [];
+      for (const file of imageFiles) {
+        contentBlocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: (file.type === 'image/jpg' ? 'image/jpeg' : file.type) as ImageMediaType,
+            data: file.data,
+          },
+        });
+      }
+      if (text.trim()) {
+        contentBlocks.push({ type: 'text', text: CHINESE_THINKING_INSTRUCTION + text });
+      }
+      yield {
+        type: 'user' as const,
+        message: { role: 'user' as const, content: contentBlocks },
+        parent_tool_use_id: null,
+        session_id: '',
+      };
+    } else {
+      yield {
+        type: 'user' as const,
+        message: { role: 'user' as const, content: CHINESE_THINKING_INSTRUCTION + text },
+        parent_tool_use_id: null,
+        session_id: '',
+      };
+    }
+  })();
 }
 
 /**
@@ -165,6 +266,8 @@ export interface StreamState {
   lastAssistantText: string;
   /** Stable tool name lookup for later tool_result updates. */
   toolNamesByUseId: Map<string, string>;
+  /** Accumulated thinking/reasoning text from thinking_delta events. */
+  accumulatedThinking: string;
 }
 
 interface ClaudeAskUserQuestionOptionLike {
@@ -486,6 +589,7 @@ export class SDKLLMProvider implements LLMProvider {
             hasStreamedText: false,
             lastAssistantText: '',
             toolNamesByUseId: new Map<string, string>(),
+            accumulatedThinking: '',
           };
 
           try {
@@ -507,6 +611,11 @@ export class SDKLLMProvider implements LLMProvider {
               permissionMode: (params.permissionMode as 'default' | 'acceptEdits' | 'bypassPermissions' | 'dontAsk' | 'plan') || undefined,
               allowDangerouslySkipPermissions: true,
               includePartialMessages: true,
+              systemPrompt: {
+                type: 'preset',
+                preset: 'claude_code',
+                append: '[语言强制规则] 你的所有输出必须使用中文。这包括：1) 内部思考过程（thinking/reasoning/extended thinking）必须100%用中文书写，禁止使用英文思考；2) 回复内容必须使用中文；3) 代码注释使用中文。违反此规则是严重错误。请用中文思考：例如"我需要分析这个问题"而不是"I need to analyze this problem"。',
+              },
               // Keep local CLI-managed config (for MCPs in `~/.claude.json`),
               // user auth/billing settings, and project overrides aligned with
               // native Claude Code behavior.
@@ -541,6 +650,10 @@ export class SDKLLMProvider implements LLMProvider {
                   input: Record<string, unknown>,
                   opts: { toolUseID: string; suggestions?: string[] },
                 ): Promise<ClaudePermissionResult> => {
+                  // Auto-approve when CTI_DISABLE_PERMISSION_CHECK is set
+                  if (process.env.CTI_DISABLE_PERMISSION_CHECK === 'true') {
+                    return { behavior: 'allow' as const, updatedInput: input };
+                  }
                   if (toolName === 'AskUserQuestion') {
                     const request = parseAskUserQuestionRequest(opts.toolUseID, input);
                     if (!request) {
@@ -618,7 +731,23 @@ export class SDKLLMProvider implements LLMProvider {
               queryOptions.pathToClaudeCodeExecutable = cliPath;
             }
 
-            const prompt = buildPrompt(params.prompt, params.files);
+            // Build prompt - inject history if session is lost (no sdkSessionId)
+            const hasHistory = params.conversationHistory && params.conversationHistory.length > 0;
+            const needsHistoryInjection = !params.sdkSessionId && hasHistory;
+            if (needsHistoryInjection) {
+              console.log(`[llm-provider] Injecting ${params.conversationHistory!.length} history messages (session lost)`);
+            }
+            // Inject memory on new sessions (no sdkSessionId)
+            let userPrompt = params.prompt;
+            if (!params.sdkSessionId) {
+              const memory = getMemoryContent();
+              if (memory) {
+                userPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n用户消息：' + params.prompt;
+              }
+            }
+            const prompt = needsHistoryInjection
+              ? buildPromptWithHistory(userPrompt, params.conversationHistory, params.files)
+              : buildPrompt(userPrompt, params.files);
             const q = query({
               prompt: prompt as Parameters<typeof query>[0]['prompt'],
               options: queryOptions as Parameters<typeof query>[0]['options'],
@@ -665,6 +794,26 @@ export class SDKLLMProvider implements LLMProvider {
             // Text was streamed but no result arrived — the response was
             // truncated by a real crash. Always emit an error so the user
             // knows the output is incomplete.
+
+            // ── Check for session-invalidating errors (429, rate limit, CLI crash) ──
+            // These errors cause the SDK CLI process to exit, making the sdkSessionId
+            // invalid. Signal to conversation-engine to clear it so next call can
+            // inject conversation history.
+            const isRateLimitError = message.includes('429')
+              || message.includes('rate_limit')
+              || message.includes('RateLimitError')
+              || message.includes('TooManyRequests')
+              || stderrBuf.includes('429')
+              || stderrBuf.includes('rate_limit');
+            const isSessionInvalid = isRateLimitError
+              || (isTransportExit && !state.hasReceivedResult);
+            if (isSessionInvalid && params.sdkSessionId) {
+              console.warn('[llm-provider] Session invalidated by error, signaling to clear sdkSessionId');
+              emitCanonicalTurnEvent(controller, {
+                type: 'session_invalid',
+                data: { reason: isRateLimitError ? 'rate_limit' : 'cli_crash' },
+              });
+            }
 
             // ── Build user-facing error message ──
             const authKind = classifyAuthError(message) || classifyAuthError(stderrBuf);
@@ -743,6 +892,18 @@ export function handleMessage(
         // Emit delta text — the bridge accumulates on its side
         emitCanonicalTurnEvent(controller, { type: 'text', data: event.delta.text });
         state.hasStreamedText = true;
+      }
+      if (
+        event.type === 'content_block_delta' &&
+        event.delta.type === 'thinking_delta'
+      ) {
+        state.accumulatedThinking += event.delta.thinking;
+        enqueueActivityEvent(controller, {
+          kind: 'reasoning_activity',
+          status: 'running',
+          text: state.accumulatedThinking,
+          source: 'thinking',
+        });
       }
       if (
         event.type === 'content_block_start' &&

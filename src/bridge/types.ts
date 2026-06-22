@@ -66,6 +66,8 @@ export interface InboundMessage {
   attachments?: import('./host.js').FileAttachment[];
   /** Bridge-internal routing metadata */
   bridgeMeta?: BridgeMessageMeta;
+  /** Whether this message was originally an audio message (transcribed to text) */
+  fromAudio?: boolean;
 }
 
 /** Outbound message to send to an IM channel */
@@ -125,6 +127,7 @@ export interface SendResult {
   /** Platform-specific message ID of the sent message */
   messageId?: string;
   openMessageId?: string;
+  cardToken?: string;
   error?: string;
 }
 
@@ -148,6 +151,8 @@ export interface ChannelBinding {
   mode: 'code' | 'plan' | 'ask';
   /** Persistent Claude SDK permission mode for Claude runtime chats */
   claudePermissionMode?: ClaudePermissionMode;
+  /** Chat type: p2p (direct message) or group */
+  chatType?: 'p2p' | 'group';
   /** Whether this binding is currently active */
   active: boolean;
   createdAt: string;
@@ -212,16 +217,19 @@ export interface PreviewCapabilities {
 
 /** Mutable state for an in-flight streaming preview */
 export interface StreamingPreviewState {
-  draftId: number;           // non-zero 31-bit random integer, reused within one answer cycle
+  draftId: number;
   address: ChannelAddress;
-  placeholderPrimed: boolean;// preview artifact exists, but no real text has been streamed into it yet
+  placeholderPrimed: boolean;
   primeTimer: ReturnType<typeof setTimeout> | null;
-  lastSentText: string;      // last text actually sent as draft
-  lastSentAt: number;        // timestamp (ms) of last sent draft
-  degraded: boolean;         // set true after API failure → skip further previews
+  lastSentText: string;
+  lastSentAt: number;
+  degraded: boolean;
   throttleTimer: ReturnType<typeof setTimeout> | null;
-  pendingText: string;       // latest accumulated text (may not yet be sent due to throttle)
+  pendingText: string;
   inFlightSend: Promise<void> | null;
+  streamStartedAt: number;
+  lastThinkingText: string;   // last thinking text sent to card (for delta calc)
+  pendingThinkingText: string; // buffered thinking when card not yet created
 }
 
 // ── Config ─────────────────────────────────────────────────────

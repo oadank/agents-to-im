@@ -77,7 +77,7 @@ export async function handleNewSessionCardAction(
   callbackData: string,
 ): Promise<CardActionResult> {
   const [, runtimeText, modeText] = callbackData.split(':');
-  const runtime = runtimeText === 'codex' ? 'codex' : runtimeText === 'claude' ? 'claude' : null;
+  const runtime = runtimeText === 'codex' ? 'codex' : runtimeText === 'claude' ? 'claude' : runtimeText === 'openhuman' ? 'openhuman' : runtimeText === 'zcode' ? 'zcode' : runtimeText === 'mimo' ? 'mimo' : null;
   const bindingMode = modeText === 'plan' ? 'plan' : modeText === 'code' ? 'code' : null;
   if (!runtime || !bindingMode) {
     return { toast: { type: 'warning', content: 'Unsupported action' } };
@@ -89,21 +89,31 @@ export async function handleNewSessionCardAction(
   const actionMessageId = resolveActionOpenMessageId(event);
   const cwd = ctx.resolveSelectedWorkdir(event.action?.form_value as Record<string, unknown> | undefined);
   try {
+    // For mimo runtime, bind to existing chat and set model to actual configured model
+    const mimoModel = ctx.getStore().getSetting('compact_model') || 'MiMo-OpenAI';
+    const mimoOptions = runtime === 'mimo' ? {
+      existingChatId: ctx.resolveActionChatId(event),
+      model: mimoModel,
+    } : {};
     await ctx.createBoundSession(runtime, sender, {
       cwd,
       bindingMode,
+      ...mimoOptions,
     });
-    await ctx.patchActionCardSafely(
-      undefined,
-      buildStatusCard(
-        runtime === 'codex' ? 'Codex 会话已创建' : '会话已创建',
-        [
+    const statusTitle = runtime === 'codex' ? 'Codex 会话已创建' : runtime === 'mimo' ? 'MiMo 会话已创建' : '会话已创建';
+    const statusLines = runtime === 'mimo'
+      ? [
+          `工作区：\`${cwd}\``,
+          '已绑定当前私聊窗口，直接继续对话即可。',
+        ].join('\n\n')
+      : [
           `工作区：\`${cwd}\``,
           `模式：**${bindingMode === 'plan' ? 'Plan' : '默认'}**`,
           '请直接进入新群继续对话。',
-        ].join('\n\n'),
-        'green',
-      ),
+        ].join('\n\n');
+    await ctx.patchActionCardSafely(
+      undefined,
+      buildStatusCard(statusTitle, statusLines, 'green'),
       'new-session',
       actionMessageId,
     );

@@ -11,12 +11,31 @@ export interface FeishuProfileConfig {
   domain?: 'lark';
   allowedUsers?: string[];
   showToolCallCards?: boolean;
+  oauthRedirectUri?: string;
+  enableUserMode?: boolean;
+  /** 是否在消息底部显示分割线（Agent/Model/Provider 信息） */
+  showAgentDivider?: boolean;
+  /** Agent 名称（如 feishu-mimo），用于分割线显示 */
+  agentName?: string;
+  /** 模型组名（如 MiMo-OpenAI, codex-model, MiMogo），用于分割线显示 */
+  modelGroup?: string;
+  /** 服务商名（如 LiteLLM, Volcengine），用于分割线显示 */
+  modelProvider?: string;
+}
+
+export interface CompactConfig {
+  model: string;
+  maxTokens: number;
+  temperature: number;
+  clearSdkSession: boolean;
 }
 
 export interface Config {
   defaultWorkDir: string;
+  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo';
   feishu: FeishuProfileConfig;
   claudeCliExecutable?: string;
+  compact: CompactConfig;
 }
 
 export const DEFAULT_CTI_HOME = path.join(os.homedir(), '.agents-to-im');
@@ -67,6 +86,21 @@ function loadFeishuConfig(env: Map<string, string>): FeishuProfileConfig {
     domain: env.get('CTI_FEISHU_DOMAIN') === 'lark' ? 'lark' : undefined,
     allowedUsers: splitCsv(env.get('CTI_FEISHU_ALLOWED_USERS') || undefined),
     showToolCallCards: parseBoolean(env.get('CTI_FEISHU_SHOW_TOOL_CALL_CARDS')) ?? false,
+    oauthRedirectUri: env.get('CTI_FEISHU_OAUTH_REDIRECT_URI') || undefined,
+    enableUserMode: parseBoolean(env.get('CTI_FEISHU_ENABLE_USER_MODE')) ?? false,
+    showAgentDivider: parseBoolean(env.get('CTI_FEISHU_SHOW_AGENT_DIVIDER')) ?? true,
+    agentName: env.get('CTI_AGENT_NAME') || undefined,
+    modelGroup: env.get('CTI_MODEL_GROUP') || undefined,
+    modelProvider: env.get('CTI_MODEL_PROVIDER') || undefined,
+  };
+}
+
+function loadCompactConfig(env: Map<string, string>): CompactConfig {
+  return {
+    model: env.get('CTI_COMPACT_MODEL') || process.env.CTI_COMPACT_MODEL || 'codex-model',
+    maxTokens: parseInt(env.get('CTI_COMPACT_MAX_TOKENS') || process.env.CTI_COMPACT_MAX_TOKENS || '3000'),
+    temperature: parseFloat(env.get('CTI_COMPACT_TEMPERATURE') || process.env.CTI_COMPACT_TEMPERATURE || '0.2'),
+    clearSdkSession: (env.get('CTI_COMPACT_CLEAR_SDK_SESSION') || process.env.CTI_COMPACT_CLEAR_SDK_SESSION || 'true') !== 'false',
   };
 }
 
@@ -79,10 +113,20 @@ export function loadConfig(): Config {
     // Config file doesn't exist yet — use defaults.
   }
 
+  const runtimeStr = env.get('CTI_DEFAULT_RUNTIME') || 'claude';
+  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' =
+    runtimeStr === 'codex' ? 'codex'
+      : runtimeStr === 'openhuman' ? 'openhuman'
+        : runtimeStr === 'zcode' ? 'zcode'
+          : runtimeStr === 'mimo' ? 'mimo'
+            : 'claude';
+
   return {
     defaultWorkDir: env.get('CTI_DEFAULT_WORKDIR') || process.cwd(),
+    defaultRuntime,
     feishu: loadFeishuConfig(env),
     claudeCliExecutable: env.get('CTI_CLAUDE_CODE_EXECUTABLE') || undefined,
+    compact: loadCompactConfig(env),
   };
 }
 
@@ -103,6 +147,10 @@ function formatFeishuLines(profile: FeishuProfileConfig): string {
   out += formatEnvLine('CTI_FEISHU_DOMAIN', profile.domain);
   out += formatEnvLine('CTI_FEISHU_ALLOWED_USERS', profile.allowedUsers?.join(','));
   out += formatBooleanEnvLine('CTI_FEISHU_SHOW_TOOL_CALL_CARDS', profile.showToolCallCards);
+  out += formatEnvLine('CTI_FEISHU_OAUTH_REDIRECT_URI', profile.oauthRedirectUri);
+  out += formatBooleanEnvLine('CTI_FEISHU_ENABLE_USER_MODE', profile.enableUserMode);
+  out += formatBooleanEnvLine('CTI_FEISHU_SHOW_AGENT_DIVIDER', profile.showAgentDivider);
+  out += formatEnvLine('CTI_AGENT_NAME', profile.agentName);
   return out;
 }
 

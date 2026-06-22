@@ -1,10 +1,12 @@
 import type { InboundMessage } from '../../bridge/types.js';
+import { loadConfig } from '../../config/config.js';
+import { compactConversation, applyCompactResult } from '../../bridge/compact.js';
 import type {
   AdapterContext,
   FeishuMessageEventData,
   SenderIdentity,
 } from '../types.js';
-import { buildRouteKey, parseImageResourceKey, parseTextContent } from '../utils.js';
+import { buildRouteKey, parseImageResourceKey, parseTextContent, parseAudioFileKey } from '../utils.js';
 import { pendingInboundImageKey } from '../utils.js';
 
 export async function handleIncomingEvent(
@@ -113,7 +115,56 @@ export async function handleIncomingEvent(
       return;
     }
 
-    if (data.message.message_type !== 'text') {
+
+    // 语音消息处理
+    if (data.message.message_type === 'audio') {
+      const fileKey = parseAudioFileKey(data.message.content);
+      if (!fileKey) {
+        await ctx.sendAsPost(
+          inbound.address,
+          '已收到语音消息，但读取语音文件失败。请重新发送语音。',
+          messageId,
+        );
+        return;
+      }
+      try {
+        console.log(`[feishu-adapter] Transcribing audio ${messageId} file_key=${fileKey}`);
+        const result = await ctx.downloadAndTranscribe(messageId, fileKey);
+        const transcribedText = result.text.trim();
+        if (!transcribedText) {
+          await ctx.sendAsPost(
+            inbound.address,
+            '语音转写失败。请重新发送语音或直接发文字。',
+            messageId,
+          );
+          return;
+        }
+        console.log(`[feishu-adapter] Audio transcribed: "${transcribedText}"`);
+        await ctx.sendAsPost(
+          inbound.address,
+          `语音转写：${transcribedText}`,
+          messageId,
+        );
+        // 把转写文本当作普通文本继续处理，并标记来源为语音
+        inbound.text = transcribedText;
+        inbound.fromAudio = true; // 标记消息来源为语音，用于触发语音回复
+        data.message.message_type = 'text';
+        // 标记此 chat 需要语音回复
+        ctx.setPendingAudioReply(data.message.chat_id, true);
+        console.log(`[feishu-adapter] Audio converted to text (fromAudio=true), continuing processing...`);
+      } catch (error) {
+        console.warn('[feishu-adapter] Audio transcription failed:', error);
+        await ctx.sendAsPost(
+          inbound.address,
+          `语音转写失败：${error instanceof Error ? error.message : String(error)}`,
+          messageId,
+        );
+        return;
+      }
+    }
+
+    // 支持 text 和 post（富文本）类型消息
+    if (data.message.message_type !== 'text' && data.message.message_type !== 'post') {
       console.warn(
         `[feishu-adapter] Dropped inbound message ${messageId}: unsupported message type ` +
         `(type=${data.message.message_type}, content=${data.message.content.slice(0, 200)})`,
@@ -121,13 +172,29 @@ export async function handleIncomingEvent(
       return;
     }
 
-    inbound.text = parseTextContent(data.message.content);
+    // 用户主动发文本消息时，清除语音回复标记（退出语音模式）
+    if (data.message.message_type === 'text' && !inbound.fromAudio) {
+      ctx.clearPendingAudioReply(data.message.chat_id);
+      console.log(`[feishu-adapter] User sent text message, clearing audio reply mode for chat ${data.message.chat_id}`);
+    }
+
+    // 如果已有转写文本（语音），跳过 parseTextContent
+    if (!inbound.text) {
+      inbound.text = parseTextContent(data.message.content);
+    }
     if (!inbound.text) {
       console.warn(
         `[feishu-adapter] Dropped inbound message ${messageId}: empty parsed text ` +
         `(type=${data.message.message_type}, content=${data.message.content.slice(0, 200)})`,
       );
       return;
+    }
+
+    // 用户主动发文本消息时，退出语音回复模式
+    // 注意：语音转写的文本 inbound.fromAudio=true，不应退出语音模式
+    if (!inbound.fromAudio) {
+      ctx.setPendingAudioReply(data.message.chat_id, false);
+      console.log(`[feishu-adapter] User sent text message, clearing audio reply mode for chat ${data.message.chat_id}`);
     }
 
     const referencedImages = ctx.resolveReferencedInboundImages(
@@ -142,12 +209,44 @@ export async function handleIncomingEvent(
     }
     if (referencedImages.attachments?.length) {
       inbound.attachments = referencedImages.attachments;
+    } else {
+      // Fallback: 当 parent_id/root_id 无法匹配时（如"先发图片再发文字"非回复场景），
+      // 查找同一 chat + sender 下最近一条 pending image
+      const fallbackImage = ctx.resolveLatestPendingImageForChat(
+        data.message.chat_id,
+        sender.id,
+        threadId,
+      );
+      if (fallbackImage?.errorMessage) {
+        await ctx.sendAsPost(inbound.address, fallbackImage.errorMessage, messageId);
+        return;
+      }
+      if (fallbackImage?.attachments?.length) {
+        inbound.attachments = fallbackImage.attachments;
+      }
+    }
+
+    // Ingest to memory_tree if OpenHuman runtime is configured
+    // Check if this instance is configured for OpenHuman
+    const defaultRuntime = process.env.CTI_DEFAULT_RUNTIME || '';
+    if (defaultRuntime === 'openhuman' && inbound.text.trim()) {
+      // Fire-and-forget ingest (don't block message processing)
+      ctx.ingestToMemoryTree(
+        data.message.chat_id,
+        sender.id,
+        inbound.text,
+        messageId,
+      ).catch((err) => {
+        console.warn('[feishu-adapter] memory_tree ingest error (non-blocking):', err);
+      });
     }
 
     if (data.message.chat_type === 'p2p') {
+      console.log(`[feishu-adapter] Routing to handleDirectMessage, text="${inbound.text}"`);
       await handleDirectMessage(ctx, sender, inbound);
       return;
     }
+    console.log(`[feishu-adapter] Routing to handleGroupMessage, text="${inbound.text}"`);
     await handleGroupMessage(ctx, sender, inbound);
   });
 }
@@ -166,6 +265,50 @@ export async function handleDirectMessage(
     await ctx.handleCreateSessionCommand(sender, inbound, 'codex');
     return;
   }
+  if (command === '/new:openhuman') {
+    await ctx.handleCreateSessionCommand(sender, inbound, 'openhuman');
+    return;
+  }
+  if (command === '/new:zcode') {
+    await ctx.handleCreateSessionCommand(sender, inbound, 'zcode');
+    return;
+  }
+  if (command === '/new' || command === '/new:mimo') {
+    const store = ctx.getStore();
+    const cwd = store.getSetting('bridge_default_work_dir') || process.cwd();
+    const mimoModel = store.getSetting('compact_model') || 'mimocode';
+    try {
+      await ctx.ensureRuntimeAvailable('mimo');
+      const session = store.createRuntimeSession({
+        runtime: 'mimo',
+        model: mimoModel,
+        cwd,
+      });
+      store.upsertChannelBinding({
+        channelType: ctx.channelType,
+        channelInstanceId: ctx.profileId,
+        chatId: inbound.address.chatId,
+        codepilotSessionId: session.id,
+        workingDirectory: session.working_directory,
+        model: mimoModel,
+        chatType: 'p2p',
+      });
+      await ctx.sendAsPost(
+        inbound.address,
+        `✅ MiMo 会话已创建\n\n工作区：\`${cwd}\`\n直接发消息即可开始对话。`,
+        inbound.messageId,
+      );
+      console.log(`[feishu-adapter] Created and bound mimo session ${session.id} (model=${mimoModel}) to p2p chat ${inbound.address.chatId}`);
+    } catch (error) {
+      console.error('[feishu-adapter] Failed to create mimo session:', error);
+      await ctx.sendAsPost(
+        inbound.address,
+        `创建会话失败：${error instanceof Error ? error.message : String(error)}`,
+        inbound.messageId,
+      );
+    }
+    return;
+  }
   if (command === '/resume:claude') {
     await ctx.handleResumeSessionCommand(sender, inbound, 'claude');
     return;
@@ -174,11 +317,149 @@ export async function handleDirectMessage(
     await ctx.handleResumeSessionCommand(sender, inbound, 'codex');
     return;
   }
-  await ctx.sendAsPost(
-    inbound.address,
-    '私聊仅支持 `/new:claude`、`/new:codex`、`/resume:claude` 和 `/resume:codex`。',
-    inbound.messageId,
-  );
+  if (command === '/resume:openhuman') {
+    await ctx.handleResumeSessionCommand(sender, inbound, 'openhuman');
+    return;
+  }
+  if (command === '/resume:zcode') {
+    await ctx.handleResumeSessionCommand(sender, inbound, 'zcode');
+    return;
+  }
+  if (command.startsWith('/agent:')) {
+    const agent = command.slice(7).trim();
+    const validAgents = ['glm', 'gemini', 'opencode'];
+    if (!validAgents.includes(agent)) {
+      await ctx.sendAsPost(inbound.address, `不支持的 agent: ${agent}。可用: ${validAgents.join(', ')}`, inbound.messageId);
+      return;
+    }
+    const store = ctx.getStore();
+    const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话，请先发送消息创建会话。', inbound.messageId);
+      return;
+    }
+    store.updateSessionModel(binding.codepilotSessionId, `agent:${agent}`);
+    await ctx.sendAsPost(inbound.address, `✅ 已切换到 ${agent}，后续消息将使用该 agent。`, inbound.messageId);
+    return;
+  }
+  if (command.startsWith('/ask:')) {
+    const spaceIdx = inbound.text.indexOf(' ');
+    if (spaceIdx === -1) {
+      await ctx.sendAsPost(inbound.address, '用法: /ask:agent名 你的问题', inbound.messageId);
+      return;
+    }
+    const agent = inbound.text.slice(5, spaceIdx).trim();
+    const msg = inbound.text.slice(spaceIdx + 1).trim();
+    const validAgents = ['glm', 'gemini', 'opencode'];
+    if (!validAgents.includes(agent)) {
+      await ctx.sendAsPost(inbound.address, `不支持的 agent: ${agent}。可用: ${validAgents.join(', ')}`, inbound.messageId);
+      return;
+    }
+    const store = ctx.getStore();
+    const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话，请先发送消息创建会话。', inbound.messageId);
+      return;
+    }
+    // 读取对话历史，拼到 prompt 前面
+    const { messages } = store.getMessages(binding.codepilotSessionId, { limit: 30 });
+    let enrichedPrompt = msg;
+    if (messages.length > 0) {
+      const history = messages
+        .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
+        .map((m: { role: string; content: string }) => `[${m.role}]: ${m.content}`)
+        .join('\n');
+      enrichedPrompt = `以下是之前的对话记录：\n${history}\n\n---\n\n用户: ${msg}`;
+    }
+    // 设置 model 为 agent:xxx，替换消息文本为 enriched prompt
+    store.updateSessionModel(binding.codepilotSessionId, `agent:${agent}`);
+    inbound.text = enrichedPrompt;
+    ctx.enqueue(inbound);
+    return;
+  }
+  if (command === '/stop') {
+    const store = ctx.getStore();
+    const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话。', inbound.messageId);
+      return;
+    }
+    ctx.enqueue(inbound);
+    return;
+  }
+
+  if (command === '/compact') {
+    const store = ctx.getStore();
+    const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话，请先发送消息创建会话。', inbound.messageId);
+      return;
+    }
+    const sessionId = binding.codepilotSessionId;
+    if (!sessionId) {
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话。', inbound.messageId);
+      return;
+    }
+    await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId);
+    const config = loadConfig();
+    const result = await compactConversation(store, sessionId, config.compact);
+    if (result.success) {
+      applyCompactResult(store, sessionId, result);
+      if (config.compact.clearSdkSession) {
+        store.updateSdkSessionId(sessionId, '');
+      }
+      console.log(`[feishu-adapter] /compact: 压缩完成，${result.originalCount} 条消息 → 摘要`);
+      await ctx.sendAsPost(inbound.address, `✅ 上下文已压缩（${result.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`, inbound.messageId);
+    } else {
+      console.warn(`[feishu-adapter] /compact 失败: ${result.error}`);
+      await ctx.sendAsPost(inbound.address, `❌ 压缩失败: ${result.error}`, inbound.messageId);
+    }
+    return;
+  }
+
+  // 私聊非命令消息：尝试恢复最近的会话，或自动创建新会话
+  const store = ctx.getStore();
+  const existingBinding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+
+  // 如果已有绑定，直接处理消息
+  if (existingBinding) {
+    ctx.enqueue(inbound);
+    return;
+  }
+
+  // 没有绑定，自动创建新会话并绑定私聊本身（不创建新群聊）
+  const config = loadConfig();
+  const defaultRuntime = config.defaultRuntime || 'claude';
+  console.log(`[feishu-adapter] No existing binding found for p2p chat, auto-creating session with runtime=${defaultRuntime}`);
+  try {
+    await ctx.ensureRuntimeAvailable(defaultRuntime);
+    const session = store.createRuntimeSession({
+      runtime: defaultRuntime,
+      model: '',
+      cwd: store.getSetting('bridge_default_work_dir') || process.cwd(),
+    });
+    // 直接绑定私聊本身，不创建新群聊
+    store.upsertChannelBinding({
+      channelType: ctx.channelType,
+      channelInstanceId: ctx.profileId,
+      chatId: inbound.address.chatId,  // 使用私聊的 chatId
+      codepilotSessionId: session.id,
+      workingDirectory: session.working_directory,
+      model: session.model,
+      chatType: 'p2p',
+    });
+    console.log(`[feishu-adapter] Created and bound session ${session.id} (runtime=${defaultRuntime}) to p2p chat ${inbound.address.chatId}`);
+  } catch (error) {
+    console.error('[feishu-adapter] Failed to auto-create session:', error);
+    await ctx.sendAsPost(
+      inbound.address,
+      `自动创建会话失败：${error instanceof Error ? error.message : String(error)}`,
+      inbound.messageId,
+    );
+    return;
+  }
+  ctx.enqueue(inbound);
+  return;
 }
 
 export async function handleGroupMessage(
@@ -218,6 +499,34 @@ export async function handleGroupMessage(
       return;
     }
     await ctx.handlePlanCommand(binding.id, inbound);
+    return;
+  }
+  if (lower === '/compact') {
+    if (!binding) {
+      await ctx.sendAsPost(inbound.address, '当前群尚未绑定会话。', inbound.messageId);
+      return;
+    }
+    const store2 = ctx.getStore();
+    const binding2 = store2.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
+    if (binding2) {
+      const sid2 = binding2.codepilotSessionId;
+      if (sid2) {
+        await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId);
+        const config2 = loadConfig();
+        const result2 = await compactConversation(store2, sid2, config2.compact);
+        if (result2.success) {
+          applyCompactResult(store2, sid2, result2);
+          if (config2.compact.clearSdkSession) {
+            store2.updateSdkSessionId(sid2, '');
+          }
+          console.log(`[feishu-adapter] /compact: 压缩完成，${result2.originalCount} 条消息 → 摘要`);
+          await ctx.sendAsPost(inbound.address, `✅ 上下文已压缩（${result2.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`, inbound.messageId);
+        } else {
+          console.warn(`[feishu-adapter] /compact 失败: ${result2.error}`);
+          await ctx.sendAsPost(inbound.address, `❌ 压缩失败: ${result2.error}`, inbound.messageId);
+        }
+      }
+    }
     return;
   }
   if (lower.startsWith('/new')) {

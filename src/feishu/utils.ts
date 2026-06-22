@@ -96,6 +96,8 @@ export function resolveClaudeBindingMode(
 }
 
 export function defaultChatName(runtime: RuntimeName, claudePermissionMode?: ClaudePermissionMode): string {
+  if (runtime === 'openhuman') return 'OpenHuman 新会话';
+  if (runtime === 'zcode') return 'ZCode 新会话';
   const base = runtime === 'codex' ? 'Codex 新会话' : 'Claude 新会话';
   return runtime === 'claude' ? `${base}${getClaudeModeSuffix(claudePermissionMode)}` : base;
 }
@@ -134,6 +136,21 @@ export function parseImageResourceKey(content: string): string {
       ? parsed.image_key
       : typeof parsed.file_key === 'string'
         ? parsed.file_key
+        : '';
+    return candidate.trim();
+  } catch {
+    return '';
+  }
+}
+
+export function parseAudioFileKey(content: string): string {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    // 飞书语音消息可能用 file_key 或 audio_key
+    const candidate = typeof parsed.file_key === 'string'
+      ? parsed.file_key
+      : typeof parsed.audio_key === 'string'
+        ? parsed.audio_key
         : '';
     return candidate.trim();
   } catch {

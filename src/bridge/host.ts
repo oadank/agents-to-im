@@ -50,6 +50,7 @@ export type SSEEventType =
   | 'mode_changed'
   | 'task_update'
   | 'keep_alive'
+  | 'session_invalid'  // Signal that sdkSessionId is no longer valid
   | 'done';
 
 /** Content block in an LLM response message. */
@@ -183,6 +184,7 @@ export interface PermissionLinkInput {
   chatId: string;
   messageId: string;
   openMessageId?: string;
+  cardToken?: string;
   toolName: string;
   suggestions: string;
 }
@@ -195,6 +197,7 @@ export interface PermissionLinkRecord {
   chatId: string;
   messageId: string;
   openMessageId?: string;
+  cardToken?: string;
   resolved: boolean;
   suggestions: string;
 }
@@ -312,6 +315,7 @@ export interface UpsertChannelBindingInput {
   codepilotSessionId: string;
   workingDirectory: string;
   model: string;
+  chatType?: 'p2p' | 'group';
   claudePermissionMode?: ClaudePermissionMode;
 }
 
@@ -343,6 +347,9 @@ export interface BridgeStore {
   // ── Messages ──
   addMessage(sessionId: string, role: string, content: string, usage?: string | null): void;
   getMessages(sessionId: string, opts?: { limit?: number }): { messages: BridgeMessage[] };
+  /** Replace all messages for a session atomically (single write). */
+  setMessages(sessionId: string, messages: BridgeMessage[]): void;
+  clearSessionMessages(sessionId: string): void;
 
   // ── Session locking ──
   acquireSessionLock(sessionId: string, lockId: string, owner: string, ttlSecs: number): boolean;

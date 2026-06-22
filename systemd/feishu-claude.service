@@ -1,0 +1,39 @@
+[Unit]
+Description=agents-to-im (Feishu Claude Instance)
+After=network.target
+Documentation=https://github.com/oadank/agents-to-im
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node --env-file=%h/.agents-to-im-claude/config.env /usr/lib/node_modules/agents-to-im/dist/daemon.mjs
+WorkingDirectory=%h/.agents-to-im-claude
+Restart=always
+RestartSec=5
+SuccessExitStatus=0 143
+KillMode=control-group
+TimeoutStopSec=30
+TimeoutStartSec=30
+
+# Environment
+Environment=HOME=%h
+Environment=TMPDIR=/tmp
+Environment=OPENCLAW_HOME=/opt/.openclaw
+Environment=PATH=/usr/bin:%h/.local/bin:%h/.npm-global/bin:%h/bin:%h/.bun/bin:%h/.nix-profile/bin
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.agents-to-im-claude
+ReadWritePaths=/tmp
+ReadWritePaths=/opt
+ReadWritePaths=%h/.openclaw
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=default.target

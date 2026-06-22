@@ -30,7 +30,7 @@ import {
   type ChannelType,
 } from '../bridge/types.js';
 import { normalizeClaudePermissionMode } from '../runtime/claude-mode.js';
-import { CTI_HOME } from '../config/config.js';
+import { CTI_HOME, type CompactConfig } from '../config/config.js';
 import type {
   DisplayNameMode,
   RuntimeName,
@@ -115,9 +115,16 @@ export class JsonFileStore implements BridgeStore {
   private dedupKeys = new Map<string, number>();
   private locks = new Map<string, LockEntry>();
   private auditLog: Array<AuditLogInput & { id: string; createdAt: string }> = [];
+  private compact: CompactConfig;
 
   constructor(settingsMap: Map<string, string>) {
     this.settings = settingsMap;
+    this.compact = {
+      model: settingsMap.get('compact_model') || 'codex-model',
+      maxTokens: parseInt(settingsMap.get('compact_max_tokens') || '3000'),
+      temperature: parseFloat(settingsMap.get('compact_temperature') || '0.2'),
+      clearSdkSession: settingsMap.get('compact_clear_sdk_session') !== 'false',
+    };
     ensureDir(DATA_DIR);
     ensureDir(MESSAGES_DIR);
     this.loadAll();
@@ -408,6 +415,7 @@ export class JsonFileStore implements BridgeStore {
         codepilotSessionId: data.codepilotSessionId,
         workingDirectory: data.workingDirectory,
         model: data.model,
+        ...(data.chatType ? { chatType: data.chatType } : {}),
         ...(data.claudePermissionMode !== undefined
           ? { claudePermissionMode: data.claudePermissionMode }
           : {}),
@@ -427,6 +435,7 @@ export class JsonFileStore implements BridgeStore {
       workingDirectory: data.workingDirectory,
       model: data.model,
       mode: 'code',
+      ...(data.chatType ? { chatType: data.chatType } : {}),
       ...(data.claudePermissionMode !== undefined
         ? { claudePermissionMode: data.claudePermissionMode }
         : {}),
@@ -517,9 +526,17 @@ export class JsonFileStore implements BridgeStore {
 
   // ── Messages ──
 
+  // 每条消息最大长度
+  private readonly MAX_MESSAGE_LENGTH = 50000;
+
   addMessage(sessionId: string, role: string, content: string, _usage?: string | null): void {
     const msgs = this.loadMessages(sessionId);
-    msgs.push({ role, content });
+    // 截断超长消息
+    let truncatedContent = content;
+    if (content.length > this.MAX_MESSAGE_LENGTH) {
+      truncatedContent = content.slice(0, this.MAX_MESSAGE_LENGTH) + '...[TRUNCATED]';
+    }
+    msgs.push({ role, content: truncatedContent });
     this.persistMessages(sessionId);
   }
 
@@ -630,6 +647,53 @@ export class JsonFileStore implements BridgeStore {
     return this.sessions.get(sessionId)?.sdk_session_id || '';
   }
 
+  /**
+   * 清空所有 Codex 会话的 thread id（当 Codex 进程重启时调用）
+   * 防止 "no rollout found for thread id" 错误
+   */
+  clearAllCodexThreadIds(): number {
+    let cleared = 0;
+    for (const session of this.sessions.values()) {
+      if (session.ext?.runtime === 'codex' && session.ext?.codexThreadId) {
+        session.ext.codexThreadId = undefined;
+        cleared += 1;
+      }
+    }
+    if (cleared > 0) {
+      this.persistSessions();
+      console.log(`[store] Cleared ${cleared} codex thread IDs due to Codex process restart`);
+    }
+    return cleared;
+  }
+
+  clearSessionMessages(sessionId: string): void {
+    this.messages.delete(sessionId);
+    this.persistMessages(sessionId);
+  }
+
+  setMessages(sessionId: string, newMsgs: BridgeMessage[]): void {
+    // Truncate each message to MAX_MESSAGE_LENGTH
+    const msgs = newMsgs.map(m => {
+      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      return {
+        role: m.role,
+        content: content.length > this.MAX_MESSAGE_LENGTH
+          ? content.slice(0, this.MAX_MESSAGE_LENGTH) + '...[TRUNCATED]'
+          : content,
+      };
+    });
+    this.messages.set(sessionId, msgs);
+    this.persistMessages(sessionId);
+  }
+
+  updateSessionSdkId(sessionId: string, sdkId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.sdk_session_id = sdkId;
+      this.persistSessions();
+    }
+  }
+
   migrateLegacySessions(defaultRuntime: RuntimeName = 'claude'): boolean {
     let changed = false;
     for (const session of this.sessions.values()) {
@@ -729,6 +793,7 @@ export class JsonFileStore implements BridgeStore {
       ...(typeof (link as PermissionLinkInput & { openMessageId?: string }).openMessageId === 'string'
         ? { openMessageId: (link as PermissionLinkInput & { openMessageId?: string }).openMessageId }
         : {}),
+      ...(typeof link.cardToken === 'string' ? { cardToken: link.cardToken } : {}),
       resolved: false,
       suggestions: link.suggestions,
     });

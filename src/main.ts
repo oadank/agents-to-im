@@ -11,7 +11,8 @@ import crypto from 'node:crypto';
 import { initBridgeContext } from './bridge/context.js';
 import * as bridgeManager from './bridge/bridge-manager.js';
 
-import { loadConfig, configToSettings, CTI_HOME } from './config/config.js';
+import { loadConfig, configToSettings, CTI_HOME, type Config } from './config/config.js';
+import { compactConversation, applyCompactResult } from './bridge/compact.js';
 import { FeishuAdapter } from './feishu/adapter.js';
 import { MultiplexLLMProvider } from './providers/multiplex.js';
 import { JsonFileStore } from './infra/store.js';
@@ -52,8 +53,24 @@ async function main(): Promise<void> {
   console.log(`[agents-to-im] Starting bridge (run_id: ${runId})`);
 
   const settings = configToSettings(config);
+  // Add compact config to settings for JsonFileStore
+  settings.set('compact_model', config.compact.model);
+  settings.set('compact_max_tokens', String(config.compact.maxTokens));
+  settings.set('compact_temperature', String(config.compact.temperature));
+  settings.set('compact_clear_sdk_session', String(config.compact.clearSdkSession));
+    // Permission mode: bypassPermissions skips all tool confirmations
+    const permMode = process.env.CTI_PERMISSION_MODE || 'bypassPermissions';
+    settings.set('claude_permission_mode', permMode);
+    console.log('[agents-to-im] Permission mode:', permMode);
   const store = new JsonFileStore(settings);
-  store.migrateLegacySessions();
+  (globalThis as any).__ctiStore = store;
+  store.migrateLegacySessions(config.defaultRuntime);
+  // 启动时清空所有 Codex thread ID，防止 Codex app-server 重启后 "no rollout found"
+  // 因为 Codex app-server 的 thread 状态在重启后会丢失
+  const clearedThreads = store.clearAllCodexThreadIds();
+  if (clearedThreads > 0) {
+    console.log(`[agents-to-im] Cleared ${clearedThreads} stale Codex thread IDs on startup`);
+  }
   const pendingPerms = new PendingPermissions();
   const pendingApprovals = new PendingApprovals();
   const pendingStructuredInputs = new PendingStructuredInputs();
@@ -83,6 +100,7 @@ async function main(): Promise<void> {
       requestId: string,
       resolution: { answers: Record<string, { answers: string[] }> },
     ) => pendingStructuredInputs.resolve(requestId, resolution),
+    waitForPendingPermission: (id: string) => pendingPerms.waitFor(id),
   };
 
   initBridgeContext({
@@ -120,6 +138,7 @@ async function main(): Promise<void> {
       store,
       getUptime: () => (Date.now() - startTime) / 1000,
       getBridgeStatus: bridgeManager.getStatus,
+      larkClient: feishuAdapter.getLarkClient(),
     });
   } catch (err) {
     console.warn('[agents-to-im] Dashboard failed to start:', err instanceof Error ? err.message : err);
@@ -167,6 +186,52 @@ async function main(): Promise<void> {
   // setInterval is ref'd by default, preventing Node from exiting
   // when the event loop would otherwise be empty.
   setInterval(() => { /* keepalive */ }, 45_000);
+
+  // ── Idle-compact: LLM summarize sessions idle > 1.5h with accumulated messages ──
+  const IDLE_COMPACT_INTERVAL_MS = 30 * 60 * 1000; // Check every 30 minutes
+  const IDLE_THRESHOLD_MS = 90 * 60 * 1000; // 1.5 hours idle
+  const MIN_MESSAGES_FOR_COMPACT = 40; // 20 轮对话（40 条消息）才压缩
+
+  setInterval(async () => {
+    try {
+      const store = (globalThis as any).__ctiStore;
+      if (!store) return;
+      // 每次执行时重新加载配置，确保运行时修改 config.env 生效
+      const config2 = loadConfig();
+      const now = Date.now();
+      const bindings = store.listChannelBindings?.() || [];
+      for (const binding of bindings) {
+        if (!binding.active) continue;
+        const updatedAt = new Date(binding.updatedAt).getTime();
+        if (isNaN(updatedAt) || now - updatedAt < IDLE_THRESHOLD_MS) continue;
+        const msgCount = store.getMessages(binding.codepilotSessionId, { limit: 999 })?.messages?.length || 0;
+        if (msgCount < MIN_MESSAGES_FOR_COMPACT) continue;
+        // Idle session with enough messages — LLM summarize
+        const sid = binding.codepilotSessionId;
+        console.log(`[idle-compact] Compacting session ${sid} (idle ${Math.round((now - updatedAt) / 60000)}min, ${msgCount} msgs)`);
+        const result = await compactConversation(store, sid, config2.compact);
+        if (result.success) {
+          applyCompactResult(store, sid, result);
+          if (config2.compact.clearSdkSession) {
+            store.updateSdkSessionId(sid, '');
+          }
+          console.log(`[idle-compact] 压缩完成: ${result.originalCount} 条消息, ${result.roundCount} 轮对话 → 摘要`);
+          // Send feishu notification so the user knows compact ran
+          if (binding.channelType === 'feishu' && binding.chatId) {
+            const notified = await feishuAdapter.sendNotification(
+              binding.chatId,
+              `🔄 会话已自动压缩（${result.roundCount} 轮对话, ${result.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`,
+            );
+            if (notified) console.log(`[idle-compact] 已通知飞书 chat ${binding.chatId}`);
+          }
+        } else {
+          console.warn(`[idle-compact] 压缩失败: ${result.error}`);
+        }
+      }
+    } catch (err) {
+      console.error('[idle-compact] Error:', err);
+    }
+  }, IDLE_COMPACT_INTERVAL_MS);
 }
 
 main().catch((err) => {

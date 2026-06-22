@@ -77,7 +77,7 @@ interface StreamConfig {
 
 /** Default stream config per channel type. */
 const STREAM_DEFAULTS: Record<string, StreamConfig> = {
-  feishu: { intervalMs: 700, minDeltaChars: 20, maxChars: 3900, primeDelayMs: 900 },
+  feishu: { intervalMs: 160, minDeltaChars: 8, maxChars: 99999, primeDelayMs: 300 },
 };
 
 function getStreamConfig(channelType = 'feishu'): StreamConfig {
@@ -548,16 +548,26 @@ function flushPreview(
     : state.pendingText;
   if (!text.trim()) return;
 
-  state.placeholderPrimed = false;
+  // DO NOT reset placeholderPrimed here — once the card is primed,
+  // it stays primed for the entire streaming session. Resetting it
+  // causes onPartialText / handleActivityEvent to call primePreview()
+  // again on the next tick, which can create duplicate cards.
   state.lastSentText = text;
   state.lastSentAt = Date.now();
   const draftId = state.draftId;
+  // Build combined text: thinking + answer in single element
+  const thinking = state.lastThinkingText;
   const send = async (): Promise<void> => {
     try {
-      const result = await adapter.sendPreview!(state.address, text, draftId);
+      let combined = text;
+      if (thinking) {
+        const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
+        const thinkingBlock = `> 💭 **思考中…**\n${windowThinking.split('\n').map((l: string) => `> ${l}`).join('\n')}`;
+        combined = `${thinkingBlock}\n\n---\n\n${text}`;
+      }
+      const result = await adapter.sendPreview!(state.address, combined, draftId);
       if (state.draftId !== draftId) return;
       if (result === 'degrade') state.degraded = true;
-      // 'skip' — transient failure, next flush will retry naturally
     } catch {
       // Network error — transient, don't degrade
     }
@@ -585,7 +595,14 @@ function primePreview(
     try {
       const result = await adapter.primePreview!(state.address, draftId);
       if (state.draftId !== draftId) return;
-      if (result === 'sent') state.placeholderPrimed = true;
+      if (result === 'sent') {
+        state.placeholderPrimed = true;
+        // Apply buffered thinking content that arrived before card was created
+        if (state.pendingThinkingText && adapter.sendPreview) {
+          await adapter.sendPreview(state.address, state.pendingThinkingText, draftId).catch(() => {});
+          state.pendingThinkingText = '';
+        }
+      }
       if (result === 'degrade') state.degraded = true;
     } catch {
       // Network error — transient, don't degrade
@@ -658,6 +675,8 @@ function resetPreviewState(state: StreamingPreviewState): void {
   state.lastSentAt = 0;
   state.pendingText = '';
   state.inFlightSend = null;
+  state.lastThinkingText = '';
+  state.pendingThinkingText = '';
 }
 
 interface LightweightActivityState {
@@ -770,6 +789,8 @@ interface BridgeManagerState {
   /** Per-session processing chains for concurrency control */
   sessionLocks: Map<string, Promise<void>>;
   autoStartChecked: boolean;
+  /** Track active preview state per chat address for cleanup on new messages */
+  activePreviewByAddress: Map<string, StreamingPreviewState>;
 }
 
 function getState(): BridgeManagerState {
@@ -785,6 +806,7 @@ function getState(): BridgeManagerState {
       pendingStopFeedback: new Map(),
       sessionLocks: new Map(),
       autoStartChecked: false,
+      activePreviewByAddress: new Map(),
     };
   }
   // Backfill sessionLocks for states created before this field existed
@@ -1181,8 +1203,10 @@ async function handleMessage(
     }
   }
 
-  // Check for IM commands (before sanitization — commands are validated individually)
-  if (rawText.startsWith('/')) {
+  // Known slash commands — only treat as commands if first word matches
+  const KNOWN_COMMANDS = ['/start','/new','/bind','/cwd','/mode','/status','/sessions','/stop','/help'];
+  const firstWord = rawText.split(/\s+/)[0].split('@')[0].toLowerCase();
+  if (KNOWN_COMMANDS.includes(firstWord)) {
     await handleCommand(adapter, msg, rawText);
     ack();
     return;
@@ -1313,6 +1337,14 @@ async function handleMessage(
   state.activeTasks.set(binding.codepilotSessionId, taskAbort);
 
   // ── Streaming preview setup ──────────────────────────────────
+  // Close any active preview card for this address (prevents orphaned streaming cards)
+  const addressKey = `${msg.address.channelType}:${msg.address.channelInstanceId}:${msg.address.chatId}`;
+  const oldPreview = state.activePreviewByAddress.get(addressKey);
+  if (oldPreview) {
+    state.activePreviewByAddress.delete(addressKey);
+    adapter.endPreview?.(msg.address, oldPreview.draftId);
+  }
+
   let previewState: StreamingPreviewState | null = null;
   const caps = adapter.getPreviewCapabilities?.(msg.address) ?? null;
   if (caps?.supported) {
@@ -1327,13 +1359,18 @@ async function handleMessage(
       throttleTimer: null,
       pendingText: '',
       inFlightSend: null,
+      streamStartedAt: Date.now(),
+      lastThinkingText: '',
+      pendingThinkingText: '',
     };
+    state.activePreviewByAddress.set(addressKey, previewState);
   }
 
   const streamCfg = previewState ? getStreamConfig(adapter.channelType) : null;
   const activityDelayMs = getStreamConfig(adapter.channelType).primeDelayMs;
   const previewFinalDelivery = caps?.finalDelivery || 'separate_message';
   const previewFinalizesPerSegment = previewFinalDelivery === 'segment_replace_preview';
+
   const lightweightActivityState: LightweightActivityState | null = adapter.upsertActivityEvent
     ? {
         current: null,
@@ -1710,7 +1747,24 @@ async function handleMessage(
     const normalized = normalizeActivityEvent(event);
     const shouldProjectActivity = adapter.shouldProjectActivityEvent?.(normalized) ?? true;
     if (!shouldProjectActivity) return;
-    await markProgressCardVisible();
+    // reasoning_activity — CardKit preview
+    // V5 FIX: Do NOT call sendPreview here — it races with flushPreview and causes duplicate content.
+    // Only store pendingThinkingText. The card will be updated by onPartialText→flushPreview.
+    if (normalized.kind === 'reasoning_activity') {
+      await markProgressCardVisible();
+      if (previewState) {
+        const thinkingText = normalized.text || '';
+        if (thinkingText && thinkingText !== previewState.lastThinkingText) {
+          previewState.lastThinkingText = thinkingText;
+          // Store for flushPreview to combine with answer text
+          const windowThinking = thinkingText.length > 1500 ? thinkingText.slice(-1500) : thinkingText;
+          previewState.pendingThinkingText = `> 💭 **思考中…**\n${windowThinking.split('\n').map((l: string) => `> ${l}`).join('\n')}`;
+        }
+      }
+      return; // ALWAYS return — never create activity card for reasoning
+    }
+    // When streaming card is active, skip ALL other activity card creation
+    if (previewState?.placeholderPrimed) return;
     if (normalized.kind === 'lightweight_activity') {
       if (
         lightweightActivityState?.current
@@ -1730,7 +1784,7 @@ async function handleMessage(
     await adapter.upsertActivityEvent(msg.address, normalized, msg.messageId);
   };
 
-  // Build the onPartialText callback (or undefined if preview not supported)
+  // Build the onPartialText callback — Feishu uses native waterfall, others use CardKit preview
   const onPartialText = (previewState && streamCfg) ? (fullText: string) => {
     if (!planAttemptIsCurrent()) return;
     const ps = previewState!;
@@ -1745,6 +1799,13 @@ async function handleMessage(
 
     const delta = ps.pendingText.length - ps.lastSentText.length;
     const elapsed = Date.now() - ps.lastSentAt;
+
+    // replace_preview 模式：首次收到文本时立即创建卡片（不等 onResponseSegment）
+    if (!ps.placeholderPrimed && ps.pendingText.trim()) {
+      if (adapter.primePreview) {
+        primePreview(adapter, ps);
+      }
+    }
 
     if (delta < cfg.minDeltaChars && ps.lastSentAt > 0) {
       // Not enough new content — schedule trailing-edge timer if not already set
@@ -1775,8 +1836,6 @@ async function handleMessage(
     }
     flushPreview(adapter, ps, cfg);
   } : undefined;
-
-  let previewClosed = false;
   let streamedSegmentCount = 0;
   let streamedSegmentDelivery: SendResult | null = null;
   let hasVisibleAssistantOutput = false;
@@ -2045,18 +2104,13 @@ async function handleMessage(
     if (previewState && previewFinalDelivery === 'replace_preview') {
       const finalResponseText = result.responseText || remainingSegments.join('\n\n').trim();
       if (finalResponseText) {
-        responseDelivery = await deliverResponse(
-          adapter,
-          msg.address,
-          finalResponseText,
-          binding.codepilotSessionId,
-          msg.messageId,
-        );
-        if (responseDelivery.ok) {
-          adapter.endPreview?.(msg.address, previewState.draftId);
-          previewClosed = true;
-          hasVisibleAssistantOutput = true;
-        }
+        // Write final text to the existing streaming card (no new message)
+        const previewResult = await adapter.sendPreview?.(msg.address, finalResponseText, previewState.draftId);
+        // Close streaming_mode on the card
+        adapter.endPreview?.(msg.address, previewState.draftId);
+        previewClosed = true;
+        hasVisibleAssistantOutput = true;
+        responseDelivery = { ok: true };
       } else if (result.hasError && !stopRequestedByUser) {
         const errorResponse: OutboundMessage = {
           address: msg.address,
@@ -2306,9 +2360,10 @@ async function handleMessage(
     // Persist the actual SDK session ID for future resume.
     // If the result has an error and no session ID was captured, clear the
     // stale ID so the next message starts fresh instead of retrying a broken resume.
+    // Exception: user abort (/stop) should preserve session for context resume.
     if (binding.id && !isCodexRuntime(binding.codepilotSessionId)) {
       try {
-        const update = computeSdkSessionUpdate(result.sdkSessionId, result.hasError);
+        const update = computeSdkSessionUpdate(result.sdkSessionId, result.hasError, taskAbort.signal.aborted);
         if (update !== null) {
           store.updateChannelBinding(binding.id, { sdkSessionId: update });
         }
@@ -2561,17 +2616,23 @@ async function handleCommand(
  *
  * Rules:
  * - If result has sdkSessionId AND no error → save the new ID
- * - If result has error (regardless of sdkSessionId) → clear to empty string
+ * - If result has error AND NOT abort → clear to empty string (broken session)
+ * - If result has error AND abort → return null (keep existing session for resume)
  * - Otherwise → no update needed
  */
 export function computeSdkSessionUpdate(
   sdkSessionId: string | null | undefined,
   hasError: boolean,
+  isAbort?: boolean,
 ): string | null {
   if (sdkSessionId && !hasError) {
     return sdkSessionId;
   }
   if (hasError) {
+    // Abort (user /stop) should preserve existing session for context resume
+    if (isAbort) {
+      return null;
+    }
     return '';
   }
   return null;

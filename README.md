@@ -1,310 +1,283 @@
-<div align="center">
-
 # agents-to-im
 
-### AI coding agents are trapped in your terminal. Your team collaborates in Feishu. This bridges them — one group per session, local state, streamed cards.
+> 把 AI 编码 Agent 桥接到飞书（Claude / Codex / MiMo / OpenHuman）
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.6-green.svg)](https://nodejs.org/)
-[![Claude Code](https://img.shields.io/badge/Claude_Code-Supported-purple.svg)](https://docs.anthropic.com/en/docs/claude-code)
-[![Codex](https://img.shields.io/badge/Codex-Supported-orange.svg)](https://github.com/openai/codex)
-
-[中文文档](README.zh-CN.md) · [Setup Guide](references/setup-guides.md) · [Troubleshooting](references/troubleshooting.md)
-
-</div>
+基于 [francize/agents-to-im](https://github.com/francize/agents-to-im) 二次开发，支持多 Runtime、多实例部署、动态模型显示。
 
 ---
 
-> [!IMPORTANT]
-> **What it touches:** Creates config and state under `~/.agents-to-im/` (sessions, bindings, message history). Runs as a local daemon under your user account.
->
-> **Network:** Connects outbound to Feishu/Lark APIs only. No inbound listeners are opened.
->
-> **Credentials:** Stored in `~/.agents-to-im/config.env` with `600` permissions. Secrets are masked in all log output.
->
-> **Disable:** `agents-to-im stop`
->
-> **Uninstall:** `rm -rf ~/.agents-to-im`
+## 解决什么问题
+
+Claude Code 和 Codex 都是好用的终端 AI 编码工具，但有几个痛点：
+
+1. **只能在终端用**：团队协作在飞书，但 AI 编码只能在本地终端，来回切换麻烦
+2. **单实例限制**：原版只能运行一个实例，无法同时跑 Claude 和 Codex
+3. **命令误判**：原版把 `/opt/xxx` 这类路径识别为命令，导致工作目录设置失败
+4. **部署不持久**：手动启动容易丢失，重启后需要重新配置
+
+本项目解决这些问题：
+- ✅ 双实例同时运行（Claude + Codex 各自独立配置和状态）
+- ✅ systemd 用户服务自动启动，重启不丢失
+- ✅ 命令白名单机制，路径不再被误判为命令
+- ✅ 独立工作目录，互不干扰
+- ✅ 飞书用户身份发送消息（OAuth 授权，以用户而非机器人身份发消息）
+- ✅ 多 Agent 路由（GLM / Gemini / Opencode 通过 MiMo 网关统一调度）
+
+---
+
+## 架构
+
+```
+用户 (飞书)
+  │
+  ├─ feishu-mimo ──→ LiteLLM ──→ MiMo-Go / DsV4go / codex-model
+  │   (独立配置)      (代理层)
+  │
+  ├─ feishu-claude ──→ LiteLLM ──→ claude-model / MiMo-Anthropic
+  │   (独立配置)      (代理层)
+  │
+  ├─ feishu-codex ──→ LiteLLM ──→ codex-model
+  │   (独立配置)      (代理层)
+  │
+  └─ feishu-openhuman ──→ LiteLLM ──→ claude-model
+      (独立配置)      (代理层)
+```
+
+每个实例独立运行，有自己的：
+- 飞书应用配置（APP_ID / APP_SECRET）
+- 端口（Dashboard 互不冲突）
+- 工作目录
+- 会话状态
+- 模型配置（通过 LiteLLM 代理）
+
+---
+
+## 相比原版改了什么
+
+### 1. 命令处理逻辑
+
+**原版问题：** 把所有 `/` 开头的文本当作命令，导致 `/opt/.openclaw/workspace` 这类路径被误判为命令。
+
+**修改：** 加入命令白名单，只有这些命令才触发处理：
+
+```
+/new  /new:claude  /new:codex  /new:glm  /new:gemini  /new:opencode
+/reset  /stop  /start  /help  /status  /cwd  /mode  /bind  /sessions
+```
+
+其他 `/` 开头的文本（如路径）都当作普通消息处理。
+
+### 2. 会话创建流程
+
+**原版问题：** `/new:claude` 和 `/new:codex` 的处理逻辑分散，容易出错。
+
+**修改：** 统一到一个处理函数，根据命令后缀自动选择运行时：
+- `/new` → 用默认运行时
+- `/new:claude` → 强制 Claude
+- `/new:codex` → 强制 Codex
+
+### 3. 多实例部署支持
+
+新增配置模板和服务文件，支持同时部署 Claude 和 Codex 两个实例。
+
+### 4. 飞书用户身份发送消息
+
+支持以飞书用户身份（而非机器人身份）发送消息，让 AI 回复显示为用户自己发出，适用于 OpenHuman 等场景。
+
+**工作原理：**
+- 通过飞书 OAuth 2.0 授权流程获取 `user_access_token`
+- Dashboard 提供 `/api/auth/url` 生成授权链接，`/oauth/callback` 处理回调
+- `lark-client.ts` 中 `withUserAccessToken` 方法自动附加用户令牌
+- `adapter.ts` 中 `shouldUseUserToken()` 判断是否使用用户身份
+
+**新增配置项：**
+
+| 变量 | 说明 |
+|------|------|
+| `CTI_OAUTH_REDIRECT_URI` | OAuth 回调地址 |
+| `CTI_ENABLE_USER_MODE` | 启用用户身份模式 |
+
+### 5. 多 Runtime 支持
+
+支持多种 AI 编码工具作为 Runtime：
+
+| Runtime | 说明 | 命令 |
+|---------|------|------|
+| claude | Claude Code CLI | `/new:claude` |
+| codex | Codex CLI | `/new:codex` |
+| mimo | MiMo 通过 LiteLLM | `/new:mimo` |
+| openhuman | OpenHuman Agent | `/new:openhuman` |
+
+- 每个 Runtime 独立配置模型和 Provider
+- 通过 LiteLLM 代理层统一管理模型路由
+- 支持动态切换模型（修改配置后重启服务）
+
+### 6. Divider 动态显示
+
+每条消息底部自动显示 Agent 信息：
+
+```
+Agent: feishu-mimo | Model: MiMogo | Provider: LiteLLM
+```
+
+**配置项：**
+
+| 变量 | 说明 | 示例 |
+|------|------|------|
+| `CTI_FEISHU_SHOW_AGENT_DIVIDER` | 是否显示消息底部 divider | `true` |
+| `CTI_AGENT_NAME` | Agent 名称（显示在 divider） | `feishu-mimo` |
+| `CTI_MODEL_GROUP` | 模型组名（显示在 divider） | `MiMogo` |
+| `CTI_MODEL_PROVIDER` | 服务商名（显示在 divider） | `LiteLLM` |
+
+**特点：**
+- 所有 Runtime 统一配置方式
+- 修改配置后重启服务即生效
+- 支持动态切换模型，divider 自动更新
+
+---
+
+## 部署
+
+### 前置条件
+
+- Node.js 20.6+
+- 已安装 Claude Code CLI 和/或 Codex CLI
+- 两个飞书应用（分别给 Claude 和 Codex 用）
+
+### 安装
 
 ```bash
+# 安装原版包
 npm install -g agents-to-im
-agents-to-im onboard   # choose language first, then follow the guided platform setup step by step
-```
 
----
-
-> [!NOTE]
-> **Project origin:** `agents-to-im` started from [Claude-to-IM-skill](https://github.com/op7418/Claude-to-IM-skill) and has since been renamed and substantially reworked.
-> A backup of the pre-rewrite history is kept on the `legacy/upstream-history` branch for provenance.
-
-## The Problem
-
-Claude Code and Codex are excellent coding agents — but they only talk to you in the terminal. If your team lives in Feishu/Lark, there's no clean way to bring that capability into your IM workspace without mixing sessions into a noisy shared thread.
-
-Most terminal-to-chat relays treat the chat window as the session container. That means no isolation, no recovery after restarts, and Feishu gets reduced to a plain-text command relay.
-
-`agents-to-im` takes a different approach: DM is the control plane, each `/new:claude` or `/new:codex` creates a dedicated Feishu group bound to exactly one session and one runtime. State lives locally, so the workspace survives bridge restarts.
-
----
-
-## See It Work
-
-```
-You → DM bot: /new:claude
-
-Bot → Creates a new Feishu group "Claude Workspace"
-Bot → Shows mode selection card (Code / Plan / Ask)
-You → Pick "Code", choose workspace ~/my-project
-
-Bot → Group created, session bound
-Bot → "How can I help with ~/my-project?"
-
-You → (in group) Fix the login redirect bug in auth.ts
-
-Bot → [Streaming card with live progress]
-Bot → [Activity card: editing src/auth.ts]
-Bot → [Permission card: Allow file write?] [Allow] [Deny]
-Bot → Done. Fixed the redirect loop in handleCallback().
-
-You → /stop                    # interrupt current output
-You → /reset                   # fresh session, same group
-You → /mode                    # switch Claude mode
-```
-
----
-
-## Install
-
-### Recommended: Install from npm
-
-```bash
-npm install -g agents-to-im
-agents-to-im onboard
-```
-
-`onboard` now starts with a language picker, uses `↑/↓` + `Enter` for every choice, asks before copying scopes JSON or opening Feishu pages, and waits for you to press Enter after each platform step is actually done.
-
-Use `agents-to-im ...` for daily operation:
-
-```bash
-agents-to-im onboard      # run onboarding explicitly
-agents-to-im start        # start the daemon
-agents-to-im stop         # stop the daemon
-agents-to-im restart      # restart after config changes
-agents-to-im status       # check if running
-agents-to-im doctor       # diagnose common issues
-agents-to-im upgrade      # upgrade the local service and restart if it is running
-agents-to-im logs 200     # view recent logs
-```
-
-<details>
-<summary><b>Alternative: Source checkout</b> (for development/debugging)</summary>
-
-```bash
-git clone https://github.com/francize/agents-to-im.git
+# 克隆本仓库
+git clone https://github.com/oadank/agents-to-im.git
 cd agents-to-im
-npm install
-npm run build:all
-
-mkdir -p ~/.agents-to-im
-cp config.env.example ~/.agents-to-im/config.env
-$EDITOR ~/.agents-to-im/config.env
-
-bash scripts/daemon.sh restart
 ```
 
-</details>
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 20.6+ (uses the built-in `--env-file=` flag for safe config loading)
-- A Feishu/Lark custom app with Bot enabled ([setup guide](references/setup-guides.md))
-- Claude Code CLI and/or Codex CLI installed and authenticated locally
-
-### 1. Create and configure your Feishu/Lark app
-
-1. Create a custom app at [Feishu](https://open.feishu.cn/app) or [Lark](https://open.larksuite.com/app)
-2. Enable the **Bot** capability
-3. Import the full scopes JSON from [references/setup-guides.md](references/setup-guides.md) in one shot
-4. Publish one app version first
-5. After the local bridge is running, switch `Events & Callbacks` to **Long Connection**
-6. Add `im.message.receive_v1`, `im.message.message_read_v1`, `im.chat.updated_v1`, and `im.chat.member.bot.added_v1`
-   `im.chat.updated_v1` is required if you want manual group-name edits to sync back into Codex threads or Claude sessions.
-7. Add the `card.action.trigger` callback
-8. Publish again so events and callbacks go live
-9. Optional: add `/new:claude` and `/new:codex` to the Bot floating menu
-
-### 2. Configure the bridge
+### 配置 Claude 实例
 
 ```bash
-mkdir -p ~/.agents-to-im
-cp config.env.example ~/.agents-to-im/config.env
-$EDITOR ~/.agents-to-im/config.env
+# 创建实例目录
+mkdir -p ~/.agents-to-im-claude
+
+# 复制配置模板
+cp instances/feishu-claude/config.env.example ~/.agents-to-im-claude/config.env
+
+# 编辑配置，填写飞书应用密钥
+$EDITOR ~/.agents-to-im-claude/config.env
+
+# 安装 systemd 服务
+cp systemd/feishu-claude.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now feishu-claude.service
 ```
 
-Minimal config (single bot):
-
-```env
-CTI_FEISHU_APP_ID=cli_xxx
-CTI_FEISHU_APP_SECRET=xxx
-CTI_DEFAULT_WORKDIR=/path/to/your/project
-```
-
-<details>
-<summary><b>All configuration options</b></summary>
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `CTI_DEFAULT_WORKDIR` | Yes | Default working directory for new sessions |
-| `CTI_FEISHU_APP_ID` | Yes | Feishu app ID |
-| `CTI_FEISHU_APP_SECRET` | Yes | Feishu app secret |
-| `CTI_FEISHU_DOMAIN` | No | `lark` for Lark international |
-| `CTI_FEISHU_ALLOWED_USERS` | **Yes** | Comma-separated sender IDs (open_id / user_id / union_id). Empty value rejects everyone. Set to a single `*` to allow-all (DANGEROUS — see SECURITY.md). |
-| `CTI_FEISHU_SHOW_TOOL_CALL_CARDS` | No | Set to `true` to show tool-call activity cards in group sessions, including MCP/tool, command execution, and file-change cards. Defaults to `false`; normal assistant cards stay enabled. |
-| `CTI_CLAUDE_CODE_EXECUTABLE` | No | Explicit Claude CLI path override. On Windows, npm-installed `claude.cmd` is accepted and mapped to the real CLI entry automatically. |
-
-Claude and Codex both use the local CLI defaults on the host machine for model selection and approvals. Codex sessions reuse your local `~/.codex/config.toml` for auth, trusted directories, sandbox, and approval policy.
-If you install or update Claude Code after the bridge has already started, restart the bridge so the daemon picks up the new CLI path and environment.
-
-</details>
-
-### 3. Start and verify
+### 配置 Codex 实例
 
 ```bash
-agents-to-im start
-agents-to-im doctor        # check for common issues
-agents-to-im status        # confirm the bridge is running
+mkdir -p ~/.agents-to-im-codex
+cp instances/feishu-codex/config.env.example ~/.agents-to-im-codex/config.env
+$EDITOR ~/.agents-to-im-codex/config.env
+
+cp systemd/feishu-codex.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now feishu-codex.service
 ```
 
-Open `http://127.0.0.1:13578` to access the local dashboard, then DM the bot with `/new:claude` or `/new:codex`.
-
----
-
-## How It Works
-
-DM is the control plane. Each `/new:*` command creates a fresh Feishu group bound to one session and one runtime. Local JSON state keeps the workspace recoverable across bridge restarts.
-
-```mermaid
-flowchart LR
-  A["DM: /new:claude"] --> B["Bot creates Feishu group"]
-  B --> C["1 group = 1 session = 1 runtime"]
-  C --> D["Local state: bindings, messages, resume IDs"]
-  D --> E["Bridge restart → same workspace"]
-  C --> F["CardKit streaming, activity cards, permission buttons"]
-```
-
-<details>
-<summary><b>Feishu-native interactions</b></summary>
-
-| Interaction | Behavior |
-|-------------|----------|
-| Streaming preview | CardKit first, falls back to interactive-card patching, then plain text |
-| Permission handling | Inline buttons on approval cards; `1/2/3` quick reply only works when exactly one request is pending |
-| Activity visibility | Command/file/plan progress rendered as cards |
-| Structured input | Runtime follow-ups rendered as Feishu cards; sensitive prompts redirected to local CLI |
-| Group naming | Auto-renamed after first successful turn; Claude mode appended as suffix |
-
-</details>
-
-<details>
-<summary><b>State and recovery</b></summary>
-
-All state lives under `~/.agents-to-im/`:
-
-| Path | Contents |
-|------|----------|
-| `data/sessions.json` | Session metadata, runtime, model, title, resume IDs |
-| `data/bindings.json` | Group-to-session bindings, workdir, mode, model routing |
-| `data/messages/` | Persisted message history per session |
-| `runtime/status.json` | Bridge run status and last exit reason |
-| `runtime/bridge.pid` | Active daemon PID |
-
-What survives a bridge restart:
-- Group-to-session binding
-- Runtime choice (Claude or Codex)
-- Message history
-- Resume identifiers for continuing the underlying session
-- `/reset` creates a fresh session in the same group
-
-</details>
-
----
-
-## Commands
-
-### DM (control plane)
-
-| Command | Description |
-|---------|-------------|
-| `/new:claude` | Select a workspace and Claude mode, then create a dedicated group |
-| `/new:codex` | Select a workspace, then create a dedicated Codex group |
-| `/resume:claude` | Resume a recent Claude session in a new group |
-| `/resume:codex` | Resume a recent Codex session in a new group |
-
-Any other DM message returns help text.
-
-### In a bound group
-
-| Command | Description |
-|---------|-------------|
-| *(message)* | Continue the current session |
-| `/mode` | Switch Claude mode (card) or Codex bridge mode (`/mode plan\|code\|ask`) |
-| `/plan` | Start interactive planning; `/plan <request>` to plan immediately |
-| `/stop` | Interrupt current output (equivalent to `Esc` in terminal) |
-| `/reset` | Fresh session, same group and runtime |
-
----
-
-## FAQ
-
-**Can I use both Claude and Codex with the same bot?**
-Yes. The bridge now assumes a single Feishu/Lark bot and routes Claude/Codex per session behind that bot.
-
-**What happens if the bridge restarts?**
-Your groups, session bindings, and message history are preserved locally. Send a message in the group to continue where you left off.
-
-**Is my code sent to Feishu servers?**
-The bridge streams AI-generated text and activity summaries to Feishu. Your source code stays local — only the agent's output and your messages transit through the Feishu API.
-
----
-
-## Acknowledgements
-
-Special thanks to [op7418/Claude-to-IM-skill](https://github.com/op7418/Claude-to-IM-skill).
-
-This project was inspired by that work, and this repository is a Feishu/Lark-focused second-pass vibe built on top of that inspiration.
-
----
-
-## Troubleshooting
-
-| Symptom | First step |
-|---------|------------|
-| Bridge won't start | `agents-to-im doctor` |
-| Bot doesn't reply to DM | Check app is published, Bot enabled, Long Connection configured |
-| `/new:*` creates group but fails to bind | Check app scopes and local runtime availability |
-| Cards fall back to plain text | Verify CardKit and message update permissions |
-| Permission buttons don't respond | Verify `card.action.trigger` is configured and app version published |
-
-Full troubleshooting guide: [references/troubleshooting.md](references/troubleshooting.md)
-
----
-
-## Contributing
-
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+### 验证
 
 ```bash
-npm install
-npm run typecheck
-npm test
-npm run build:all
+# 查看服务状态
+systemctl --user status feishu-claude.service
+systemctl --user status feishu-codex.service
+
+# 查看日志
+journalctl --user -u feishu-claude.service -f
 ```
 
-## License
+---
 
-[MIT](LICENSE)
+## 配置说明
+
+### Claude 实例配置 (`~/.agents-to-im-claude/config.env`)
+
+```bash
+CTI_DEFAULT_WORKDIR=/opt                    # 默认工作目录
+CTI_FEISHU_APP_ID=cli_XXXXXXXXXXXXX        # 飞书应用 ID
+CTI_FEISHU_APP_SECRET=XXXXXXXXX             # 飞书应用密钥
+CTI_FEISHU_SHOW_TOOL_CALL_CARDS=false       # 不显示工具调用卡片
+CTI_DEFAULT_RUNTIME=claude                  # 默认运行时
+CTI_DASHBOARD_PORT=13579                    # Dashboard 端口
+CTI_DISABLE_PERMISSION_CHECK=true           # 禁用权限检查
+```
+
+### Codex 实例配置 (`~/.agents-to-im-codex/config.env`)
+
+```bash
+CTI_DEFAULT_WORKDIR=/opt
+CTI_FEISHU_APP_ID=cli_YYYYYYYYYYYYYYYY     # 另一个飞书应用
+CTI_FEISHU_APP_SECRET=YYYYYYYYY
+CTI_FEISHU_SHOW_TOOL_CALL_CARDS=false
+CTI_DEFAULT_RUNTIME=codex                   # 默认运行时改为 codex
+CTI_DASHBOARD_PORT=13580                    # 端口与 Claude 不同
+CTI_DISABLE_PERMISSION_CHECK=true
+```
+
+### 关键变量
+
+| 变量 | 说明 |
+|------|------|
+| `CTI_FEISHU_APP_ID` | 飞书开放平台的应用 ID |
+| `CTI_FEISHU_APP_SECRET` | 飞书应用密钥 |
+| `CTI_DEFAULT_RUNTIME` | `claude`、`codex`、`mimo` 或 `openhuman` |
+| `CTI_DASHBOARD_PORT` | 控制面板端口，每个实例必须不同 |
+| `CTI_DEFAULT_WORKDIR` | 默认工作目录 |
+| `CTI_FEISHU_SHOW_AGENT_DIVIDER` | 是否显示消息底部 divider（默认 `true`） |
+| `CTI_AGENT_NAME` | Agent 名称，显示在 divider |
+| `CTI_MODEL_GROUP` | 模型组名，显示在 divider |
+| `CTI_MODEL_PROVIDER` | 服务商名，显示在 divider |
+
+---
+
+## 飞书应用配置
+
+每个实例需要一个独立的飞书应用：
+
+1. 在 [飞书开放平台](https://open.feishu.cn/app) 创建自定义应用
+2. 启用 **机器人** 能力
+3. 添加权限：`im:message`、`im:chat`、`im:chat.group` 等
+4. 事件订阅：`im.message.receive_v1`
+5. 长连接模式：启用 WebSocket
+6. 发布应用
+
+详细步骤参考：[原项目 Setup Guide](https://github.com/francize/agents-to-im/blob/main/references/setup-guides.md)
+
+---
+
+## 日常使用
+
+在飞书里直接对话：
+
+```
+/new:claude     # 创建 Claude 会话
+/new:codex      # 创建 Codex 会话
+/new:mimo       # 创建 MiMo 会话
+/new:openhuman  # 创建 OpenHuman 会话
+/reset          # 重置当前会话
+/stop           # 停止当前输出
+/status         # 查看状态
+/help           # 帮助
+```
+
+---
+
+## 许可证
+
+MIT License
+
+## 致谢
+
+- 原项目：[francize/agents-to-im](https://github.com/francize/agents-to-im)
+- Claude Code：[Anthropic](https://www.anthropic.com)
+- Codex：[OpenAI](https://openai.com)

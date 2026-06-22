@@ -21,6 +21,7 @@ export async function handleCardAction(
   console.log(
     `[feishu-adapter] card.action.trigger tag=${event.action?.tag || 'unknown'} ` +
     `open_message_id=${event.open_message_id || event.context?.open_message_id || 'unknown'} ` +
+    `token=${event.token || 'none'} ` +
     `callback=${callbackData || '(none)'}`,
   );
 
@@ -50,20 +51,46 @@ export async function handleCardAction(
     const permissionRequestId = permissionParts.join(':');
     const link = store.getPermissionLink(permissionRequestId);
     const actionMessageId = resolveActionOpenMessageId(event);
+    const cardToken = event.token;
+
+    // 保存 cardToken 如果之前没有保存
+    if (link && cardToken && !link.cardToken) {
+      store.insertPermissionLink({
+        permissionRequestId,
+        channelType: link.channelType,
+        channelInstanceId: link.channelInstanceId,
+        chatId: link.chatId,
+        messageId: link.messageId,
+        openMessageId: link.openMessageId,
+        cardToken,
+        toolName: '',
+        suggestions: link.suggestions,
+      });
+    }
+
+    const updatedLink = store.getPermissionLink(permissionRequestId);
+
     if (
-      link
-      && handlePermissionCallback(callbackData, link.chatId, actionMessageId, {
+      updatedLink
+      && handlePermissionCallback(callbackData, updatedLink.chatId, actionMessageId, {
         channelType: ctx.channelType,
         channelInstanceId: ctx.profileId,
       })
     ) {
-      await patchActionCardSafely(
-        ctx,
-        link.messageId,
-        buildHandledPermissionCard(action || ''),
-        'permission',
-        actionMessageId || link.openMessageId,
-      );
+      // 延迟 500ms 后更新卡片，让飞书的按钮状态同步先完成
+      // 避免飞书的默认刷新行为覆盖我们的 patch 更新
+      const card = buildHandledPermissionCard(action || '');
+      setTimeout(() => {
+        patchActionCardSafely(
+          ctx,
+          updatedLink.messageId,
+          card,
+          'permission',
+          actionMessageId || updatedLink.openMessageId,
+        ).catch((err) => {
+          console.warn('[feishu-adapter] Delayed permission card patch failed:', err);
+        });
+      }, 500);
       return { toast: { type: 'success', content: 'Permission updated' } };
     }
     return { toast: { type: 'warning', content: 'Permission already handled' } };
@@ -87,6 +114,40 @@ export async function handleCardAction(
     return ctx.handlePlanCardAction(event, callbackData);
   }
   return { toast: { type: 'warning', content: 'Unsupported action' } };
+}
+
+async function patchCardViaCardkit(
+  ctx: AdapterContext,
+  cardToken: string,
+  card: Record<string, unknown>,
+  kind: string,
+): Promise<boolean> {
+  const client = ctx.getLarkClient?.()?.getClient?.();
+  if (!client) {
+    console.warn(`[feishu-adapter] No Lark client for CardKit update, falling back to patch`);
+    return false;
+  }
+  try {
+    console.log(`[feishu-adapter] Updating ${kind} card via CardKit: token=${cardToken}`);
+    const response = await client.cardkit.v1.card.update({
+      path: { card_id: cardToken },
+      data: {
+        card: {
+          type: 'card_json',
+          data: JSON.stringify(card),
+        },
+        sequence: 1,
+      },
+    });
+    if (response.code !== undefined && response.code !== 0) {
+      throw new Error(`cardkit.card.update: code=${response.code}, msg=${response.msg}`);
+    }
+    console.log(`[feishu-adapter] Updated ${kind} card via CardKit: token=${cardToken}`);
+    return true;
+  } catch (error) {
+    console.warn(`[feishu-adapter] CardKit update failed, falling back to patch:`, error);
+    return false;
+  }
 }
 
 export async function patchActionCardSafely(

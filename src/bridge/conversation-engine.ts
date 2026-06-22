@@ -9,6 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { ClaudePermissionMode } from '../runtime/claude-mode.js';
+import type { RuntimeName } from '../runtime/types.js';
 import { normalizeClaudePermissionMode } from '../runtime/claude-mode.js';
 import type { ChannelBinding } from './types.js';
 import type {
@@ -163,14 +164,20 @@ function dropTrailingDuplicatePlanText(
   }
 }
 
-function resolveLegacyPermissionMode(binding: ChannelBinding): ClaudePermissionMode {
+function resolveLegacyPermissionMode(binding: ChannelBinding, store?: any): ClaudePermissionMode {
   switch (binding.mode) {
     case 'plan':
       return 'plan';
     case 'ask':
       return 'default';
-    default:
+    default: {
+      // Check store setting for global permission mode override
+      const storeMode = store?.getSetting?.('claude_permission_mode');
+      if (storeMode === 'bypassPermissions' || storeMode === 'dontAsk') {
+        return storeMode as ClaudePermissionMode;
+      }
       return 'acceptEdits';
+    }
   }
 }
 
@@ -270,16 +277,15 @@ export async function processMessage(
     let permissionMode = options?.permissionModeOverride;
     if (!permissionMode) {
       permissionMode = runtime === 'claude'
-        ? (binding.claudePermissionMode || resolveLegacyPermissionMode(binding))
-        : resolveLegacyPermissionMode(binding);
+        ? (binding.claudePermissionMode || resolveLegacyPermissionMode(binding, store))
+        : resolveLegacyPermissionMode(binding, store);
     }
 
     // Load conversation history for context
     const { messages: recentMsgs } = store.getMessages(sessionId, { limit: 50 });
-    const historyMsgs = recentMsgs.slice(0, -1).map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+    const historyMsgs = recentMsgs.slice(0, -1).map(m => {
+      return { role: m.role as 'user' | 'assistant', content: m.content };
+    });
 
     const abortController = new AbortController();
     if (abortSignal) {
@@ -340,7 +346,7 @@ export async function processMessage(
 async function consumeStream(
   stream: ReadableStream<string>,
   sessionId: string,
-  runtime: 'claude' | 'codex',
+  runtime: RuntimeName,
   collaborationModeOverride?: ProcessMessageOptions['collaborationModeOverride'],
   onPermissionRequest?: OnPermissionRequest,
   onPartialText?: OnPartialText,
@@ -448,10 +454,47 @@ async function consumeStream(
     }
   };
 
+  const STUCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+  let lastActivityAt = Date.now();
+  let stuckFired = false;
+
+  // Anti-thinking-loop detection
+  const REASONING_REPEAT_THRESHOLD = 5; // consecutive identical reasoning events
+  const REASONING_MAX_CHARS = 40_000; // ~10K tokens of thinking, abort if no answer yet
+  let reasoningRepeatCount = 0;
+  let lastReasoningHash = '';
+  let totalReasoningChars = 0;
+  let hasAnswered = false;
+
+  const simpleHash = (s: string): string => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return h.toString(36);
+  };
+
+  let stuckTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+    stuckFired = true;
+    const idle = Math.round((Date.now() - lastActivityAt) / 60000);
+    console.warn(`[conversation-engine] No SSE events for ${idle}min, aborting stuck stream (session ${sessionId})`);
+    try { reader.cancel('stuck-reply-timeout'); } catch { /* best effort */ }
+  }, STUCK_TIMEOUT_MS);
+
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+
+      // Reset stuck timer on every SSE event
+      lastActivityAt = Date.now();
+      clearTimeout(stuckTimer);
+      stuckTimer = setTimeout(() => {
+        stuckFired = true;
+        const idle = Math.round((Date.now() - lastActivityAt) / 60000);
+        console.warn(`[conversation-engine] No SSE events for ${idle}min, aborting stuck stream (session ${sessionId})`);
+        try { reader.cancel('stuck-reply-timeout'); } catch { /* best effort */ }
+      }, STUCK_TIMEOUT_MS);
 
       const lines = value.split('\n');
       for (const line of lines) {
@@ -611,12 +654,37 @@ async function consumeStream(
                 store.updateSessionModel(sessionId, statusData.model);
               }
               if (statusData.reasoning && onActivityEvent) {
+                const reasoningText = typeof statusData.reasoning === 'string' ? statusData.reasoning : '正在思考…';
+                
+                // Anti-thinking-loop detection
+                if (!hasAnswered && reasoningText && reasoningText !== '正在思考…') {
+                  totalReasoningChars += reasoningText.length;
+                  const hash = simpleHash(reasoningText);
+                  if (hash === lastReasoningHash && reasoningText.length > 50) {
+                    reasoningRepeatCount++;
+                    if (reasoningRepeatCount >= REASONING_REPEAT_THRESHOLD) {
+                      console.warn(`[conversation-engine] Anti-loop: detected ${reasoningRepeatCount} consecutive identical reasoning events, aborting stream (session ${sessionId})`);
+                      try { reader.cancel('thinking-loop-detected'); } catch { /* best effort */ }
+                      break;
+                    }
+                  } else {
+                    reasoningRepeatCount = 0;
+                    lastReasoningHash = hash;
+                  }
+                  // Hard limit: if reasoning exceeds 40K chars without any answer, abort
+                  if (totalReasoningChars > REASONING_MAX_CHARS) {
+                    console.warn(`[conversation-engine] Anti-loop: reasoning exceeded ${totalReasoningChars} chars without answer, aborting (session ${sessionId})`);
+                    try { reader.cancel('thinking-loop-exceeded'); } catch { /* best effort */ }
+                    break;
+                  }
+                }
+                
                 await onActivityEvent({
-                  kind: 'lightweight_activity',
-                  id: `lightweight:${capturedSdkSessionId || sessionId}`,
+                  kind: 'reasoning_activity',
+                  id: `reasoning:${capturedSdkSessionId || sessionId}`,
                   turnId: typeof statusData.turn_id === 'string' ? statusData.turn_id : undefined,
                   status: 'running',
-                  text: '正在思考…',
+                  text: reasoningText,
                   source: 'reasoning',
                 });
               }
@@ -649,6 +717,21 @@ async function consumeStream(
             hasError = true;
             errorMessage = event.data || 'Unknown error';
             break;
+
+          case 'session_invalid': {
+            // SDK session is no longer valid (429, CLI crash, etc.)
+            // Clear sdkSessionId so next call can inject conversation history
+            try {
+              const invalidData = JSON.parse(event.data);
+              console.warn('[conversation-engine] Session invalidated:', invalidData.reason);
+              if (runtime === 'codex') {
+                store.updateCodexThreadId(sessionId, '');
+              } else {
+                store.updateSdkSessionId(sessionId, '');
+              }
+            } catch { /* skip */ }
+            break;
+          }
 
           case 'result': {
             try {
@@ -693,6 +776,7 @@ async function consumeStream(
       }
     }
 
+    clearTimeout(stuckTimer);
     // Flush remaining text
     await flushTextBoundary(true);
     const renderedPlan = renderPlanMarkdown(planExplanation, planSteps, planBody);
@@ -735,6 +819,7 @@ async function consumeStream(
       sdkSessionId: capturedSdkSessionId,
     };
   } catch (e) {
+    clearTimeout(stuckTimer);
     // Best-effort save on stream error
     await flushTextBoundary(true);
     const renderedPlan = renderPlanMarkdown(planExplanation, planSteps, planBody);
@@ -764,12 +849,14 @@ async function consumeStream(
       || e instanceof Error && e.name === 'AbortError';
 
     return {
-      responseText: '',
-      responseSegments: [],
+      responseText: responseSegments.join('\n\n').trim(),
+      responseSegments,
       contentBlocks: [...contentBlocks],
       tokenUsage,
-      hasError: true,
-      errorMessage: isAbort ? 'Task stopped by user' : (e instanceof Error ? e.message : 'Stream consumption error'),
+      hasError: !stuckFired,
+      errorMessage: stuckFired
+        ? 'Task aborted: no output for 10 minutes'
+        : isAbort ? 'Task stopped by user' : (e instanceof Error ? e.message : 'Stream consumption error'),
       permissionRequests,
       sdkSessionId: capturedSdkSessionId,
     };

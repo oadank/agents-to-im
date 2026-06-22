@@ -60,6 +60,13 @@ export interface FeishuChatUpdatedEventData {
   };
 }
 
+export interface FeishuMessageRecalledEventData {
+  message_id: string;
+  chat_id: string;
+  recall_time?: string;
+  recall_type?: 'message_owner' | 'group_owner' | 'group_manager' | 'enterprise_manager';
+}
+
 export interface PreviewArtifact {
   key: string;
   routeKey: string;
@@ -70,7 +77,10 @@ export interface PreviewArtifact {
   cardId?: string;
   lastText: string;
   sequence: number;
+  noteSequence: number;
   mode: 'cardkit' | 'patch';
+  streamed: boolean;
+  streamStartedAt: number;
 }
 
 export interface ActivityArtifact {
@@ -166,6 +176,8 @@ export interface AdapterContext {
   markSeenMessage(messageId: string): boolean;
   enqueue(msg: InboundMessage): void;
   enqueueChatTask(chatId: string, task: () => Promise<void>): Promise<void>;
+  /** Ingest message to OpenHuman memory_tree for semantic search. */
+  ingestToMemoryTree(chatId: string, senderId: string, text: string, messageId: string): Promise<void>;
   sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult>;
   sendAsInteractiveCard(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult>;
   sendInteractiveCard(
@@ -216,6 +228,10 @@ export interface AdapterContext {
       cwd?: string;
       bindingMode?: 'code' | 'plan' | 'ask';
       skipReadyMessage?: boolean;
+      /** Bind to an existing chat instead of creating a new group (e.g. for mimo p2p) */
+      existingChatId?: string;
+      /** Override the model field for the session binding */
+      model?: string;
     },
   ): Promise<{ chatId: string; binding: ChannelBinding }>;
   ensureRuntimeAvailable(runtime: RuntimeName): Promise<void>;
@@ -234,6 +250,8 @@ export interface AdapterContext {
   syncChatName(chatId: string): Promise<void>;
   findBindingById(bindingId: string): ChannelBinding | null;
   extractActionSenderIdentity(event: StructuredActionEvent): SenderIdentity | null;
+  /** Extract the chat_id from a card action event (for binding to existing chat) */
+  resolveActionChatId(event: StructuredActionEvent): string | undefined;
   replayNativeSessionHistory(address: ChannelAddress, runtime: RuntimeName, items: NativeReplayItem[]): Promise<void>;
   buildPlanRequestInbound(
     address: ChannelAddress,
@@ -270,10 +288,21 @@ export interface AdapterContext {
   prunePendingInboundImages(now?: number): void;
   setPendingInboundImage(entry: PendingInboundImage): void;
   downloadInboundImageAttachment(messageId: string, imageKey: string): Promise<FileAttachment>;
+  downloadAndTranscribe(messageId: string, fileKey: string): Promise<{ text: string }>;
   resolveReferencedInboundImages(
     chatId: string,
     senderId: string,
     threadId: string | undefined,
     referenceIds: Array<string | undefined>,
   ): { attachments?: FileAttachment[]; errorMessage?: string };
+  /** Fallback: 查找同一 chat+sender 下最近一条 pending image（非回复场景） */
+  resolveLatestPendingImageForChat(
+    chatId: string,
+    senderId: string,
+    threadId?: string,
+  ): { attachments?: FileAttachment[]; errorMessage?: string } | null;
+  /** Mark that this chat needs audio reply (user sent audio message) */
+  setPendingAudioReply(chatId: string, needsAudio: boolean): void;
+  /** Check if this chat needs audio reply */
+  needsAudioReply(chatId: string): boolean;
 }

@@ -4,13 +4,16 @@
  * Starts an HTTP server on CTI_DASHBOARD_PORT (default 13578) that serves:
  *   GET /            — Single-page HTML dashboard (dark theme, auto-refresh)
  *   GET /api/status  — JSON status data for the dashboard
+ *   GET /api/auth/url — Generate OAuth authorization URL
+ *   GET /oauth/callback — Handle OAuth callback
  *
  * The dashboard is purely read-only and requires no authentication
  * since it binds to 127.0.0.1 by default.
  */
 
 import http from 'node:http';
-import { CTI_HOME } from '../config/config.js';
+import { CTI_HOME, loadConfig } from '../config/config.js';
+import type { LarkClient } from '../feishu/lark-client.js';
 import type { JsonFileStore } from './store.js';
 
 // ── Types ──
@@ -29,6 +32,7 @@ interface DashboardDeps {
       error: string | null;
     }>;
   };
+  larkClient?: LarkClient;
 }
 
 let deps: DashboardDeps | null = null;
@@ -244,8 +248,9 @@ export function startDashboard(options: DashboardDeps): void {
   const port = parseInt(process.env.CTI_DASHBOARD_PORT || '13578', 10);
   const host = process.env.CTI_DASHBOARD_HOST || '127.0.0.1';
 
-  server = http.createServer((req, res) => {
+  server = http.createServer(async (req, res) => {
     const url = req.url || '/';
+    const parsedUrl = new URL(url, `http://${host}:${port}`);
 
     if (url === '/api/status') {
       res.writeHead(200, {
@@ -253,6 +258,69 @@ export function startDashboard(options: DashboardDeps): void {
         'Access-Control-Allow-Origin': '*',
       });
       res.end(JSON.stringify(buildStatusJson()));
+      return;
+    }
+
+    if (url === '/api/auth/url') {
+      try {
+        const config = loadConfig();
+        const appId = config.feishu.appId;
+        const redirectUri = config.feishu.oauthRedirectUri;
+        if (!appId || !redirectUri) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'OAuth not configured' }));
+          return;
+        }
+        const authUrl = deps?.larkClient?.getAuthorizationUrl(appId, redirectUri) || '';
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ url: authUrl }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to generate auth URL' }));
+      }
+      return;
+    }
+
+    if (parsedUrl.pathname === '/oauth/callback') {
+      const code = parsedUrl.searchParams.get('code');
+      if (!code) {
+        res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><body><h1>Missing authorization code</h1></body></html>');
+        return;
+      }
+
+      try {
+        const config = loadConfig();
+        const { appId, appSecret } = config.feishu;
+        if (!appId || !appSecret || !deps?.larkClient) {
+          res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end('<html><body><h1>OAuth not configured</h1></body></html>');
+          return;
+        }
+
+        const tokenData = await deps.larkClient.exchangeCodeForToken(appId, appSecret, code);
+        deps.larkClient.setUserAccessToken(
+          tokenData.accessToken,
+          tokenData.refreshToken,
+          tokenData.expiresIn,
+        );
+
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`
+          <html>
+          <head><title>Authorization Successful</title></head>
+          <body style="font-family:system-ui;max-width:400px;margin:40px auto;text-align:center">
+            <h1>✓ Authorization Successful</h1>
+            <p>User access token has been saved. You can close this window.</p>
+            <p style="color:#666;font-size:14px">Token expires in ${tokenData.expiresIn} seconds</p>
+          </body>
+          </html>
+        `);
+      } catch (error) {
+        console.error('[dashboard] OAuth callback failed:', error);
+        res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<html><body><h1>Authorization Failed</h1><p>${error instanceof Error ? error.message : 'Unknown error'}</p></body></html>`);
+      }
       return;
     }
 

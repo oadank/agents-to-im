@@ -3,11 +3,17 @@ import type { LLMProvider, StreamChatParams } from '../bridge/host.js';
 import type { Config } from '../config/config.js';
 import { CodexProvider } from './codex/codex-provider.js';
 import { SDKLLMProvider } from './claude/sdk-provider.js';
+import { OpenHumanProvider, createOpenHumanProvider } from './openhuman/openhuman-provider.js';
+import { ZCodeProvider, createZCodeProvider } from './zcode/zcode-provider.js';
+import { MiMoProvider } from './mimo/mimo-provider.js';
 import { preflightCheck, resolveClaudeCliPath } from './claude/cli-support.js';
 import { PendingApprovals, type PendingPermissions, PendingStructuredInputs } from './claude/permission-gateway.js';
 import {
   ClaudeRuntimeDriver,
   CodexRuntimeDriver,
+  OpenHumanRuntimeDriver,
+  ZCodeRuntimeDriver,
+  MiMoRuntimeDriver,
   type RuntimeDriver,
 } from '../runtime/driver.js';
 import {
@@ -22,8 +28,14 @@ export type { ProviderCapabilities } from '../runtime/capabilities.js';
 export class MultiplexLLMProvider implements LLMProvider {
   private claudeProvider: SDKLLMProvider | null = null;
   private codexProvider: CodexProvider | null = null;
+  private openhumanProvider: OpenHumanProvider | null = null;
+  private zcodeProvider: ZCodeProvider | null = null;
+  private mimoProvider: MiMoProvider | null = null;
   private claudeDriver: ClaudeRuntimeDriver | null = null;
   private codexDriver: CodexRuntimeDriver | null = null;
+  private openhumanDriver: OpenHumanRuntimeDriver | null = null;
+  private zcodeDriver: ZCodeRuntimeDriver | null = null;
+  private mimoDriver: MiMoRuntimeDriver | null = null;
   private claudeCliPath: string | null = null;
   private readonly pendingApprovals: PendingApprovals;
   private readonly pendingStructuredInputs: PendingStructuredInputs;
@@ -84,12 +96,41 @@ export class MultiplexLLMProvider implements LLMProvider {
     if (this.codexProvider) return this.codexProvider;
     const provider = new CodexProvider(this.pendingApprovals, this.pendingStructuredInputs);
     await provider.prepare();
+    // 检测 Codex 进程是否重启了，如果重启则清空所有 thread id
+    if (provider.didPidChange()) {
+      const cleared = this.store.clearAllCodexThreadIds();
+      if (cleared > 0) {
+        console.log(`[multiplex] Codex process restarted, cleared ${cleared} thread IDs`);
+      }
+      provider.resetPidChanged();
+    }
     this.codexProvider = provider;
     return provider;
   }
 
+  private async getOpenHumanProvider(): Promise<OpenHumanProvider> {
+    if (this.openhumanProvider) return this.openhumanProvider;
+    this.openhumanProvider = createOpenHumanProvider();
+    return this.openhumanProvider;
+  }
+
+  private async getZCodeProvider(): Promise<ZCodeProvider> {
+    if (this.zcodeProvider) return this.zcodeProvider;
+    this.zcodeProvider = createZCodeProvider();
+    return this.zcodeProvider;
+  }
+
+  private async getMiMoProvider(): Promise<MiMoProvider> {
+    if (this.mimoProvider) return this.mimoProvider;
+    this.mimoProvider = new MiMoProvider();
+    return this.mimoProvider;
+  }
+
   protected async getProvider(runtime: RuntimeName): Promise<LLMProvider> {
     if (runtime === 'codex') return this.getCodexProvider();
+    if (runtime === 'openhuman') return this.getOpenHumanProvider();
+    if (runtime === 'zcode') return this.getZCodeProvider();
+    if (runtime === 'mimo') return this.getMiMoProvider();
     return this.getClaudeProvider();
   }
 
@@ -103,6 +144,36 @@ export class MultiplexLLMProvider implements LLMProvider {
         );
       }
       return this.codexDriver;
+    }
+    if (runtime === 'openhuman') {
+      if (!this.openhumanDriver) {
+        this.openhumanDriver = new OpenHumanRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('openhuman') as Promise<OpenHumanProvider>,
+        );
+      }
+      return this.openhumanDriver;
+    }
+    if (runtime === 'zcode') {
+      if (!this.zcodeDriver) {
+        this.zcodeDriver = new ZCodeRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('zcode') as Promise<ZCodeProvider>,
+        );
+      }
+      return this.zcodeDriver;
+    }
+    if (runtime === 'mimo') {
+      if (!this.mimoDriver) {
+        this.mimoDriver = new MiMoRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('mimo') as Promise<MiMoProvider>,
+        );
+      }
+      return this.mimoDriver;
     }
     if (!this.claudeDriver) {
       this.claudeDriver = new ClaudeRuntimeDriver(

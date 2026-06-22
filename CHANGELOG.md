@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Dynamic divider display for Model/Provider in adapter (`adapter.ts`).
+- BRIDGE_PROTOCOL.md documentation for bridge protocol reference.
+- README multi-runtime support section and divider feature docs.
+
+### Fixed
+- `/new` and `/new:mimo` commands auto-create mimocode session in p2p chat.
+- Feishu-mimo `/new` command binds to p2p chat with mimocode model.
+
+### Changed
+- zcode-provider supports `mcpServers.json` configuration.
+- Refactor: remove unused imports and functions in adapter.ts.
+- Remove stale `.bak` backup files.
+- Updated README with multi-runtime support and divider feature.
+
 ## [0.0.5] - 2026-04-23
 
 ### Fixed

@@ -16,7 +16,7 @@ await esbuild.build({
     'stream', 'events', 'url', 'util', 'child_process', 'worker_threads',
     'node:*',
   ],
-  banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
+  banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url); import { fileURLToPath } from 'url'; const __filename = fileURLToPath(import.meta.url); const __dirname = __filename.replace(/[\/][^\/]*$/, '');" },
 });
 
 console.log('Built dist/daemon.mjs');

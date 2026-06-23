@@ -527,7 +527,6 @@ export class FeishuAdapter extends BaseChannelAdapter {
   }
 
   getPreviewCapabilities(address: ChannelAddress): PreviewCapabilities | null {
-    // V5: Use CardKit for single-card streaming updates (typewriter effect)
     const store = this.getStore();
     if (!store.getChannelBinding(this.channelType, address.chatId, this.profileId)) {
       return null;
@@ -535,7 +534,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return {
       supported: true,
       privateOnly: false,
-      finalDelivery: 'replace_preview',
+      finalDelivery: 'separate_message',
     };
   }
 
@@ -685,8 +684,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
     }
 
     const text = normalizeMarkdown(message);
-    // Always use interactive card (shows Agent/Model/Provider info in footer)
-    const result = await this.sendAsInteractiveCard(address, text, message.replyToMessageId);
+    // Use post (rich text) for copy-friendly messages; card only for permission buttons
+    const result = await this.sendAsPost(address, text, message.replyToMessageId);
     if (result.ok) {
       void this.maybeSyncSessionTitle(address.chatId);
     }

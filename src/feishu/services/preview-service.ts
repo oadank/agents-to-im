@@ -105,9 +105,8 @@ export class PreviewService {
     if (this.activePreviewByRoute.get(routeKey) === key) {
       this.activePreviewByRoute.delete(routeKey);
     }
-    // Close streaming_mode and update summary with actual message preview text
-    // so the chat list shows the message preview instead of "[生成中...]"
-    if (artifact?.cardId && artifact.mode === 'cardkit') {
+    // Update card summary so chat list shows message preview instead of empty/placeholder
+    if (artifact?.cardId) {
       const client = this.larkClient.getClient();
       if (client) {
         artifact.sequence += 1;
@@ -117,13 +116,12 @@ export class PreviewService {
           path: { card_id: artifact.cardId },
           data: {
             settings: JSON.stringify({
-              streaming_mode: false,
               summary: { content: summaryText || '✅ 回答完成' },
             }),
             sequence: artifact.sequence,
           },
         }).catch((err) => {
-          console.warn('[feishu-adapter] Failed to close streaming mode:', err);
+          console.warn('[feishu-adapter] Failed to update card summary:', err);
         });
       }
     }
@@ -144,12 +142,13 @@ export class PreviewService {
     if (!client || !artifact?.messageId) return null;
     try {
       if (artifact.mode === 'cardkit' && artifact.cardId) {
-        // Only close streaming mode — the card already has the accumulated text
+        // Update card summary with final text
         artifact.sequence += 1;
+        const summaryText = _finalText.length > 120 ? _finalText.slice(0, 120) : _finalText;
         const settingsResponse = await client.cardkit.v1.card.settings({
           path: { card_id: artifact.cardId },
           data: {
-            settings: JSON.stringify({ streaming_mode: false }),
+            settings: JSON.stringify({ summary: { content: summaryText || '✅ 回答完成' } }),
             sequence: artifact.sequence,
           },
         });

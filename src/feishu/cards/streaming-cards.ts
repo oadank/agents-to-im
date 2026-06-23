@@ -34,11 +34,6 @@ export function buildStreamingCardSkeleton(dividerInfo?: AgentDividerInfo): Reco
     config: {
       wide_screen_mode: true,
       update_multi: true,
-      streaming_mode: true,
-      streaming_config: {
-        print_frequency_ms: { default: 50 },
-        print_step: { default: 1 },
-      },
     },
     body: {
       elements,

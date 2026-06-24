@@ -15,35 +15,31 @@ export interface RuntimeConfig {
  * @returns RuntimeConfig 配置对象
  */
 export function getRuntimeConfig(runtime: string): RuntimeConfig {
-  const configs: Record<string, RuntimeConfig> = {
-    claude: {
-      model: process.env.CTI_MODEL_GROUP || process.env.CLAUDE_MODEL || "claude-3-5-sonnet-20241022",
-      provider: process.env.CTI_MODEL_PROVIDER || process.env.CLAUDE_PROVIDER || "anthropic",
-      displayName: "Claude"
-    },
-    codex: {
-      model: process.env.CTI_MODEL_GROUP || process.env.CODEX_MODEL || "gpt-4-codex",
-      provider: process.env.CTI_MODEL_PROVIDER || process.env.CODEX_PROVIDER || "openai",
-      displayName: "Codex"
-    },
-    mimo: {
-      model: process.env.CTI_MODEL_GROUP || process.env.MIMO_MODEL || "MiMogo",
-      provider: process.env.CTI_MODEL_PROVIDER || process.env.MIMO_PROVIDER || "LiteLLM",
-      displayName: "MimoCode"
-    },
-    zcode: {
-      model: process.env.CTI_MODEL_GROUP || process.env.ZCODE_MODEL || "zcode-v1",
-      provider: process.env.CTI_MODEL_PROVIDER || process.env.ZCODE_PROVIDER || "zcode",
-      displayName: "ZCode"
-    },
-    openhuman: {
-      model: process.env.CTI_MODEL_GROUP || process.env.OPENHUMAN_MODEL || "openhuman-v1",
-      provider: process.env.CTI_MODEL_PROVIDER || process.env.OPENHUMAN_PROVIDER || "openhuman",
-      displayName: "OpenHuman"
-    }
+  // 统一配置：CTI_MODEL_GROUP 同时控制路由和显示
+  // 向后兼容：未设置时回退到各 runtime 默认值
+  const ctiModel = process.env.CTI_MODEL_GROUP || undefined;
+  const ctiProvider = process.env.CTI_MODEL_PROVIDER || undefined;
+
+  const defaults: Record<string, { model: string; provider: string; displayName: string }> = {
+    claude:     { model: "claude-3-5-sonnet-20241022", provider: "anthropic",   displayName: "Claude" },
+    codex:      { model: "gpt-4-codex",              provider: "openai",       displayName: "Codex" },
+    mimo:       { model: "MiMogo",                    provider: "LiteLLM",     displayName: "MimoCode" },
+    zcode:      { model: "zcode-v1",                  provider: "zcode",       displayName: "ZCode" },
+    openhuman:  { model: "openhuman-v1",              provider: "openhuman",   displayName: "OpenHuman" },
+    gemini:     { model: "gemini-2.5-flash",          provider: "Google",      displayName: "Gemini" },
   };
 
-  return configs[runtime] || configs.mimo;
+  const d = defaults[runtime] || defaults.mimo;
+  const config: RuntimeConfig = {
+    model: ctiModel || d.model,
+    provider: ctiProvider || d.provider,
+    displayName: d.displayName,
+  };
+
+  // 模型路由日志，便于调试
+  console.log(`[runtime-configs] runtime=${runtime} → model=${config.model} provider=${config.provider}`);
+
+  return config;
 }
 
 /**

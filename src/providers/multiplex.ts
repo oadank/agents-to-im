@@ -6,6 +6,8 @@ import { SDKLLMProvider } from './claude/sdk-provider.js';
 import { OpenHumanProvider, createOpenHumanProvider } from './openhuman/openhuman-provider.js';
 import { ZCodeProvider, createZCodeProvider } from './zcode/zcode-provider.js';
 import { MiMoProvider } from './mimo/mimo-provider.js';
+import { GeminiProvider, createGeminiProvider } from './gemini/gemini-provider.js';
+import { GeminiCliProvider, createGeminiCliProvider } from './gemini/gemini-cli-provider.js';
 import { preflightCheck, resolveClaudeCliPath } from './claude/cli-support.js';
 import { PendingApprovals, type PendingPermissions, PendingStructuredInputs } from './claude/permission-gateway.js';
 import {
@@ -14,6 +16,7 @@ import {
   OpenHumanRuntimeDriver,
   ZCodeRuntimeDriver,
   MiMoRuntimeDriver,
+  GeminiRuntimeDriver,
   type RuntimeDriver,
 } from '../runtime/driver.js';
 import {
@@ -31,11 +34,13 @@ export class MultiplexLLMProvider implements LLMProvider {
   private openhumanProvider: OpenHumanProvider | null = null;
   private zcodeProvider: ZCodeProvider | null = null;
   private mimoProvider: MiMoProvider | null = null;
+  private geminiProvider: GeminiCliProvider | null = null;
   private claudeDriver: ClaudeRuntimeDriver | null = null;
   private codexDriver: CodexRuntimeDriver | null = null;
   private openhumanDriver: OpenHumanRuntimeDriver | null = null;
   private zcodeDriver: ZCodeRuntimeDriver | null = null;
   private mimoDriver: MiMoRuntimeDriver | null = null;
+  private geminiDriver: GeminiRuntimeDriver | null = null;
   private claudeCliPath: string | null = null;
   private readonly pendingApprovals: PendingApprovals;
   private readonly pendingStructuredInputs: PendingStructuredInputs;
@@ -126,11 +131,18 @@ export class MultiplexLLMProvider implements LLMProvider {
     return this.mimoProvider;
   }
 
+  private async getGeminiProvider(): Promise<GeminiCliProvider> {
+    if (this.geminiProvider) return this.geminiProvider;
+    this.geminiProvider = createGeminiCliProvider();
+    return this.geminiProvider;
+  }
+
   protected async getProvider(runtime: RuntimeName): Promise<LLMProvider> {
     if (runtime === 'codex') return this.getCodexProvider();
     if (runtime === 'openhuman') return this.getOpenHumanProvider();
     if (runtime === 'zcode') return this.getZCodeProvider();
     if (runtime === 'mimo') return this.getMiMoProvider();
+    if (runtime === 'gemini') return this.getGeminiProvider();
     return this.getClaudeProvider();
   }
 
@@ -174,6 +186,16 @@ export class MultiplexLLMProvider implements LLMProvider {
         );
       }
       return this.mimoDriver;
+    }
+    if (runtime === 'gemini') {
+      if (!this.geminiDriver) {
+        this.geminiDriver = new GeminiRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('gemini') as Promise<GeminiProvider>,
+        );
+      }
+      return this.geminiDriver;
     }
     if (!this.claudeDriver) {
       this.claudeDriver = new ClaudeRuntimeDriver(

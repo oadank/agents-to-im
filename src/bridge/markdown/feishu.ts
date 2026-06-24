@@ -75,12 +75,8 @@ export function buildCardContent(text: string, dividerInfo?: AgentDividerInfo): 
     },
   ];
 
-  // Add divider and agent info if provided
+  // Add agent info if provided (use markdown separator — divider tag not supported by all Feishu app types)
   if (dividerInfo) {
-    // Add divider element
-    elements.push({ tag: 'divider' });
-
-    // Build info text (Agent / Model / Provider only — no Runtime)
     const parts: string[] = [];
     if (dividerInfo.agent) parts.push(`Agent: ${dividerInfo.agent}`);
     if (dividerInfo.model) parts.push(`Model: ${dividerInfo.model}`);
@@ -89,7 +85,7 @@ export function buildCardContent(text: string, dividerInfo?: AgentDividerInfo): 
     const infoText = parts.join(' | ') || 'Agent: N/A';
     elements.push({
       tag: 'markdown',
-      content: infoText,
+      content: `---\n${infoText}`,
     });
   }
 

@@ -56,7 +56,9 @@ const MIMO_API_KEY = process.env.CTI_ZCODE_OPENAI_API_KEY
   || process.env.OPENAI_API_KEY
   || '';
 
-const MIMO_MODEL = 'MiMo-OpenAI';
+// CTI_MODEL_GROUP 统一控制模型名（路由 + 显示）
+// 向后兼容：未设置时回退到默认值 'MiMo-OpenAI'
+const MIMO_MODEL = process.env.CTI_MODEL_GROUP || 'MiMo-OpenAI';
 
 /**
  * 调用 MiMo API（OpenAI 兼容格式）

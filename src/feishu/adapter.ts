@@ -37,11 +37,11 @@ import {
   listCodexNativeWorkspaces,
   type NativeReplayItem,
 } from '../infra/native-session-history.js';
-import { getRuntimeConfig } from '../config/runtime-configs.js';
 
 import type { MultiplexLLMProvider } from '../providers/multiplex.js';
 import { listRecentWorkspaces, type RecentWorkspaceOption } from '../infra/recent-workspaces.js';
 import type { RuntimeName } from '../runtime/types.js';
+import { getRuntimeConfig } from '../config/runtime-configs.js';
 import { JsonFileStore } from '../infra/store.js';
 import {
   extractActionSenderIdentity as extractActionSenderIdentityWithContext,
@@ -189,6 +189,11 @@ export class FeishuAdapter extends BaseChannelAdapter {
     this.instanceAdapterId = `${this.channelType}:${this.instanceProfileId}`;
   }
 
+  /** 获取该 adapter 的默认 runtime */
+  getDefaultRuntime(): RuntimeName {
+    return this.options.defaultRuntime || 'claude';
+  }
+
   get adapterId(): string {
     return this.instanceAdapterId;
   }
@@ -326,6 +331,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       setPendingAudioReply: this.setPendingAudioReply.bind(this),
       clearPendingAudioReply: this.clearPendingAudioReply.bind(this),
       needsAudioReply: this.needsAudioReply.bind(this),
+      getDefaultRuntime: this.getDefaultRuntime.bind(this),
     };
   }
 
@@ -1214,7 +1220,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     if (!binding) {
       return { toast: { type: 'warning', content: '当前群尚未绑定会话' } };
     }
-    const runtime = this.getStore().getSessionExt(binding.codepilotSessionId)?.runtime || 'claude';
+    const runtime = this.getStore().getSessionExt(binding.codepilotSessionId)?.runtime || this.getDefaultRuntime();
     if (runtime !== 'claude') {
       return { toast: { type: 'warning', content: '当前群不是 Claude 会话' } };
     }
@@ -1446,7 +1452,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     if ((ext?.displayNameMode === 'native_locked' || ext?.displayNameMode === 'manual_locked') && ext.title) {
       return ext.title;
     }
-    const runtime = ext?.runtime || 'claude';
+    const runtime = ext?.runtime || this.getDefaultRuntime();
     const baseName = stripClaudeModeSuffix(ext?.title || defaultChatName(runtime));
     if (runtime === 'claude') {
       return `${baseName}${getClaudeModeSuffix(resolveClaudeBindingMode(binding))}`;
@@ -1625,7 +1631,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
 
       // Get runtime from session extension, default to 'mimo'
-      const runtime = sessionExt?.runtime || 'mimo';
+      const runtime = sessionExt?.runtime || this.getDefaultRuntime();
       const runtimeConfig = getRuntimeConfig(runtime);
 
       // Use runtime config for model and provider
@@ -1651,7 +1657,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
 
       // Get runtime from session extension, default to 'mimo'
-      const runtime = sessionExt?.runtime || 'mimo';
+      const runtime = sessionExt?.runtime || this.getDefaultRuntime();
       const runtimeConfig = getRuntimeConfig(runtime);
 
       // Use runtime config for model and provider
@@ -1689,7 +1695,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
 
       // Get runtime from session extension, default to 'mimo'
-      const runtime = sessionExt?.runtime || 'mimo';
+      const runtime = sessionExt?.runtime || this.getDefaultRuntime();
       const runtimeConfig = getRuntimeConfig(runtime);
 
       // Use runtime config for model and provider

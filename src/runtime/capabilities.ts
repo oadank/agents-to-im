@@ -56,4 +56,13 @@ export const RUNTIME_CAPABILITIES: Record<RuntimeName, ProviderCapabilities> = {
     resumeKinds: ['sdkSessionId'],
     elicitation: false,
   },
+  gemini: {
+    nativePlanProtocol: false,
+    askUserQuestion: false,
+    structuredInput: false,
+    approvalKinds: 'permission_callback',
+    activityGranularity: 'basic',
+    resumeKinds: ['sdkSessionId'],
+    elicitation: false,
+  },
 };

@@ -47,75 +47,44 @@ function loadMiMoMcpServers(): MiMoMcpServer[] {
 
 // ── 记忆注入 ──
 
-function loadMemoryContent(): string {
+function loadMemoryContent(agentName?: string): string {
   const parts: string[] = [];
+  const memBase = '/opt/agents-memory';
+  const agent = agentName || 'mimo';
 
-  // 1. Claude CLI memory
+  // 1. Agent-specific memory
   try {
-    const claudeHome = process.env.CLAUDE_HOME || (process.env.HOME + '/.claude');
-    const settingsPath = claudeHome + '/settings.json';
-    if (fs.existsSync(settingsPath)) {
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-      const memDir = settings.autoMemoryDirectory;
-      if (memDir && fs.existsSync(memDir)) {
-        const memFile = memDir + '/MEMORY.md';
-        if (fs.existsSync(memFile)) {
-          parts.push(fs.readFileSync(memFile, 'utf-8'));
-        }
-        for (const name of ['user_profile.md', 'user_identity.md', 'feedback_behavior_rules.md', 'feedback_no-docker.md', 'project_2026-05-30-debian13-migration.md']) {
-          const fp = memDir + '/' + name;
-          if (fs.existsSync(fp)) {
-            parts.push('\n=== ' + name + ' ===\n' + fs.readFileSync(fp, 'utf-8'));
-          }
-        }
+    const agentMemDir = `${memBase}/${agent}`;
+    if (fs.existsSync(agentMemDir)) {
+      const memFile = agentMemDir + '/MEMORY.md';
+      if (fs.existsSync(memFile)) {
+        parts.push(fs.readFileSync(memFile, 'utf-8'));
+      }
+      // Load additional memory files
+      const files = fs.readdirSync(agentMemDir).filter(f => f.endsWith('.md') && f !== 'MEMORY.md');
+      for (const file of files) {
+        const fp = agentMemDir + '/' + file;
+        const content = fs.readFileSync(fp, 'utf-8').trim();
+        if (content) parts.push(`\n=== ${file} ===\n${content}`);
       }
     }
   } catch { /* ignore */ }
 
-  // 2. MiMo Code project-level memory
-  const mimoMemDir = '/root/.local/share/mimocode/memory/projects/global';
+  // 2. Shared memory (read-only)
   try {
-    if (fs.existsSync(mimoMemDir)) {
-      const mimoMemFile = mimoMemDir + '/MEMORY.md';
-      if (fs.existsSync(mimoMemFile)) {
-        parts.push('\n=== MiMo Code 项目记忆 ===\n' + fs.readFileSync(mimoMemFile, 'utf-8'));
-      }
-      const agentmemoryMemFile = mimoMemDir + '/MEMORY-agentmemory-mcp.md';
-      if (fs.existsSync(agentmemoryMemFile)) {
-        parts.push('\n=== MiMo Code AgentMemory 知识 ===\n' + fs.readFileSync(agentmemoryMemFile, 'utf-8'));
-      }
-    }
-  } catch { /* ignore */ }
-
-  // 3. MiMo Code session-level memory (checkpoint + notes from recent sessions)
-  const mimoSessionDir = '/root/.local/share/mimocode/memory/sessions';
-  try {
-    if (fs.existsSync(mimoSessionDir)) {
-      const sessions = fs.readdirSync(mimoSessionDir).filter(d => d.startsWith('ses_'));
-      const recentSessions = sessions.sort().slice(-3);
-      for (const session of recentSessions) {
-        const sessionPath = mimoSessionDir + '/' + session;
-        const checkpointFile = sessionPath + '/checkpoint.md';
-        const notesFile = sessionPath + '/notes.md';
-        if (fs.existsSync(checkpointFile)) {
-          parts.push('\n=== MiMo 会话记忆 (' + session + ') ===\n' + fs.readFileSync(checkpointFile, 'utf-8'));
-        }
-        if (fs.existsSync(notesFile)) {
-          const notes = fs.readFileSync(notesFile, 'utf-8').trim();
-          if (notes) {
-            parts.push('\n=== MiMo 会话笔记 (' + session + ') ===\n' + notes);
-          }
-        }
-      }
+    const sharedMemFile = `${memBase}/shared/MEMORY.md`;
+    if (fs.existsSync(sharedMemFile)) {
+      const content = fs.readFileSync(sharedMemFile, 'utf-8').trim();
+      if (content) parts.push(`\n=== Shared Memory ===\n${content}`);
     }
   } catch { /* ignore */ }
 
   return parts.join('\n---\n');
 }
 
-function getMemoryContent(): string {
-  const memory = loadMemoryContent();
-  if (memory) console.log('[mimo-provider] Memory loaded (' + memory.length + ' chars)');
+function getMemoryContent(agentName?: string): string {
+  const memory = loadMemoryContent(agentName);
+  if (memory) console.log(`[mimo-provider] Memory loaded (${memory.length} chars, agent=${agentName || 'mimo'})`);
   else console.log('[mimo-provider] No memory loaded');
   return memory;
 }
@@ -635,7 +604,7 @@ export class MiMoProvider implements LLMProvider {
       // 记忆注入
       let fullPrompt = prompt;
       if (!sdkSessionId) {
-        const memory = getMemoryContent();
+        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
         if (memory) {
           fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n用户消息：' + prompt;
         }

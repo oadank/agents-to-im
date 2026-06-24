@@ -428,8 +428,8 @@ export async function handleDirectMessage(
   }
 
   // 没有绑定，自动创建新会话并绑定私聊本身（不创建新群聊）
-  const config = loadConfig();
-  const defaultRuntime = config.defaultRuntime || 'claude';
+  // 使用 bot 的 runtime 而不是全局 defaultRuntime
+  const defaultRuntime = ctx.getDefaultRuntime();
   console.log(`[feishu-adapter] No existing binding found for p2p chat, auto-creating session with runtime=${defaultRuntime}`);
   try {
     await ctx.ensureRuntimeAvailable(defaultRuntime);

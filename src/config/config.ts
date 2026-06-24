@@ -32,10 +32,29 @@ export interface CompactConfig {
 
 export interface Config {
   defaultWorkDir: string;
-  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo';
+  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini';
   feishu: FeishuProfileConfig;
+  /** 多 bot 配置列表（新格式） */
+  bots?: BotConfig[];
   claudeCliExecutable?: string;
   compact: CompactConfig;
+}
+
+/** 单个 bot 的完整配置 */
+export interface BotConfig {
+  name: string;
+  appId: string;
+  appSecret: string;
+  runtime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini';
+  agentName?: string;
+  modelGroup?: string;
+  modelProvider?: string;
+  domain?: 'lark';
+  allowedUsers?: string[];
+  showToolCallCards?: boolean;
+  showAgentDivider?: boolean;
+  oauthRedirectUri?: string;
+  enableUserMode?: boolean;
 }
 
 export const DEFAULT_CTI_HOME = path.join(os.homedir(), '.agents-to-im');
@@ -104,6 +123,51 @@ function loadCompactConfig(env: Map<string, string>): CompactConfig {
   };
 }
 
+function parseBotConfigs(env: Map<string, string>): BotConfig[] {
+  const botsStr = env.get('CTI_BOTS');
+  if (!botsStr) return [];
+
+  const botNames = botsStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const bots: BotConfig[] = [];
+
+  for (const name of botNames) {
+    const prefix = `CTI_BOT_${name.toUpperCase()}_`;
+    const appId = env.get(`${prefix}APP_ID`);
+    const appSecret = env.get(`${prefix}APP_SECRET`);
+    if (!appId || !appSecret) {
+      console.warn(`[config] Bot '${name}' missing APP_ID or APP_SECRET, skipping`);
+      continue;
+    }
+
+    const runtimeStr = env.get(`${prefix}RUNTIME`) || 'claude';
+    const runtime: BotConfig['runtime'] =
+      runtimeStr === 'codex' ? 'codex'
+        : runtimeStr === 'openhuman' ? 'openhuman'
+          : runtimeStr === 'zcode' ? 'zcode'
+            : runtimeStr === 'mimo' ? 'mimo'
+              : runtimeStr === 'gemini' ? 'gemini'
+                : 'claude';
+
+    bots.push({
+      name,
+      appId,
+      appSecret,
+      runtime,
+      agentName: env.get(`${prefix}AGENT_NAME`) || `feishu-${name}`,
+      modelGroup: env.get(`${prefix}MODEL_GROUP`) || undefined,
+      modelProvider: env.get(`${prefix}MODEL_PROVIDER`) || undefined,
+      domain: env.get(`${prefix}DOMAIN`) === 'lark' ? 'lark' : undefined,
+      allowedUsers: splitCsv(env.get(`${prefix}ALLOWED_USERS`) || env.get('CTI_FEISHU_ALLOWED_USERS')),
+      showToolCallCards: parseBoolean(env.get(`${prefix}SHOW_TOOL_CALL_CARDS`)) ?? false,
+      showAgentDivider: parseBoolean(env.get(`${prefix}SHOW_AGENT_DIVIDER`)) ?? true,
+      oauthRedirectUri: env.get(`${prefix}OAUTH_REDIRECT_URI`) || undefined,
+      enableUserMode: parseBoolean(env.get(`${prefix}ENABLE_USER_MODE`)) ?? false,
+    });
+  }
+
+  return bots;
+}
+
 export function loadConfig(): Config {
   let env = new Map<string, string>();
   try {
@@ -114,17 +178,24 @@ export function loadConfig(): Config {
   }
 
   const runtimeStr = env.get('CTI_DEFAULT_RUNTIME') || 'claude';
-  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' =
+  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' =
     runtimeStr === 'codex' ? 'codex'
       : runtimeStr === 'openhuman' ? 'openhuman'
         : runtimeStr === 'zcode' ? 'zcode'
           : runtimeStr === 'mimo' ? 'mimo'
-            : 'claude';
+            : runtimeStr === 'gemini' ? 'gemini'
+              : 'claude';
+
+  const bots = parseBotConfigs(env);
+  if (bots.length > 0) {
+    console.log(`[config] Loaded ${bots.length} bot(s): ${bots.map(b => `${b.name}(${b.runtime})`).join(', ')}`);
+  }
 
   return {
     defaultWorkDir: env.get('CTI_DEFAULT_WORKDIR') || process.cwd(),
     defaultRuntime,
     feishu: loadFeishuConfig(env),
+    bots: bots.length > 0 ? bots : undefined,
     claudeCliExecutable: env.get('CTI_CLAUDE_CODE_EXECUTABLE') || undefined,
     compact: loadCompactConfig(env),
   };

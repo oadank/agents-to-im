@@ -595,10 +595,11 @@ export class SDKLLMProvider implements LLMProvider {
           try {
             const cleanEnv = buildSubprocessEnv();
 
-            // Cross-runtime migration safety: drop non-Claude model names
-            // that may linger in session data from a previous Codex runtime.
+            // CTI_MODEL_GROUP 统一控制模型路由：
+            // - 如果 CTI_MODEL_GROUP 已设置，尊重用户配置（允许非 Claude 模型名通过）
+            // - 如果未设置，保留原有安全检查：丢弃残留的非 Claude 模型名
             let model = params.model;
-            if (isNonClaudeModel(model)) {
+            if (isNonClaudeModel(model) && !process.env.CTI_MODEL_GROUP) {
               console.warn(`[llm-provider] Ignoring non-Claude model "${model}", using CLI default`);
               model = undefined;
             }

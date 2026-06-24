@@ -110,6 +110,8 @@ export interface PendingInboundImage {
 
 export interface FeishuAdapterOptions {
   profile: FeishuProfileConfig;
+  /** 该 adapter 的默认 runtime（多 bot 模式下由 bot 配置指定） */
+  defaultRuntime?: import('../runtime/types.js').RuntimeName;
 }
 
 export type StructuredActionEvent = lark.InteractiveCardActionEvent & {
@@ -305,4 +307,6 @@ export interface AdapterContext {
   setPendingAudioReply(chatId: string, needsAudio: boolean): void;
   /** Check if this chat needs audio reply */
   needsAudioReply(chatId: string): boolean;
+  /** Get the default runtime for this bot instance */
+  getDefaultRuntime(): import('../runtime/types.js').RuntimeName;
 }

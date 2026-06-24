@@ -44,9 +44,80 @@ function writeStatus(info: StatusInfo): void {
   fs.renameSync(tmp, STATUS_FILE);
 }
 
+/** 从 CTI_MCP_* 环境变量同步生成各 agent 的 MCP 配置文件 */
+function generateMcpConfigs(): void {
+  const mcpServers: Record<string, { url: string }> = {};
+  if (process.env.CTI_MCP_AGENTMEMORY_URL) {
+    mcpServers.agentmemory = { url: process.env.CTI_MCP_AGENTMEMORY_URL };
+  }
+  if (process.env.CTI_MCP_WIKI_URL) {
+    mcpServers.wiki = { url: process.env.CTI_MCP_WIKI_URL };
+  }
+  if (Object.keys(mcpServers).length === 0) return;
+
+  console.log(`[agents-to-im] Syncing MCP config: ${Object.keys(mcpServers).join(', ')}`);
+
+  // 1. Claude: /opt/.claude/mcp.json
+  try {
+    const claudeMcp: Record<string, unknown> = { mcpServers: {} };
+    for (const [name, cfg] of Object.entries(mcpServers)) {
+      (claudeMcp.mcpServers as Record<string, unknown>)[name] = { type: 'http', url: cfg.url };
+    }
+    fs.mkdirSync(path.dirname('/opt/.claude/mcp.json'), { recursive: true });
+    fs.writeFileSync('/opt/.claude/mcp.json', JSON.stringify(claudeMcp, null, 2));
+  } catch (err) {
+    console.warn('[agents-to-im] Failed to write Claude MCP config:', err);
+  }
+
+  // 2. MiMo/Gemini ACP: mimocode.json
+  const mimocodePaths = [
+    '/opt/.mimocode/config/mimocode.json',
+    '/opt/.gemini-acp/.mimocode/config/mimocode.json',
+  ];
+  for (const configPath of mimocodePaths) {
+    try {
+      let config: Record<string, unknown> = {};
+      if (fs.existsSync(configPath)) {
+        config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      }
+      const mcp: Record<string, unknown> = {};
+      for (const [name, cfg] of Object.entries(mcpServers)) {
+        mcp[name] = { type: 'remote', url: cfg.url };
+      }
+      config.mcp = mcp;
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      console.log(`[agents-to-im] Updated MCP config: ${configPath}`);
+    } catch (err) {
+      console.warn(`[agents-to-im] Failed to write MCP config to ${configPath}:`, err);
+    }
+  }
+
+  // 3. Gemini CLI: /root/.gemini/settings.json
+  try {
+    const geminiSettingsPath = '/root/.gemini/settings.json';
+    let settings: Record<string, unknown> = {};
+    if (fs.existsSync(geminiSettingsPath)) {
+      settings = JSON.parse(fs.readFileSync(geminiSettingsPath, 'utf-8'));
+    }
+    const mcpServersConfig: Record<string, unknown> = {};
+    for (const [name, cfg] of Object.entries(mcpServers)) {
+      mcpServersConfig[name] = { type: 'http', url: cfg.url };
+    }
+    settings.mcpServers = mcpServersConfig;
+    fs.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2));
+    console.log(`[agents-to-im] Updated Gemini CLI MCP config: ${geminiSettingsPath}`);
+  } catch (err) {
+    console.warn('[agents-to-im] Failed to write Gemini CLI MCP config:', err);
+  }
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   setupLogger();
+
+  // ── MCP 配置同步：从 CTI_MCP_* 环境变量生成配置文件 ──
+  generateMcpConfigs();
 
   const runId = crypto.randomUUID();
   const startTime = Date.now();
@@ -76,16 +147,52 @@ async function main(): Promise<void> {
   const pendingStructuredInputs = new PendingStructuredInputs();
   const llm = new MultiplexLLMProvider(store, pendingPerms, pendingApprovals, pendingStructuredInputs, config);
   console.log('[agents-to-im] Runtime selection: per-session multiplex (claude/codex)');
-  const feishuAdapter = new FeishuAdapter({
-    profile: config.feishu,
-  });
+
   const enabledChannelIds: string[] = [];
-  const configError = feishuAdapter.validateConfig();
-  if (configError) {
-    console.warn(`[agents-to-im] Skip Feishu adapter ${feishuAdapter.adapterId}: ${configError}`);
+
+  // ── Multi-bot mode: create one adapter per bot ──
+  if (config.bots && config.bots.length > 0) {
+    console.log(`[agents-to-im] Multi-bot mode: ${config.bots.length} bot(s)`);
+    for (const bot of config.bots) {
+      const botAdapter = new FeishuAdapter({
+        profile: {
+          id: bot.name,
+          appId: bot.appId,
+          appSecret: bot.appSecret,
+          domain: bot.domain,
+          allowedUsers: bot.allowedUsers,
+          showToolCallCards: bot.showToolCallCards,
+          showAgentDivider: bot.showAgentDivider,
+          agentName: bot.agentName,
+          modelGroup: bot.modelGroup,
+          modelProvider: bot.modelProvider,
+          oauthRedirectUri: bot.oauthRedirectUri,
+          enableUserMode: bot.enableUserMode,
+        },
+        defaultRuntime: bot.runtime,
+      });
+      const botConfigError = botAdapter.validateConfig();
+      if (botConfigError) {
+        console.warn(`[agents-to-im] Skip bot '${bot.name}': ${botConfigError}`);
+        continue;
+      }
+      bridgeManager.registerAdapter(botAdapter);
+      enabledChannelIds.push(botAdapter.adapterId);
+      console.log(`[agents-to-im] Registered bot '${bot.name}' (runtime=${bot.runtime}, appId=${bot.appId.slice(0, 12)}...)`);
+    }
   } else {
-    bridgeManager.registerAdapter(feishuAdapter);
-    enabledChannelIds.push(feishuAdapter.adapterId);
+    // ── Legacy single-bot mode ──
+    const feishuAdapter = new FeishuAdapter({
+      profile: config.feishu,
+      defaultRuntime: config.defaultRuntime,
+    });
+    const configError = feishuAdapter.validateConfig();
+    if (configError) {
+      console.warn(`[agents-to-im] Skip Feishu adapter ${feishuAdapter.adapterId}: ${configError}`);
+    } else {
+      bridgeManager.registerAdapter(feishuAdapter);
+      enabledChannelIds.push(feishuAdapter.adapterId);
+    }
   }
 
   const gateway = {

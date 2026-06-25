@@ -273,40 +273,17 @@ export async function handleDirectMessage(
     await ctx.handleCreateSessionCommand(sender, inbound, 'zcode');
     return;
   }
-  if (command === '/new' || command === '/new:mimo') {
-    const store = ctx.getStore();
-    const cwd = store.getSetting('bridge_default_work_dir') || process.cwd();
-    const mimoModel = store.getSetting('compact_model') || 'mimocode';
-    try {
-      await ctx.ensureRuntimeAvailable('mimo');
-      const session = store.createRuntimeSession({
-        runtime: 'mimo',
-        model: mimoModel,
-        cwd,
-      });
-      store.upsertChannelBinding({
-        channelType: ctx.channelType,
-        channelInstanceId: ctx.profileId,
-        chatId: inbound.address.chatId,
-        codepilotSessionId: session.id,
-        workingDirectory: session.working_directory,
-        model: mimoModel,
-        chatType: 'p2p',
-      });
-      await ctx.sendAsPost(
-        inbound.address,
-        `✅ MiMo 会话已创建\n\n工作区：\`${cwd}\`\n直接发消息即可开始对话。`,
-        inbound.messageId,
-      );
-      console.log(`[feishu-adapter] Created and bound mimo session ${session.id} (model=${mimoModel}) to p2p chat ${inbound.address.chatId}`);
-    } catch (error) {
-      console.error('[feishu-adapter] Failed to create mimo session:', error);
-      await ctx.sendAsPost(
-        inbound.address,
-        `创建会话失败：${error instanceof Error ? error.message : String(error)}`,
-        inbound.messageId,
-      );
-    }
+  if (command === '/new:gemini') {
+    await ctx.handleCreateSessionCommand(sender, inbound, 'gemini');
+    return;
+  }
+  if (command === '/new:mimo') {
+    await ctx.handleCreateSessionCommand(sender, inbound, 'mimo');
+    return;
+  }
+  if (command === '/new') {
+    const runtime = ctx.getDefaultRuntime();
+    await ctx.handleCreateSessionCommand(sender, inbound, runtime);
     return;
   }
   if (command === '/resume:claude') {

@@ -121,7 +121,7 @@ interface CachedAcpSession {
 export class MiMoProvider implements LLMProvider {
   private acpCache = new Map<string, CachedAcpSession>();
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
-  private static IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟
+  private static IDLE_TIMEOUT_MS = parseInt(process.env.CTI_MIMO_IDLE_TIMEOUT_MS || '900000'); // 默认 15 分钟
   private static SESSION_DIR = '/opt/.mimocode/sessions';
 
   constructor() {

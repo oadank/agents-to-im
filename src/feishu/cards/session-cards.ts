@@ -328,6 +328,75 @@ export function buildNewMimoSessionCard(workspaces: RecentWorkspaceOption[]): Re
   };
 }
 
+export function buildNewGeminiSessionCard(workspaces: RecentWorkspaceOption[]): Record<string, unknown> {
+  return {
+    schema: '2.0',
+    config: {
+      wide_screen_mode: true,
+      update_multi: true,
+      width_mode: 'fill',
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: '创建 Gemini 会话',
+      },
+      template: 'green',
+    },
+    body: {
+      elements: [
+        {
+          tag: 'form',
+          name: 'new_session_gemini',
+          elements: [
+            {
+              tag: 'markdown',
+              content: '请选择工作区，然后点击按钮创建会话。会话将绑定到当前私聊窗口。',
+            },
+            {
+              tag: 'markdown',
+              content: '最近工作区（去重后最多 5 个）：',
+            },
+            buildWorkspaceSelect(workspaces),
+            {
+              tag: 'column_set',
+              flex_mode: 'flow',
+              horizontal_spacing: '8px',
+              horizontal_align: 'left',
+              columns: [
+                {
+                  tag: 'column',
+                  width: 'auto',
+                  elements: [
+                    {
+                      tag: 'button',
+                      name: 'new_session_gemini_code',
+                      text: {
+                        tag: 'plain_text',
+                        content: '开始对话',
+                      },
+                      type: 'primary',
+                      form_action_type: 'submit',
+                      behaviors: [
+                        {
+                          type: 'callback',
+                          value: {
+                            callback_data: 'new-session:gemini:code',
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 export function formatNativeSessionUpdatedAt(updatedAt: string): string {
   const normalized = updatedAt.trim();
   if (!normalized) return '未知时间';

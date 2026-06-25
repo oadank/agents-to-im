@@ -89,19 +89,19 @@ export async function handleNewSessionCardAction(
   const actionMessageId = resolveActionOpenMessageId(event);
   const cwd = ctx.resolveSelectedWorkdir(event.action?.form_value as Record<string, unknown> | undefined);
   try {
-    // For mimo runtime, bind to existing chat and set model to actual configured model
+    // For mimo/gemini runtime, bind to existing chat
     const mimoModel = ctx.getStore().getSetting('compact_model') || 'MiMo-OpenAI';
-    const mimoOptions = runtime === 'mimo' ? {
+    const bindToChatOptions = (runtime === 'mimo' || runtime === 'gemini') ? {
       existingChatId: ctx.resolveActionChatId(event),
-      model: mimoModel,
+      model: runtime === 'mimo' ? mimoModel : undefined,
     } : {};
     await ctx.createBoundSession(runtime, sender, {
       cwd,
       bindingMode,
-      ...mimoOptions,
+      ...bindToChatOptions,
     });
-    const statusTitle = runtime === 'codex' ? 'Codex 会话已创建' : runtime === 'mimo' ? 'MiMo 会话已创建' : '会话已创建';
-    const statusLines = runtime === 'mimo'
+    const statusTitle = runtime === 'codex' ? 'Codex 会话已创建' : runtime === 'mimo' ? 'MiMo 会话已创建' : runtime === 'gemini' ? 'Gemini 会话已创建' : '会话已创建';
+    const statusLines = (runtime === 'mimo' || runtime === 'gemini')
       ? [
           `工作区：\`${cwd}\``,
           '已绑定当前私聊窗口，直接继续对话即可。',

@@ -70,6 +70,7 @@ import {
   buildClaudeModeCard,
   buildNewClaudeSessionCard,
   buildNewCodexSessionCard,
+  buildNewGeminiSessionCard,
   buildNewMimoSessionCard,
   buildPermissionCard,
   buildResumeSessionCard,
@@ -1010,7 +1011,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
       ? buildNewCodexSessionCard(workspaces)
       : runtime === 'mimo'
         ? buildNewMimoSessionCard(workspaces)
-        : buildNewClaudeSessionCard(workspaces);
+        : runtime === 'gemini'
+          ? buildNewGeminiSessionCard(workspaces)
+          : buildNewClaudeSessionCard(workspaces);
     const result = await this.sendInteractiveCard(address, card, replyToMessageId);
     return {
       ok: true,

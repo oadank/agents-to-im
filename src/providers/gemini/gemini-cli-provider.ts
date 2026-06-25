@@ -120,7 +120,7 @@ export class GeminiCliProvider implements LLMProvider {
 
     console.log(`[gemini-cli-provider] Spawn: bin=gemini cwd=${cwd}`);
 
-    const child = spawn('gemini', ['-p', enrichedPrompt], {
+    const child = spawn('gemini', ['--yolo', '-p', enrichedPrompt], {
       cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],

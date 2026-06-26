@@ -414,7 +414,6 @@ export class JsonFileStore implements BridgeStore {
         ...existing,
         codepilotSessionId: data.codepilotSessionId,
         workingDirectory: data.workingDirectory,
-        model: data.model,
         ...(data.chatType ? { chatType: data.chatType } : {}),
         ...(data.claudePermissionMode !== undefined
           ? { claudePermissionMode: data.claudePermissionMode }
@@ -433,7 +432,6 @@ export class JsonFileStore implements BridgeStore {
       codepilotSessionId: data.codepilotSessionId,
       sdkSessionId: '',
       workingDirectory: data.workingDirectory,
-      model: data.model,
       mode: 'code',
       ...(data.chatType ? { chatType: data.chatType } : {}),
       ...(data.claudePermissionMode !== undefined

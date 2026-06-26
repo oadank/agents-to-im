@@ -21,6 +21,7 @@ import type {
   MessageContentBlock,
 } from './host.js';
 import { getBridgeContext } from './context.js';
+import { getRuntimeConfig } from '../config/runtime-configs.js';
 import crypto from 'crypto';
 
 export interface PermissionRequestInfo {
@@ -270,8 +271,8 @@ export async function processMessage(
       if (defaultId) resolvedProvider = store.getProvider(defaultId);
     }
 
-    // Effective model
-    const effectiveModel = binding.model || session?.model || undefined;
+    // Effective model: always read from live runtime config, fallback to session snapshot
+    const effectiveModel = getRuntimeConfig(runtime).model || session?.model || undefined;
 
     // Permission mode from binding mode
     let permissionMode = options?.permissionModeOverride;

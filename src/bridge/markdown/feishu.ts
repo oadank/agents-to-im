@@ -60,6 +60,8 @@ export interface AgentDividerInfo {
   model?: string;
   /** Provider name (e.g., LiteLLM) */
   provider?: string;
+  /** Session ID prefix (first 8 chars) for debugging */
+  session?: string;
 }
 
 /**

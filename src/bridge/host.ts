@@ -314,7 +314,6 @@ export interface UpsertChannelBindingInput {
   chatId: string;
   codepilotSessionId: string;
   workingDirectory: string;
-  model: string;
   chatType?: 'p2p' | 'group';
   claudePermissionMode?: ClaudePermissionMode;
 }

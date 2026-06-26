@@ -2527,13 +2527,15 @@ async function handleCommand(
 
     case '/status': {
       const binding = router.resolve(msg.address);
+      const session = store.getSession(binding.codepilotSessionId);
+      const modelDisplay = session?.model || 'default';
       response = [
         '<b>Bridge Status</b>',
         '',
         `Session: <code>${binding.codepilotSessionId.slice(0, 8)}...</code>`,
         `CWD: <code>${escapeHtml(binding.workingDirectory || '~')}</code>`,
         `Mode: <b>${binding.mode}</b>`,
-        `Model: <code>${binding.model || 'default'}</code>`,
+        `Model: <code>${modelDisplay}</code>`,
       ].join('\n');
       break;
     }

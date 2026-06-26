@@ -240,7 +240,7 @@ export async function handleResetCommand(
   const runtime = ext?.runtime || 'claude';
   const session = store.createRuntimeSession({
     runtime,
-    model: binding.model,
+    model: '',
     cwd: binding.workingDirectory,
   });
   store.upsertChannelBinding({
@@ -249,7 +249,6 @@ export async function handleResetCommand(
     chatId: address.chatId,
     codepilotSessionId: session.id,
     workingDirectory: binding.workingDirectory,
-    model: binding.model,
   });
   const updated = store.getChannelBinding(ctx.channelType, address.chatId, ctx.profileId);
   if (updated) {

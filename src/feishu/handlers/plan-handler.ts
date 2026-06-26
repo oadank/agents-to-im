@@ -562,7 +562,7 @@ export async function handleClaudePlanExitCardAction(
 
     const session = store.createRuntimeSession({
       runtime: 'claude',
-      model: binding.model,
+      model: '',
       cwd: binding.workingDirectory,
     });
     store.upsertChannelBinding({
@@ -571,7 +571,6 @@ export async function handleClaudePlanExitCardAction(
       chatId: workflow.chatId,
       codepilotSessionId: session.id,
       workingDirectory: binding.workingDirectory,
-      model: binding.model,
     });
     const updatedBinding = store.getChannelBinding(ctx.channelType, workflow.chatId, ctx.profileId);
     if (updatedBinding) {

@@ -145,8 +145,6 @@ export interface ChannelBinding {
   sdkSessionId: string;
   /** Working directory for this binding */
   workingDirectory: string;
-  /** Model override for this binding */
-  model: string;
   /** Chat mode */
   mode: 'code' | 'plan' | 'ask';
   /** Persistent Claude SDK permission mode for Claude runtime chats */

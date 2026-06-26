@@ -1638,13 +1638,15 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const runtimeConfig = getRuntimeConfig(runtime);
 
       // Use runtime config for model and provider
-      const modelName = runtimeConfig.model || session?.model || binding?.model || 'N/A';
+      // Priority: session override > binding override > runtime config default > N/A
+      const modelName = session?.model || binding?.model || runtimeConfig.model || 'N/A';
       const providerName = runtimeConfig.provider || 'N/A';
 
       return {
-        agent: this.options.profile.agentName || this.profileId,
+        agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
+        session: binding?.sdkSessionId?.substring(0, 8) || 'N/A',
       };
     }
     return undefined;
@@ -1664,13 +1666,15 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const runtimeConfig = getRuntimeConfig(runtime);
 
       // Use runtime config for model and provider
-      const modelName = runtimeConfig.model || session?.model || binding?.model || 'N/A';
+      // Priority: session override > binding override > runtime config default > N/A
+      const modelName = session?.model || binding?.model || runtimeConfig.model || 'N/A';
       const providerName = runtimeConfig.provider || 'N/A';
 
       dividerInfo = {
-        agent: this.options.profile.agentName || this.profileId,
+        agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
+        session: binding?.sdkSessionId?.substring(0, 8) || 'N/A',
       };
     }
 
@@ -1702,13 +1706,15 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const runtimeConfig = getRuntimeConfig(runtime);
 
       // Use runtime config for model and provider
-      const modelName = runtimeConfig.model || session?.model || binding?.model || 'N/A';
+      // Priority: session override > binding override > runtime config default > N/A
+      const modelName = session?.model || binding?.model || runtimeConfig.model || 'N/A';
       const providerName = runtimeConfig.provider || 'N/A';
 
       dividerInfo = {
-        agent: this.options.profile.agentName || this.profileId,
+        agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
+        session: binding?.sdkSessionId?.substring(0, 8) || 'N/A',
       };
     }
 

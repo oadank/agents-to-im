@@ -19,6 +19,7 @@ export function buildStreamingCardSkeleton(dividerInfo?: AgentDividerInfo): Reco
     if (dividerInfo.agent) parts.push(`Agent: ${dividerInfo.agent}`);
     if (dividerInfo.model) parts.push(`Model: ${dividerInfo.model}`);
     if (dividerInfo.provider) parts.push(`Provider: ${dividerInfo.provider}`);
+    if (dividerInfo.session) parts.push(`Session: ${dividerInfo.session}`);
     
     const infoText = parts.join(' | ') || 'Agent: N/A';
     elements.push({

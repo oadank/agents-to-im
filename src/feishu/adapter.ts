@@ -541,7 +541,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return {
       supported: true,
       privateOnly: false,
-      finalDelivery: 'separate_message',
+      finalDelivery: 'replace_preview',
     };
   }
 

@@ -48,14 +48,16 @@ function buildStatusJson(): Record<string, unknown> {
   const uptime = deps.getUptime();
 
   const sessions = bindings.map((b) => {
-    const ext = deps!.store.getSessionExt(b.codepilotSessionId);
+    const session = deps!.store.getSession(b.codepilotSessionId);
+    const ext = session?.ext;
+    const displaySessionId = session?.sdk_session_id || b.codepilotSessionId;
     return {
       chatId: b.chatId.slice(0, 12) + '…',
-      sessionId: b.codepilotSessionId.slice(0, 8) + '…',
+      sessionId: displaySessionId.slice(0, 8) + '…',
       runtime: ext?.runtime || 'claude',
       title: ext?.title || '(untitled)',
       mode: b.mode,
-      model: b.model || 'default',
+      model: session?.model || b.model || 'default',
       workDir: b.workingDirectory || '~',
       active: b.active,
       updatedAt: b.updatedAt,
@@ -156,25 +158,25 @@ tr:hover td{background:rgba(99,102,241,.04)}
     <h1><span class="icon">⚡</span> agents-to-im</h1>
     <div class="meta">
       <div>PID <span class="pid" id="pid">—</span></div>
-      <div id="last-update" style="margin-top:4px">Loading…</div>
+      <div id="last-update" style="margin-top:4px">加载中…</div>
     </div>
   </div>
 
   <div class="cards" id="cards"></div>
 
   <div class="section" id="adapters-section">
-    <h2>Adapters <span class="badge" id="adapter-count">0</span></h2>
+    <h2>适配器 <span class="badge" id="adapter-count">0</span></h2>
     <div class="adapters" id="adapters"></div>
   </div>
 
   <div class="section">
-    <h2>Sessions <span class="badge" id="session-count">0</span></h2>
+    <h2>会话列表 <span class="badge" id="session-count">0</span></h2>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Chat</th><th>Session</th><th>Runtime</th><th>Title</th><th>Mode</th><th>Model</th><th>Work Dir</th><th>Status</th></tr>
+          <tr><th>会话</th><th>Session</th><th>运行时</th><th>标题</th><th>模式</th><th>模型</th><th>工作目录</th><th>状态</th></tr>
         </thead>
-        <tbody id="sessions"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+        <tbody id="sessions"><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -202,10 +204,10 @@ async function refresh(){
     // Cards
     const running=d.bridge?.running;
     document.getElementById('cards').innerHTML=\`
-      <div class="card"><div class="label">Status</div><div class="value \${running?'green':'red'}"><span class="status-dot \${running?'on':'off'}"></span>\${running?'Running':'Stopped'}</div></div>
-      <div class="card"><div class="label">Uptime</div><div class="value blue">\${uptime(d.uptime)}</div></div>
-      <div class="card"><div class="label">Sessions</div><div class="value orange">\${d.sessionCount||0}</div></div>
-      <div class="card"><div class="label">Adapters</div><div class="value">\${(d.bridge?.adapters||[]).length}</div></div>
+      <div class="card"><div class="label">状态</div><div class="value \${running?'green':'red'}"><span class="status-dot \${running?'on':'off'}"></span>\${running?'运行中':'已停止'}</div></div>
+      <div class="card"><div class="label">运行时长</div><div class="value blue">\${uptime(d.uptime)}</div></div>
+      <div class="card"><div class="label">会话</div><div class="value orange">\${d.sessionCount||0}</div></div>
+      <div class="card"><div class="label">适配器</div><div class="value">\${(d.bridge?.adapters||[]).length}</div></div>
     \`;
     // Adapters
     const adapters=d.bridge?.adapters||[];
@@ -221,7 +223,7 @@ async function refresh(){
     const sessions=d.sessions||[];
     document.getElementById('session-count').textContent=sessions.length;
     const tbody=document.getElementById('sessions');
-    if(!sessions.length){tbody.innerHTML='<tr><td colspan="8" class="empty">No active sessions</td></tr>';return}
+    if(!sessions.length){tbody.innerHTML='<tr><td colspan="8" class="empty">暂无活跃会话</td></tr>';return}
     tbody.innerHTML=sessions.map(s=>\`<tr>
       <td class="mono">\${esc(s.chatId)}</td>
       <td class="mono">\${esc(s.sessionId)}</td>

@@ -47,6 +47,70 @@ function readClaudeConfig(): { model: string; provider: string } {
 }
 
 /**
+ * 读取 config.env 文件，返回键值对
+ * config.env 是 agents-to-im 的统一配置文件，每次调用都重新读取
+ */
+function readConfigEnv(): Record<string, string> {
+  const configPath = '/opt/.agents-to-im/config.env';
+  const result: Record<string, string> = {};
+  try {
+    if (!fs.existsSync(configPath)) return result;
+    const content = fs.readFileSync(configPath, 'utf-8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+      result[key] = value;
+    }
+  } catch (e) {
+    console.error('[runtime-configs] 读取 config.env 失败:', e);
+  }
+  return result;
+}
+
+/**
+ * 读取 Gemini 运行时配置：实时读 config.env
+ * - CTI_BOT_GEMINI_DISPLAY_MODEL 优先（真实底层模型，用于显示）
+ * - CTI_BOT_GEMINI_MODEL_GROUP 作为 fallback（LiteLLM 虚拟名）
+ */
+function readGeminiConfig(): { model: string; provider: string } {
+  const env = readConfigEnv();
+  const model = env.CTI_BOT_GEMINI_DISPLAY_MODEL || env.CTI_BOT_GEMINI_MODEL_GROUP || 'mimo-v2.5';
+  const provider = env.CTI_BOT_GEMINI_MODEL_PROVIDER || 'LiteLLM';
+  return { model, provider };
+}
+
+/**
+ * 读取 MiMo 运行时配置：实时读 config.env 和 mimocode.json
+ * - CTI_BOT_MIMO_DISPLAY_MODEL 优先（真实底层模型，用于显示）
+ * - mimocode.json 的 model 字段作为 fallback（内部 ID）
+ */
+function readMimoConfig(): { model: string; provider: string } {
+  const env = readConfigEnv();
+  if (env.CTI_BOT_MIMO_DISPLAY_MODEL) {
+    return { model: env.CTI_BOT_MIMO_DISPLAY_MODEL, provider: env.CTI_BOT_MIMO_MODEL_PROVIDER || 'LiteLLM' };
+  }
+  const defaultModel = 'mimo-v2.5';
+  try {
+    const configPath = '/opt/.mimocode/config/mimocode.json';
+    if (!fs.existsSync(configPath)) {
+      return { model: defaultModel, provider: 'LiteLLM' };
+    }
+    const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const rawModel = data.model || defaultModel;
+    // mimocode.json 的 model 是 "provider/model" 格式（如 mimo-litellm/MiMogo），取 / 后部分作为显示
+    const model = rawModel.includes('/') ? rawModel.split('/').pop()! : rawModel;
+    return { model, provider: 'LiteLLM' };
+  } catch (e) {
+    console.error('[runtime-configs] 读取 mimocode.json 失败，使用默认值:', e);
+    return { model: defaultModel, provider: 'LiteLLM' };
+  }
+}
+
+/**
  * 获取指定 runtime 的配置（每次调用时重新读取配置文件）
  * @param runtime runtime 名称
  * @returns RuntimeConfig 配置对象
@@ -59,7 +123,21 @@ export function getRuntimeConfig(runtime: string): RuntimeConfig {
     return { model, provider, displayName: 'Claude' };
   }
 
-  // 其他 runtime 保持原有逻辑（环境变量 + 默认值），暂不改动
+  // Gemini runtime：实时读取 config.env
+  if (runtime === 'gemini') {
+    const { model, provider } = readGeminiConfig();
+    console.log(`[runtime-configs] runtime=gemini → model=${model} provider=${provider} (from config.env)`);
+    return { model, provider, displayName: 'Gemini' };
+  }
+
+  // MiMo runtime：实时读取 mimocode.json
+  if (runtime === 'mimo') {
+    const { model, provider } = readMimoConfig();
+    console.log(`[runtime-configs] runtime=mimo → model=${model} provider=${provider} (from mimocode.json)`);
+    return { model, provider, displayName: 'MimoCode' };
+  }
+
+  // 其他 runtime 保持原有逻辑（环境变量 + 默认值）
   const runtimeUpper = runtime.toUpperCase();
   const botModelKey = `CTI_BOT_${runtimeUpper}_MODEL_GROUP`;
   const botProviderKey = `CTI_BOT_${runtimeUpper}_MODEL_PROVIDER`;

@@ -237,19 +237,19 @@ async function main(): Promise<void> {
     },
   });
 
-  await bridgeManager.start();
-
-  // Start the dashboard status panel
+  // Start the dashboard status panel (先启动 dashboard，避免被 bridgeManager.start 阻塞)
   try {
     startDashboard({
       store,
       getUptime: () => (Date.now() - startTime) / 1000,
       getBridgeStatus: bridgeManager.getStatus,
-      larkClient: feishuAdapter.getLarkClient(),
+      larkClient: undefined,
     });
   } catch (err) {
     console.warn('[agents-to-im] Dashboard failed to start:', err instanceof Error ? err.message : err);
   }
+
+  await bridgeManager.start();
 
   // Graceful shutdown
   let shuttingDown = false;

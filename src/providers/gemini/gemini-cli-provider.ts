@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
+import { getRuntimeConfig } from '../../config/runtime-configs.js';
 
 // ── 记忆注入 ──
 
@@ -118,9 +119,12 @@ export class GeminiCliProvider implements LLMProvider {
     env.GEMINI_API_KEY = process.env.CTI_GEMINI_API_KEY || 'proxy-passthrough';
     env.GEMINI_CLI_TRUST_WORKSPACE = 'true';
 
-    console.log(`[gemini-cli-provider] Spawn: bin=gemini cwd=${cwd}`);
+    // 实时读取当前模型（从 config.env）
+    const runtimeConfig = getRuntimeConfig('gemini');
+    const model = runtimeConfig.model || 'gemini-model';
+    console.log(`[gemini-cli-provider] Spawn: bin=gemini cwd=${cwd} model=${model}`);
 
-    const child = spawn('gemini', ['--yolo', '-p', enrichedPrompt], {
+    const child = spawn('gemini', ['--yolo', '-m', model, '-p', enrichedPrompt], {
       cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],

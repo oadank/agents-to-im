@@ -192,7 +192,7 @@ export class MiMoProvider implements LLMProvider {
 
     const saved = this.loadSavedSession(cacheKey);
 
-    const child = spawn('mimo', ['acp', '--hostname', '0.0.0.0', '--cwd', configCwd], {
+    const child = spawn('mimo', ['acp', '--hostname', '127.0.0.1', '--cwd', configCwd], {
       cwd, env, stdio: ['pipe', 'pipe', 'pipe'],
     });
 

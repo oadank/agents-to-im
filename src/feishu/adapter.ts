@@ -918,6 +918,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
         '可用命令：`/stop` 中断当前输出、`/reset` 重置会话。',
       ].join('\n');
     }
+    if (runtime === 'gemini') {
+      return [
+        '已创建 Gemini 会话，已绑定当前私聊窗口。',
+        '后续直接发消息继续对话。',
+        '可用命令：`/stop` 中断当前输出、`/reset` 重置会话。',
+      ].join('\n');
+    }
     return [
       `已创建 codex 会话，当前模式：**${binding.mode === 'plan' ? 'Plan' : '默认'}**。`,
       '后续请直接在本群继续对话。',
@@ -1638,15 +1645,15 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const runtimeConfig = getRuntimeConfig(runtime);
 
       // Use runtime config for model and provider
-      // Priority: session override > binding override > runtime config default > N/A
-      const modelName = session?.model || binding?.model || runtimeConfig.model || 'N/A';
+      // Priority: runtime config (live) > session snapshot > binding (legacy) > N/A
+      const modelName = runtimeConfig.model || session?.model || 'N/A';
       const providerName = runtimeConfig.provider || 'N/A';
 
       return {
         agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
-        session: binding?.sdkSessionId?.substring(0, 8) || 'N/A',
+        session: binding?.sdkSessionId?.substring(0, 8) || binding?.codepilotSessionId?.substring(0, 8) || 'N/A',
       };
     }
     return undefined;
@@ -1666,15 +1673,15 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const runtimeConfig = getRuntimeConfig(runtime);
 
       // Use runtime config for model and provider
-      // Priority: session override > binding override > runtime config default > N/A
-      const modelName = session?.model || binding?.model || runtimeConfig.model || 'N/A';
+      // Priority: runtime config (live) > session snapshot > binding (legacy) > N/A
+      const modelName = runtimeConfig.model || session?.model || 'N/A';
       const providerName = runtimeConfig.provider || 'N/A';
 
       dividerInfo = {
         agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
-        session: binding?.sdkSessionId?.substring(0, 8) || 'N/A',
+        session: binding?.sdkSessionId?.substring(0, 8) || binding?.codepilotSessionId?.substring(0, 8) || 'N/A',
       };
     }
 
@@ -1706,15 +1713,15 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const runtimeConfig = getRuntimeConfig(runtime);
 
       // Use runtime config for model and provider
-      // Priority: session override > binding override > runtime config default > N/A
-      const modelName = session?.model || binding?.model || runtimeConfig.model || 'N/A';
+      // Priority: runtime config (live) > session snapshot > binding (legacy) > N/A
+      const modelName = runtimeConfig.model || session?.model || 'N/A';
       const providerName = runtimeConfig.provider || 'N/A';
 
       dividerInfo = {
         agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
-        session: binding?.sdkSessionId?.substring(0, 8) || 'N/A',
+        session: binding?.sdkSessionId?.substring(0, 8) || binding?.codepilotSessionId?.substring(0, 8) || 'N/A',
       };
     }
 

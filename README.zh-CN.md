@@ -270,6 +270,21 @@ bridge 重启后保留的内容：
 **我的代码会被发到飞书服务器吗？**
 Bridge 只把 AI 生成的文本和活动摘要发到飞书。你的源代码留在本地 — 只有代理的输出和你的消息经过飞书 API。
 
+**Gemini agent 走什么模型？需要 Google API key 吗？**
+不需要 Google API key。Gemini agent 通过 `GeminiProvider`（OpenAI 兼容格式）走 LiteLLM 代理调用 OpenCode Go 的 mimo-v2.5（主力）+ deepseek-v4-flash（备选）。配置在 `config.env` 的 `CTI_BOT_GEMINI_MODEL_GROUP=gemini-model`，模型组在 LiteLLM 配置文件里定义。
+
+**MiMo agent 走什么模型？**
+MiMo agent 通过 `MiMoProvider` 走 mimo acp → LiteLLM → OpenCode Go mimo-v2.5。Token 自动刷新（cron 每 30 分钟），无需手动维护。
+
+**多个 bot 能共用一个 agents-to-im 服务吗？**
+可以。debian13 上 claude/mimo/gemini 三个 bot 共用一个 `agents-to-im.service`，统一配置 `/opt/.agents-to-im/config.env`，各 bot 独立记忆目录、独立 OAuth token。这是 `eadd9ad` 提交后的统一多 bot 架构。
+
+**AskUserQuestion 卡片在飞书里不弹出来怎么办？**
+检查 `config.env` 里 `CTI_DISABLE_PERMISSION_CHECK` 是否为 `true`，以及 `finalDelivery` 是否改为 `replace_preview`（`20dc496` 修复）。
+
+**Dashboard 看不到聊天记录 / 卡住怎么办？**
+检查 OpenClaw Gateway 的 `bind=lan` 配置，以及 `.env` 是否改成 tailnet IP（`b12b61e` 修复）。详见 [openclaw-dashboard-fix.md](https://github.com/oadank/agents-to-im/blob/my-changes/docs/openclaw-dashboard-fix.md)。
+
 ---
 
 ## 特别致谢

@@ -89,11 +89,19 @@ async function callCompactApi(
     }
 
     const data = await response.json() as any;
-    // content[0] 可能是 thinking 块（无 text 字段），需要找到真正的 text 块
-    const textBlock = data?.content?.find?.((b: any) => b.type === 'text');
-    const text = textBlock?.text;
-    if (!text) return { error: 'API 返回空摘要' };
-    return { text };
+    // 尝试从 text 块提取摘要，如果没有 text 块则从 thinking 块提取
+    // MiMo-Anthropic 等模型可能只返回 thinking 块
+    const contentBlocks = data?.content || [];
+    const textBlock = contentBlocks.find?.((b: any) => b.type === 'text');
+    if (textBlock?.text) {
+      return { text: textBlock.text };
+    }
+    // fallback: 尝试 thinking 块的 thinking 字段
+    const thinkingBlock = contentBlocks.find?.((b: any) => b.type === 'thinking');
+    if (thinkingBlock?.thinking) {
+      return { text: thinkingBlock.thinking };
+    }
+    return { error: 'API 返回空摘要，无 text 或 thinking 块' };
   } catch (err: any) {
     return { error: `请求失败: ${err.message}` };
   }
@@ -130,13 +138,22 @@ export async function compactConversation(
     }
 
     // Build conversation text for the summarization part
-    const conversationText = messagesToSummarize
+    // MiMo-Anthropic has 512K context window, limit to ~400K tokens to be safe
+    const MAX_PROMPT_CHARS = 400_000; // ~400K chars ≈ ~100K tokens
+    let conversationText = messagesToSummarize
       .map((m: BridgeMessage) => {
         const role = m.role === 'user' ? 'Human' : 'Assistant';
         const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
         return `<${role}>\n${content}\n</${role}>`;
       })
       .join('\n\n');
+
+    // If too long, truncate from the beginning (keep most recent messages)
+    if (conversationText.length > MAX_PROMPT_CHARS) {
+      const truncated = conversationText.slice(-MAX_PROMPT_CHARS);
+      const cutPoint = truncated.indexOf('\n\n');
+      conversationText = cutPoint > 0 ? truncated.slice(cutPoint + 2) : truncated;
+    }
 
     const fullPrompt = `${COMPACT_PROMPT}\n\n<conversation>\n${conversationText}\n</conversation>`;
 

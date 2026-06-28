@@ -7,7 +7,7 @@ import { OpenHumanProvider, createOpenHumanProvider } from './openhuman/openhuma
 import { ZCodeProvider, createZCodeProvider } from './zcode/zcode-provider.js';
 import { MiMoProvider } from './mimo/mimo-provider.js';
 import { GeminiProvider, createGeminiProvider } from './gemini/gemini-provider.js';
-import { GeminiCliProvider, createGeminiCliProvider } from './gemini/gemini-cli-provider.js';
+// GeminiCliProvider removed — switching to GeminiProvider (OpenAI→LiteLLM)
 import { preflightCheck, resolveClaudeCliPath } from './claude/cli-support.js';
 import { PendingApprovals, type PendingPermissions, PendingStructuredInputs } from './claude/permission-gateway.js';
 import {
@@ -34,7 +34,7 @@ export class MultiplexLLMProvider implements LLMProvider {
   private openhumanProvider: OpenHumanProvider | null = null;
   private zcodeProvider: ZCodeProvider | null = null;
   private mimoProvider: MiMoProvider | null = null;
-  private geminiProvider: GeminiCliProvider | null = null;
+  private geminiProvider: GeminiProvider | null = null;
   private claudeDriver: ClaudeRuntimeDriver | null = null;
   private codexDriver: CodexRuntimeDriver | null = null;
   private openhumanDriver: OpenHumanRuntimeDriver | null = null;
@@ -131,9 +131,9 @@ export class MultiplexLLMProvider implements LLMProvider {
     return this.mimoProvider;
   }
 
-  private async getGeminiProvider(): Promise<GeminiCliProvider> {
+  private async getGeminiProvider(): Promise<GeminiProvider> {
     if (this.geminiProvider) return this.geminiProvider;
-    this.geminiProvider = createGeminiCliProvider();
+    this.geminiProvider = createGeminiProvider();
     return this.geminiProvider;
   }
 

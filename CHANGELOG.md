@@ -4,20 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Added
-- Dynamic divider display for Model/Provider in adapter (`adapter.ts`).
-- BRIDGE_PROTOCOL.md documentation for bridge protocol reference.
-- README multi-runtime support section and divider feature docs.
+### 新增
+- 适配器动态分割线显示 Model/Provider（`adapter.ts`）。
+- 新增 BRIDGE_PROTOCOL.md 桥接协议文档。
+- README 增加 multi-runtime 支持章节与分割线特性说明。
+- **统一多 bot 架构**：claude/mimo/gemini 三合一统一服务，配置集中化（`eadd9ad`）。
+- **动态模型切换**：runtime 配置实时生效，无需重启（`eeb99da`）。
+- **动态 agent 显示**：agent 名称、模型、Provider 实时从配置读取（`eeb99da`）。
+- **Gemini/MiMo 实时配置**：模型与 Provider 从 `config.env` 读取，显示名动态生成（`b12b61e`）。
+- **MCP 配置集中化**：`mcpServers.json` 统一管理，各 runtime 共享（`eadd9ad`）。
+- **记忆隔离**：各 bot 独立记忆目录，互不干扰（`eadd9ad`）。
+- **Gemini 适配 LiteLLM**：新增 `GeminiProvider`（OpenAI 兼容格式），通过 LiteLLM 路由到 OpenCode Go（mimo-v2.5 主力 / deepseek-v4-flash 备选）。
+- 启动顺序调整：agents-to-im 在 LiteLLM 之后启动，避免依赖竞态（`b12b61e`）。
 
-### Fixed
-- `/new` and `/new:mimo` commands auto-create mimocode session in p2p chat.
-- Feishu-mimo `/new` command binds to p2p chat with mimocode model.
+### 修复
+- `/new` 与 `/new:mimo` 命令在 p2p 聊天中自动创建 mimocode 会话。
+- Feishu-mimo `/new` 命令绑定到 p2p 聊天并使用 mimocode 模型。
+- **AskUserQuestion 飞书卡片不渲染**：`finalDelivery` 改为 `replace_preview`（`20dc496`）。
+- **Dashboard 显示问题**：gateway `bind=lan` + `.env` 改 tailnet IP（`b12b61e`）。
+- **飞书复制失效 + 卡在"生成中"状态**：流式卡片状态机修复（`38ff6e7`）。
+- **esbuild ESM 兼容**：为 Lark SDK 添加 `__dirname` polyfill 到 banner（`50832a6`）。
+- **MiMo-Anthropic 模型 thinking block 提取**：增加 fallback 路径（`compact.ts`）。
 
-### Changed
-- zcode-provider supports `mcpServers.json` configuration.
-- Refactor: remove unused imports and functions in adapter.ts.
-- Remove stale `.bak` backup files.
-- Updated README with multi-runtime support and divider feature.
+### 变更
+- zcode-provider 支持 `mcpServers.json` 配置。
+- 重构 adapter.ts：移除未使用的 import 和函数。
+- 清理陈旧的 `.bak` 备份文件。
+- README 更新 multi-runtime 支持与分割线特性说明。
+- **Gemini runtime 从 `GeminiCliProvider` 切换为 `GeminiProvider`**（OpenAI 格式 → LiteLLM）。
+- 移除已失效的 `mimo-gemini-proxy` 直连配置，统一走 LiteLLM 路由。
+- dist 编译产物同步更新。
 
 ## [0.0.5] - 2026-04-23
 

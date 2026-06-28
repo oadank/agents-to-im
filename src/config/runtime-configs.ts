@@ -21,6 +21,7 @@ function readClaudeConfig(): { model: string; provider: string } {
     const providersPath = '/root/.claude/cc-haha/providers.json';
 
     let model: string | undefined;
+    let provider: string | undefined;
 
     // 优先从 settings.json 读取模型（权威配置）
     if (fs.existsSync(settingsPath)) {
@@ -30,16 +31,20 @@ function readClaudeConfig(): { model: string; provider: string } {
       }
     }
 
-    // settings.json 没有 model 时，从 providers.json 回退
-    if (!model && fs.existsSync(providersPath)) {
+    // 从 providers.json 读取 provider name（非硬编码）
+    if (fs.existsSync(providersPath)) {
       const data = JSON.parse(fs.readFileSync(providersPath, 'utf-8'));
       const active = data.providers?.find((p: any) => p.id === data.activeId);
-      if (active?.models?.main) {
+      if (active?.name) {
+        provider = active.name;
+      }
+      // settings.json 没有 model 时，从 providers.json 回退
+      if (!model && active?.models?.main) {
         model = active.models.main;
       }
     }
 
-    return { model: model || 'claude-model', provider: 'LiteLLM' };
+    return { model: model || 'claude-model', provider: provider || 'LiteLLM' };
   } catch (e) {
     console.error('[runtime-configs] 读取 Claude 配置失败，使用默认值:', e);
     return { model: 'claude-model', provider: 'LiteLLM' };

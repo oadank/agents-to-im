@@ -7,7 +7,6 @@ import { OpenHumanProvider, createOpenHumanProvider } from './openhuman/openhuma
 import { ZCodeProvider, createZCodeProvider } from './zcode/zcode-provider.js';
 import { MiMoProvider } from './mimo/mimo-provider.js';
 import { GeminiProvider, createGeminiProvider } from './gemini/gemini-provider.js';
-// GeminiCliProvider removed — switching to GeminiProvider (OpenAI→LiteLLM)
 import { preflightCheck, resolveClaudeCliPath } from './claude/cli-support.js';
 import { PendingApprovals, type PendingPermissions, PendingStructuredInputs } from './claude/permission-gateway.js';
 import {

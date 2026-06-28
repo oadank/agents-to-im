@@ -298,6 +298,7 @@ export class CodexAppServerClient {
     // 启动 codex app-server 时自动添加 bypass 参数，跳过权限审批
     // 这样飞书调用时不会频繁申请权限审批
     const proc = spawn(this.executable, [
+      '--dangerously-bypass-hook-trust',
       'app-server',
       '-c', 'dangerously_bypass_approvals_and_sandbox=true',
       '-c', 'require_confirmation=false',

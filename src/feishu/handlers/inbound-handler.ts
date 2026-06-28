@@ -283,7 +283,37 @@ export async function handleDirectMessage(
   }
   if (command === '/new') {
     const runtime = ctx.getDefaultRuntime();
-    await ctx.handleCreateSessionCommand(sender, inbound, runtime);
+    // 私聊：自动绑定当前对话（不弹卡片、不拉群）
+    try {
+      await ctx.ensureRuntimeAvailable(runtime);
+      const store = ctx.getStore();
+      const options: Parameters<typeof ctx.createBoundSession>[2] = {
+        cwd: '/opt',
+        bindingMode: 'code',
+        existingChatId: inbound.address.chatId,
+        skipReadyMessage: true,
+      };
+      if (runtime === 'claude') {
+        options.claudePermissionMode = 'bypassPermissions';
+      }
+      if (runtime === 'mimo') {
+        options.model = store.getSetting('compact_model') || 'MiMo-OpenAI';
+      }
+      await ctx.createBoundSession(runtime, sender, options);
+      console.log(`[feishu-adapter] /new: auto-bound p2p chat ${inbound.address.chatId} runtime=${runtime}`);
+      await ctx.sendAsPost(
+        inbound.address,
+        `✅ 已新建 ${runtime} 会话｜工作区 /opt｜直接对话即可`,
+        inbound.messageId,
+      );
+    } catch (error) {
+      console.error('[feishu-adapter] /new auto-bind failed:', error);
+      await ctx.sendAsPost(
+        inbound.address,
+        `创建会话失败：${error instanceof Error ? error.message : String(error)}`,
+        inbound.messageId,
+      );
+    }
     return;
   }
   if (command === '/resume:claude') {

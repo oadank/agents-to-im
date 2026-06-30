@@ -21,8 +21,9 @@ import { setupLogger } from './config/logger.js';
 import { startDashboard, stopDashboard } from './infra/dashboard.js';
 
 const RUNTIME_DIR = path.join(CTI_HOME, 'runtime');
-const STATUS_FILE = path.join(RUNTIME_DIR, 'status.json');
-const PID_FILE = path.join(RUNTIME_DIR, 'bridge.pid');
+const BOT_NAME = process.env.CTI_BOT || '';
+const STATUS_FILE = path.join(RUNTIME_DIR, BOT_NAME ? 'status-' + BOT_NAME + '.json' : 'status.json');
+const PID_FILE = path.join(RUNTIME_DIR, BOT_NAME ? 'bridge-' + BOT_NAME + '.pid' : 'bridge.pid');
 
 interface StatusInfo {
   running: boolean;

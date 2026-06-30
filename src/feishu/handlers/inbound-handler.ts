@@ -301,8 +301,7 @@ export async function handleDirectMessage(
       }
       const { binding } = await ctx.createBoundSession(runtime, sender, options);
       console.log(`[feishu-adapter] /new: auto-bound p2p chat ${inbound.address.chatId} runtime=${runtime}`);
-      // 发简洁反馈，让用户知道 /new 成功了
-      const feedback = `✅ 新会话已创建并绑定\n- Agent：**${runtime}**\n- 工作区：\`${binding.workingDirectory}\`\n- 模式：**${binding.mode}**\n直接开始对话即可。`;
+      const feedback = `✅ 已新建 ${runtime} 会话｜工作区 \`${binding.workingDirectory}\`｜直接对话即可`;
       await ctx.sendAsPost(inbound.address, feedback, inbound.messageId);
     } catch (error) {
       console.error('[feishu-adapter] /new auto-bind failed:', error);

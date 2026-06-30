@@ -2104,8 +2104,21 @@ async function handleMessage(
     if (previewState && previewFinalDelivery === 'replace_preview') {
       const finalResponseText = result.responseText || remainingSegments.join('\n\n').trim();
       if (finalResponseText) {
+        // Prepend thinking/reasoning text to the final response
+        const thinking = previewState.lastThinkingText;
+        let combinedText = finalResponseText;
+        if (thinking) {
+          const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
+          const thinkingBlock = `> 💭 **思考中…**
+${windowThinking.split("\n").map((l) => `> ${l}`).join("\n")}`;
+          combinedText = `${thinkingBlock}
+
+---
+
+${finalResponseText}`;
+        }
         // Write final text to the existing streaming card (no new message)
-        const previewResult = await adapter.sendPreview?.(msg.address, finalResponseText, previewState.draftId);
+        const previewResult = await adapter.sendPreview?.(msg.address, combinedText, previewState.draftId);
         // Close streaming_mode on the card
         adapter.endPreview?.(msg.address, previewState.draftId);
         previewClosed = true;

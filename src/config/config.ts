@@ -124,6 +124,46 @@ function loadCompactConfig(env: Map<string, string>): CompactConfig {
 }
 
 function parseBotConfigs(env: Map<string, string>): BotConfig[] {
+  // 单 bot 模式：CTI_BOT 环境变量优先（用于分进程部署）
+  const singleBot = process.env.CTI_BOT;
+  if (singleBot) {
+    const name = singleBot.trim().toLowerCase();
+    const prefix = `CTI_BOT_${name.toUpperCase()}_`;
+    const appId = env.get(`${prefix}APP_ID`);
+    const appSecret = env.get(`${prefix}APP_SECRET`);
+    if (!appId || !appSecret) {
+      console.warn(`[config] Single bot '${name}' missing APP_ID or APP_SECRET`);
+      return [];
+    }
+
+    const runtimeStr = env.get(`${prefix}RUNTIME`) || 'claude';
+    const runtime: BotConfig['runtime'] =
+      runtimeStr === 'codex' ? 'codex'
+        : runtimeStr === 'openhuman' ? 'openhuman'
+          : runtimeStr === 'zcode' ? 'zcode'
+            : runtimeStr === 'mimo' ? 'mimo'
+              : runtimeStr === 'gemini' ? 'gemini'
+                : 'claude';
+
+    console.log(`[config] Single bot mode: ${name}(${runtime})`);
+    return [{
+      name,
+      appId,
+      appSecret,
+      runtime,
+      agentName: env.get(`${prefix}AGENT_NAME`) || `feishu-${name}`,
+      modelGroup: env.get(`${prefix}MODEL_GROUP`) || undefined,
+      modelProvider: env.get(`${prefix}MODEL_PROVIDER`) || undefined,
+      domain: env.get(`${prefix}DOMAIN`) === 'lark' ? 'lark' : undefined,
+      allowedUsers: splitCsv(env.get(`${prefix}ALLOWED_USERS`) || env.get('CTI_FEISHU_ALLOWED_USERS')),
+      showToolCallCards: parseBoolean(env.get(`${prefix}SHOW_TOOL_CALL_CARDS`)) ?? false,
+      showAgentDivider: parseBoolean(env.get(`${prefix}SHOW_AGENT_DIVIDER`)) ?? true,
+      oauthRedirectUri: env.get(`${prefix}OAUTH_REDIRECT_URI`) || undefined,
+      enableUserMode: parseBoolean(env.get(`${prefix}ENABLE_USER_MODE`)) ?? false,
+    }];
+  }
+
+  // 多 bot 模式（原有逻辑，兼容单进程部署）
   const botsStr = env.get('CTI_BOTS');
   if (!botsStr) return [];
 

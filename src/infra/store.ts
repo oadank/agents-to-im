@@ -39,7 +39,8 @@ import type {
   TitleStatus,
 } from '../runtime/types.js';
 
-const DATA_DIR = path.join(CTI_HOME, 'data');
+const BOT_NAME = process.env.CTI_BOT || '';
+const DATA_DIR = path.join(CTI_HOME, 'data', BOT_NAME || '.');
 const MESSAGES_DIR = path.join(DATA_DIR, 'messages');
 
 // ── Helpers ──

@@ -67,13 +67,12 @@ async function callCompactApi(
   if (!apiKey) return { error: 'ANTHROPIC_API_KEY 未设置' };
 
   try {
-    const url = `${baseUrl.replace(/\/$/, '')}/v1/messages`;
+    const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model,
@@ -89,19 +88,16 @@ async function callCompactApi(
     }
 
     const data = await response.json() as any;
-    // 尝试从 text 块提取摘要，如果没有 text 块则从 thinking 块提取
-    // MiMo-Anthropic 等模型可能只返回 thinking 块
-    const contentBlocks = data?.content || [];
-    const textBlock = contentBlocks.find?.((b: any) => b.type === 'text');
-    if (textBlock?.text) {
-      return { text: textBlock.text };
+    // OpenAI /v1/chat/completions 格式
+    const choice = data?.choices?.[0];
+    if (choice?.message?.content) {
+      return { text: choice.message.content };
     }
-    // fallback: 尝试 thinking 块的 thinking 字段
-    const thinkingBlock = contentBlocks.find?.((b: any) => b.type === 'thinking');
-    if (thinkingBlock?.thinking) {
-      return { text: thinkingBlock.thinking };
+    // fallback: 尝试 reasoning_content 字段（某些模型如 deepseek）
+    if (choice?.message?.reasoning_content) {
+      return { text: choice.message.reasoning_content };
     }
-    return { error: 'API 返回空摘要，无 text 或 thinking 块' };
+    return { error: 'API 返回空摘要' };
   } catch (err: any) {
     return { error: `请求失败: ${err.message}` };
   }

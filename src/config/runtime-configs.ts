@@ -78,12 +78,12 @@ function readConfigEnv(): Record<string, string> {
 
 /**
  * 读取 Gemini 运行时配置：实时读 config.env
- * - CTI_BOT_GEMINI_DISPLAY_MODEL 优先（真实底层模型，用于显示）
- * - CTI_BOT_GEMINI_MODEL_GROUP 作为 fallback（LiteLLM 虚拟名）
+ * 直接显示真实配置（MODEL_GROUP + MODEL_PROVIDER），
+ * 不再使用 DISPLAY_MODEL 写死字符串，和 Claude 一样实时反映配置文件。
  */
 function readGeminiConfig(): { model: string; provider: string } {
   const env = readConfigEnv();
-  const model = env.CTI_BOT_GEMINI_DISPLAY_MODEL || env.CTI_BOT_GEMINI_MODEL_GROUP || 'mimo-v2.5';
+  const model = env.CTI_BOT_GEMINI_MODEL_GROUP || 'gemini-model';
   const provider = env.CTI_BOT_GEMINI_MODEL_PROVIDER || 'LiteLLM';
   return { model, provider };
 }

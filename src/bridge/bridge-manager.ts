@@ -77,7 +77,7 @@ interface StreamConfig {
 
 /** Default stream config per channel type. */
 const STREAM_DEFAULTS: Record<string, StreamConfig> = {
-  feishu: { intervalMs: 160, minDeltaChars: 8, maxChars: 99999, primeDelayMs: 300 },
+  feishu: { intervalMs: 60, minDeltaChars: 1, maxChars: 99999, primeDelayMs: 0 },
 };
 
 function getStreamConfig(channelType = 'feishu'): StreamConfig {
@@ -546,25 +546,51 @@ function flushPreview(
   const text = state.pendingText.length > config.maxChars
     ? state.pendingText.slice(0, config.maxChars) + '...'
     : state.pendingText;
-  if (!text.trim()) return;
+  const thinking = state.lastThinkingText;
+  const tools = state.toolHistory;
+  // 三段都空就不发（思考/工具/正文都没有）
+  if (!text.trim() && !thinking && tools.length === 0) return;
 
   // DO NOT reset placeholderPrimed here — once the card is primed,
   // it stays primed for the entire streaming session. Resetting it
   // causes onPartialText / handleActivityEvent to call primePreview()
   // again on the next tick, which can create duplicate cards.
+  // 只有正文有变化时才更新 lastSentAt（thinking/tool 变化不触发 throttle）
+  const textChanged = text.trim() && text !== state.lastSentText;
   state.lastSentText = text;
-  state.lastSentAt = Date.now();
+  if (textChanged) {
+    state.lastSentAt = Date.now();
+  }
   const draftId = state.draftId;
-  // Build combined text: thinking + answer in single element
-  const thinking = state.lastThinkingText;
+  const plan = state.pendingPlanText;
+  // Build combined text: plan(永久) | tool(临时，多行) | thinking | answer 四段
+  const buildCombined = (includeTool: boolean): string => {
+    const parts: string[] = [];
+    if (plan) parts.push(`\`\`\`\n📋 ${plan}\n\`\`\``);
+    if (includeTool && tools.length > 0) {
+      parts.push(`\`\`\`\n🔧 执行中\n${tools.join('\n')}\n\`\`\``);
+    }
+    if (thinking) {
+      const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
+      // thinking 改回引用块（去掉 code block 行号），空行用 <br> 避免断裂
+      const safeThinking = windowThinking
+        .replace(/\n\n+/g, '\n<br>\n')
+        .replace(/\n/g, '\n> ');
+      parts.push(`> 💭 **思考中…**\n> ${safeThinking}`);
+    }
+    const body = text.trim();
+    if (body) parts.push(body);
+    if (parts.length === 0) parts.push('⏳ 正在处理…');
+    // 最后一个块（正文或占位）前面加分隔线，与前面代码块视觉区分
+    if (parts.length > 1) {
+      const lastIdx = parts.length - 1;
+      parts[lastIdx] = `\n---\n\n${parts[lastIdx]}`;
+    }
+    return parts.join('\n\n');
+  };
   const send = async (): Promise<void> => {
     try {
-      let combined = text;
-      if (thinking) {
-        const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
-        const thinkingBlock = `> 💭 **思考中…**\n${windowThinking.split('\n').map((l: string) => `> ${l}`).join('\n')}`;
-        combined = `${thinkingBlock}\n\n---\n\n${text}`;
-      }
+      const combined = buildCombined(true);
       const result = await adapter.sendPreview!(state.address, combined, draftId);
       if (state.draftId !== draftId) return;
       if (result === 'degrade') state.degraded = true;
@@ -587,6 +613,7 @@ function flushPreview(
 function primePreview(
   adapter: BaseChannelAdapter,
   state: StreamingPreviewState,
+  flushConfig?: StreamConfig,
 ): void {
   if (state.degraded || state.placeholderPrimed || !adapter.primePreview) return;
 
@@ -597,10 +624,11 @@ function primePreview(
       if (state.draftId !== draftId) return;
       if (result === 'sent') {
         state.placeholderPrimed = true;
-        // Apply buffered thinking content that arrived before card was created
-        if (state.pendingThinkingText && adapter.sendPreview) {
-          await adapter.sendPreview(state.address, state.pendingThinkingText, draftId).catch(() => {});
-          state.pendingThinkingText = '';
+        // 卡片创建成功后，刷新所有已缓冲的内容（tool + thinking + text）
+        if (flushConfig && adapter.sendPreview) {
+          // 设置 lastSentAt = 0 让 flushPreview 认为需要发送
+          state.lastSentAt = 0;
+          flushPreview(adapter, state, flushConfig);
         }
       }
       if (result === 'degrade') state.degraded = true;
@@ -677,6 +705,8 @@ function resetPreviewState(state: StreamingPreviewState): void {
   state.inFlightSend = null;
   state.lastThinkingText = '';
   state.pendingThinkingText = '';
+  state.toolHistory = [];
+  state.pendingPlanText = '';
 }
 
 interface LightweightActivityState {
@@ -1362,12 +1392,20 @@ async function handleMessage(
       streamStartedAt: Date.now(),
       lastThinkingText: '',
       pendingThinkingText: '',
+      toolHistory: [],
+      pendingPlanText: '',
     };
     state.activePreviewByAddress.set(addressKey, previewState);
   }
 
   const streamCfg = previewState ? getStreamConfig(adapter.channelType) : null;
   const activityDelayMs = getStreamConfig(adapter.channelType).primeDelayMs;
+
+  // 一发消息就立即创建 "⏳ 正在处理…" 占位卡片，避免用户等待首字焦虑
+  if (previewState && adapter.primePreview && adapter.sendPreview && streamCfg) {
+    previewState.pendingText = '⏳ 正在处理…';
+    primePreview(adapter, previewState, streamCfg);
+  }
   const previewFinalDelivery = caps?.finalDelivery || 'separate_message';
   const previewFinalizesPerSegment = previewFinalDelivery === 'segment_replace_preview';
 
@@ -1745,24 +1783,57 @@ async function handleMessage(
     if (!adapter.upsertActivityEvent) return;
     if (event.kind === 'context_usage') return;
     const normalized = normalizeActivityEvent(event);
-    const shouldProjectActivity = adapter.shouldProjectActivityEvent?.(normalized) ?? true;
-    if (!shouldProjectActivity) return;
-    // reasoning_activity — CardKit preview
-    // V5 FIX: Do NOT call sendPreview here — it races with flushPreview and causes duplicate content.
-    // Only store pendingThinkingText. The card will be updated by onPartialText→flushPreview.
+    // reasoning_activity — 三段式预览卡片（不受 shouldProjectActivity 过滤，因为走预览卡片不走独立 activity 卡片）
     if (normalized.kind === 'reasoning_activity') {
       await markProgressCardVisible();
-      if (previewState) {
+      if (previewState && streamCfg) {
         const thinkingText = normalized.text || '';
         if (thinkingText && thinkingText !== previewState.lastThinkingText) {
           previewState.lastThinkingText = thinkingText;
-          // Store for flushPreview to combine with answer text
-          const windowThinking = thinkingText.length > 1500 ? thinkingText.slice(-1500) : thinkingText;
-          previewState.pendingThinkingText = `> 💭 **思考中…**\n${windowThinking.split('\n').map((l: string) => `> ${l}`).join('\n')}`;
+        }
+        // 首次到达思考事件且卡片未创建 → 立即 prime
+        if (!previewState.placeholderPrimed && adapter.primePreview) {
+          primePreview(adapter, previewState, streamCfg);
+        }
+        // 即使正文没到也刷新预览（显示思考区）
+        if (previewState.placeholderPrimed && adapter.sendPreview) {
+          flushPreview(adapter, previewState, streamCfg);
         }
       }
-      return; // ALWAYS return — never create activity card for reasoning
+      return;
     }
+    // tool_activity — 三段式预览卡片：累加显示工具列表
+    if (normalized.kind === 'tool_activity' && previewState && streamCfg) {
+      const toolName = (normalized as any).toolName || 'tool';
+      const status = (normalized as any).status;
+      const inputPreview = (normalized as any).inputPreview || '';
+      if (status === 'running') {
+        // 工具在跑：添加到工具历史（每条一行）
+        const display = inputPreview
+          ? `${toolName} — ${String(inputPreview).slice(0, 120)}`
+          : toolName;
+        previewState.toolHistory.push(display);
+        // 首次触发就创建卡片
+        if (!previewState.placeholderPrimed && adapter.primePreview) {
+          primePreview(adapter, previewState, streamCfg);
+        }
+        if (previewState.placeholderPrimed && adapter.sendPreview) {
+          flushPreview(adapter, previewState, streamCfg);
+        }
+      } else if (status === 'completed' || status === 'error') {
+        // 工具完成：从历史中移除该工具
+        const idx = previewState.toolHistory.findIndex(line => line.startsWith(toolName));
+        if (idx >= 0) previewState.toolHistory.splice(idx, 1);
+        if (previewState.placeholderPrimed && adapter.sendPreview) {
+          flushPreview(adapter, previewState, streamCfg);
+        }
+      }
+      // 三段卡片模式下跳过独立 activity 卡片
+      if (previewState.placeholderPrimed) return;
+    }
+    // shouldProjectActivity 过滤只用于独立 activity 卡片，不影响上面的预览卡片逻辑
+    const shouldProjectActivity = adapter.shouldProjectActivityEvent?.(normalized) ?? true;
+    if (!shouldProjectActivity) return;
     // When streaming card is active, skip ALL other activity card creation
     if (previewState?.placeholderPrimed) return;
     if (normalized.kind === 'lightweight_activity') {
@@ -1803,7 +1874,7 @@ async function handleMessage(
     // replace_preview 模式：首次收到文本时立即创建卡片（不等 onResponseSegment）
     if (!ps.placeholderPrimed && ps.pendingText.trim()) {
       if (adapter.primePreview) {
-        primePreview(adapter, ps);
+        primePreview(adapter, ps, cfg);
       }
     }
 
@@ -1933,7 +2004,22 @@ async function handleMessage(
       return true;
     };
 
-    const result = await engine.processMessage(binding, promptText, async (perm) => {
+    // 注册全局 plan preview 钩子（conversation-engine emitPlanPreview 会读）
+    const PLAN_HOOK_KEY = '__ctiOnPlanPreview';
+    (globalThis as any)[PLAN_HOOK_KEY] = (planText: string) => {
+      if (!previewState || !planAttemptIsCurrent()) return;
+      previewState.pendingPlanText = planText;
+      if (!previewState.placeholderPrimed && adapter.primePreview) {
+        primePreview(adapter, previewState);
+      }
+      if (previewState.placeholderPrimed && adapter.sendPreview && streamCfg) {
+        flushPreview(adapter, previewState, streamCfg);
+      }
+    };
+
+    let result: Awaited<ReturnType<typeof engine.processMessage>>;
+    try {
+    result = await engine.processMessage(binding, promptText, async (perm) => {
       if (!planAttemptIsCurrent()) {
         getBridgeContext().permissions.resolvePendingPermission?.(perm.permissionRequestId, {
           behavior: 'deny',
@@ -2084,6 +2170,29 @@ async function handleMessage(
       }
       await adapter.resolveStructuredInputRequest?.(requestId);
     }, onResponseSegment, handleActivityEvent);
+    } catch (processError: any) {
+      // API 400 等错误：推送到飞书，避免用户傻等
+      const errMsg = processError?.message || String(processError);
+      console.error('[bridge-manager] processMessage error:', errMsg);
+      try {
+        if (adapter.sendPreview) {
+          await adapter.sendPreview(msg.address, `❌ **API 报错**\n\n\`\`\`\n${errMsg.slice(0, 2000)}\n\`\`\``, previewState?.draftId || 0);
+          if (previewState) {
+            adapter.endPreview?.(msg.address, previewState.draftId);
+          }
+        }
+        if (adapter.send) {
+          await adapter.send({
+            address: msg.address,
+            text: `❌ **API 报错**\n\n\`\`\`\n${errMsg.slice(0, 2000)}\n\`\`\``,
+            parseMode: 'Markdown',
+          });
+        }
+      } catch { /* 尽力发送，失败也不管 */ }
+      return;
+    } finally {
+      delete (globalThis as any)[PLAN_HOOK_KEY];
+    }
     const stopRequestedByUser =
       taskAbort.signal.aborted && hasPendingStopFeedback(binding.codepilotSessionId);
 
@@ -2104,18 +2213,19 @@ async function handleMessage(
     if (previewState && previewFinalDelivery === 'replace_preview') {
       const finalResponseText = result.responseText || remainingSegments.join('\n\n').trim();
       if (finalResponseText) {
-        // Prepend thinking/reasoning text to the final response
+        // 最终消息：plan(永久) + thinking + 正文（无 tool 区）
         const thinking = previewState.lastThinkingText;
-        let combinedText = finalResponseText;
+        const plan = previewState.pendingPlanText;
+        const parts: string[] = [];
+        if (plan) parts.push(`\`\`\`\n📋 ${plan}\n\`\`\``);
         if (thinking) {
           const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
-          const thinkingBlock = `> 💭 **思考中…**
-${windowThinking.split("\n").map((l) => `> ${l}`).join("\n")}`;
-          combinedText = `${thinkingBlock}
-
----
-
-${finalResponseText}`;
+          parts.push(`\`\`\`\n💭 思考中…\n${windowThinking}\n\`\`\``);
+        }
+        parts.push(finalResponseText);
+        let combinedText = parts[0];
+        for (let i = 1; i < parts.length; i++) {
+          combinedText += `\n\n---\n\n${parts[i]}`;
         }
         // Write final text to the existing streaming card (no new message)
         const previewResult = await adapter.sendPreview?.(msg.address, combinedText, previewState.draftId);

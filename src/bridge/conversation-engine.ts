@@ -52,6 +52,8 @@ export type OnServerRequestResolved = (requestId: string) => Promise<void>;
  */
 export type OnPartialText = (fullText: string) => void;
 
+export type OnPlanPreview = (planText: string) => void;
+
 export type OnResponseSegment = (segmentText: string) => Promise<void> | void;
 
 export type OnActivityEvent = (event: ActivityEvent) => Promise<void> | void;
@@ -448,10 +450,10 @@ async function consumeStream(
   };
 
   const emitPlanPreview = () => {
-    if (!onPartialText) return;
+    const onPlan = (globalThis as any).__ctiOnPlanPreview as OnPlanPreview | undefined;
     const rendered = renderPlanMarkdown(planExplanation, planSteps, planBody);
-    if (rendered) {
-      try { onPartialText(rendered); } catch { /* non-critical */ }
+    if (rendered && onPlan) {
+      try { onPlan(rendered); } catch { /* non-critical */ }
     }
   };
 

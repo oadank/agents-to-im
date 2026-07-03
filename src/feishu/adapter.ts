@@ -972,6 +972,10 @@ export class FeishuAdapter extends BaseChannelAdapter {
         ? { claudePermissionMode: options?.claudePermissionMode || 'default' }
         : {}),
     });
+    // claude 用 sdkSessionId 做 --resume，/new 必须清空旧会话，否则会接回旧 Claude session
+    if (runtime === 'claude') {
+      store.updateChannelBinding(initialBinding.id, { sdkSessionId: '' });
+    }
     if (options?.bindingMode && initialBinding.mode !== options.bindingMode) {
       store.updateChannelBinding(initialBinding.id, { mode: options.bindingMode });
     }

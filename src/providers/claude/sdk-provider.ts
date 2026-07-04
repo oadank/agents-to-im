@@ -143,7 +143,7 @@ const SUPPORTED_IMAGE_TYPES = new Set<string>([
  * iterable that yields a single SDKUserMessage with multi-modal content
  * (image blocks + text). Otherwise returns the plain text string.
  */
-const CHINESE_THINKING_INSTRUCTION = '[系统指令-语言] 你必须100%使用中文进行内部思考（thinking/reasoning）和回复。禁止用英文思考。例如用"我需要分析这个问题"而非"I need to analyze this problem"。\n\n';
+const CHINESE_THINKING_INSTRUCTION = '1.先想再干 — 不确定就问，不要假设\n2.最简代码 — 能 50 行解决不要 200 行，不加未要求的功能\n3.手术刀式改动 — 只改必须改的，不碰相邻代码\n4.目标驱动 — 定义成功标准，循环验证\n\n';
 
 function buildPrompt(
   text: string,
@@ -615,7 +615,7 @@ export class SDKLLMProvider implements LLMProvider {
               systemPrompt: {
                 type: 'preset',
                 preset: 'claude_code',
-                append: '[语言强制规则] 你的所有输出必须使用中文。这包括：1) 内部思考过程（thinking/reasoning/extended thinking）必须100%用中文书写，禁止使用英文思考；2) 回复内容必须使用中文；3) 代码注释使用中文。违反此规则是严重错误。请用中文思考：例如"我需要分析这个问题"而不是"I need to analyze this problem"。',
+                append: '1.先想再干 — 不确定就问，不要假设\n2.最简代码 — 能 50 行解决不要 200 行，不加未要求的功能\n3.手术刀式改动 — 只改必须改的，不碰相邻代码\n4.目标驱动 — 定义成功标准，循环验证',
               },
               // Keep local CLI-managed config (for MCPs in `~/.claude.json`),
               // user auth/billing settings, and project overrides aligned with

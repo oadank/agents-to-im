@@ -1,6 +1,7 @@
 import type { InboundMessage } from '../../bridge/types.js';
 import { loadConfig } from '../../config/config.js';
 import { compactConversation, applyCompactResult } from '../../bridge/compact.js';
+import { interruptActiveTask } from '../../bridge/bridge-manager.js';
 import type {
   AdapterContext,
   FeishuMessageEventData,
@@ -223,6 +224,9 @@ export async function handleIncomingEvent(
       }
       if (fallbackImage?.attachments?.length) {
         inbound.attachments = fallbackImage.attachments;
+        if (fallbackImage.key) {
+          ctx.deletePendingInboundImage(fallbackImage.key);
+        }
       }
     }
 
@@ -388,7 +392,12 @@ export async function handleDirectMessage(
       await ctx.sendAsPost(inbound.address, '当前没有活跃会话。', inbound.messageId);
       return;
     }
-    ctx.enqueue(inbound);
+    const interrupted = interruptActiveTask(binding.codepilotSessionId);
+    if (interrupted) {
+      await ctx.sendAsPost(inbound.address, '已停止当前任务。', inbound.messageId);
+    } else {
+      await ctx.sendAsPost(inbound.address, '当前没有正在运行的任务。', inbound.messageId);
+    }
     return;
   }
 

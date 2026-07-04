@@ -53,6 +53,10 @@ export class InboundImageService {
     this.pendingInboundImages.set(entry.key, entry);
   }
 
+  deletePendingInboundImage(key: string): void {
+    this.pendingInboundImages.delete(key);
+  }
+
   /**
    * Fallback: 查找同一 chat + sender 下最近一条有效 pending image。
    * 用于"先发图片再发文字（非回复）"场景，parent_id/root_id 无法匹配时。

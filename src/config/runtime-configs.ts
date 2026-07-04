@@ -89,30 +89,15 @@ function readGeminiConfig(): { model: string; provider: string } {
 }
 
 /**
- * 读取 MiMo 运行时配置：实时读 config.env 和 mimocode.json
- * - CTI_BOT_MIMO_DISPLAY_MODEL 优先（真实底层模型，用于显示）
- * - mimocode.json 的 model 字段作为 fallback（内部 ID）
+ * 读取 MiMo 运行时配置：实时读 config.env
+ * 直接显示真实配置（MODEL_GROUP + MODEL_PROVIDER），
+ * 和 Claude/Gemini 一样，单一来源。
  */
 function readMimoConfig(): { model: string; provider: string } {
   const env = readConfigEnv();
-  if (env.CTI_BOT_MIMO_DISPLAY_MODEL) {
-    return { model: env.CTI_BOT_MIMO_DISPLAY_MODEL, provider: env.CTI_BOT_MIMO_MODEL_PROVIDER || 'LiteLLM' };
-  }
-  const defaultModel = 'mimo-v2.5';
-  try {
-    const configPath = '/opt/.mimocode/config/mimocode.json';
-    if (!fs.existsSync(configPath)) {
-      return { model: defaultModel, provider: 'LiteLLM' };
-    }
-    const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    const rawModel = data.model || defaultModel;
-    // mimocode.json 的 model 是 "provider/model" 格式（如 mimo-litellm/MiMogo），取 / 后部分作为显示
-    const model = rawModel.includes('/') ? rawModel.split('/').pop()! : rawModel;
-    return { model, provider: 'LiteLLM' };
-  } catch (e) {
-    console.error('[runtime-configs] 读取 mimocode.json 失败，使用默认值:', e);
-    return { model: defaultModel, provider: 'LiteLLM' };
-  }
+  const model = env.CTI_BOT_MIMO_MODEL_GROUP || 'MiMogo';
+  const provider = env.CTI_BOT_MIMO_MODEL_PROVIDER || 'LiteLLM';
+  return { model, provider };
 }
 
 /**

@@ -36,7 +36,17 @@ sending messages, USE the appropriate tool. Do not just say "let me read..." and
 After tool execution, you will receive the result, then you can continue or give a final answer.
 
 When asked about your identity, say you are Gemini, a Feishu AI assistant powered by mimo-v2.5
-through LiteLLM, running on debian13.`;
+through LiteLLM, running on debian13.
+
+---
+
+## 核心行为准则（每次执行前检查）
+
+1.先想再干 — 不确定就问，不要假设
+2.最简代码 — 能 50 行解决不要 200 行，不加未要求的功能
+3.手术刀式改动 — 只改必须改的，不碰相邻代码
+4.目标驱动 — 定义成功标准，循环验证
+`;
 
 /** OpenAI tool_call delta 累积器 */
 interface ToolCallAccumulator {

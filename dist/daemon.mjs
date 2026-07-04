@@ -103880,23 +103880,9 @@ function readGeminiConfig() {
 }
 function readMimoConfig() {
   const env = readConfigEnv();
-  if (env.CTI_BOT_MIMO_DISPLAY_MODEL) {
-    return { model: env.CTI_BOT_MIMO_DISPLAY_MODEL, provider: env.CTI_BOT_MIMO_MODEL_PROVIDER || "LiteLLM" };
-  }
-  const defaultModel = "mimo-v2.5";
-  try {
-    const configPath = "/opt/.mimocode/config/mimocode.json";
-    if (!fs2.existsSync(configPath)) {
-      return { model: defaultModel, provider: "LiteLLM" };
-    }
-    const data = JSON.parse(fs2.readFileSync(configPath, "utf-8"));
-    const rawModel = data.model || defaultModel;
-    const model = rawModel.includes("/") ? rawModel.split("/").pop() : rawModel;
-    return { model, provider: "LiteLLM" };
-  } catch (e) {
-    console.error("[runtime-configs] \u8BFB\u53D6 mimocode.json \u5931\u8D25\uFF0C\u4F7F\u7528\u9ED8\u8BA4\u503C:", e);
-    return { model: defaultModel, provider: "LiteLLM" };
-  }
+  const model = env.CTI_BOT_MIMO_MODEL_GROUP || "MiMogo";
+  const provider = env.CTI_BOT_MIMO_MODEL_PROVIDER || "LiteLLM";
+  return { model, provider };
 }
 function getRuntimeConfig(runtime) {
   if (runtime === "claude") {
@@ -104213,11 +104199,11 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
     }
   };
   const emitPlanPreview = () => {
-    if (!onPartialText) return;
+    const onPlan = globalThis.__ctiOnPlanPreview;
     const rendered = renderPlanMarkdown(planExplanation, planSteps, planBody);
-    if (rendered) {
+    if (rendered && onPlan) {
       try {
-        onPartialText(rendered);
+        onPlan(rendered);
       } catch {
       }
     }
@@ -105457,7 +105443,7 @@ function generateDraftId() {
   return Math.floor(Math.random() * 2147483646) + 1;
 }
 var STREAM_DEFAULTS = {
-  feishu: { intervalMs: 160, minDeltaChars: 8, maxChars: 99999, primeDelayMs: 300 }
+  feishu: { intervalMs: 60, minDeltaChars: 1, maxChars: 99999, primeDelayMs: 0 }
 };
 function getStreamConfig(channelType = "feishu") {
   const { store } = getBridgeContext();
@@ -105796,24 +105782,48 @@ function isNumericPermissionShortcut(channelType, rawText, chatId, channelInstan
 function flushPreview(adapter, state, config) {
   if (state.degraded || !adapter.sendPreview) return;
   const text = state.pendingText.length > config.maxChars ? state.pendingText.slice(0, config.maxChars) + "..." : state.pendingText;
-  if (!text.trim()) return;
-  state.lastSentText = text;
-  state.lastSentAt = Date.now();
-  const draftId = state.draftId;
   const thinking = state.lastThinkingText;
-  const send = async () => {
-    try {
-      let combined = text;
-      if (thinking) {
-        const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
-        const thinkingBlock = `> \u{1F4AD} **\u601D\u8003\u4E2D\u2026**
-${windowThinking.split("\n").map((l) => `> ${l}`).join("\n")}`;
-        combined = `${thinkingBlock}
-
+  const tools = state.toolHistory;
+  if (!text.trim() && !thinking && tools.length === 0) return;
+  const textChanged = text.trim() && text !== state.lastSentText;
+  state.lastSentText = text;
+  if (textChanged) {
+    state.lastSentAt = Date.now();
+  }
+  const draftId = state.draftId;
+  const plan = state.pendingPlanText;
+  const buildCombined = (includeTool) => {
+    const parts2 = [];
+    if (plan) parts2.push(`\`\`\`
+\u{1F4CB} ${plan}
+\`\`\``);
+    if (includeTool && tools.length > 0) {
+      parts2.push(`\`\`\`
+\u{1F527} \u6267\u884C\u4E2D
+${tools.join("\n")}
+\`\`\``);
+    }
+    if (thinking) {
+      const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
+      const safeThinking = windowThinking.replace(/\n\n+/g, "\n<br>\n").replace(/\n/g, "\n> ");
+      parts2.push(`> \u{1F4AD} **\u601D\u8003\u4E2D\u2026**
+> ${safeThinking}`);
+    }
+    const body = text.trim();
+    if (body) parts2.push(body);
+    if (parts2.length === 0) parts2.push("\u23F3 \u6B63\u5728\u5904\u7406\u2026");
+    if (parts2.length > 1) {
+      const lastIdx = parts2.length - 1;
+      parts2[lastIdx] = `
 ---
 
-${text}`;
-      }
+${parts2[lastIdx]}`;
+    }
+    return parts2.join("\n\n");
+  };
+  const send = async () => {
+    try {
+      const combined = buildCombined(true);
       const result = await adapter.sendPreview(state.address, combined, draftId);
       if (state.draftId !== draftId) return;
       if (result === "degrade") state.degraded = true;
@@ -105828,7 +105838,7 @@ ${text}`;
   });
   state.inFlightSend = next;
 }
-function primePreview(adapter, state) {
+function primePreview(adapter, state, flushConfig) {
   if (state.degraded || state.placeholderPrimed || !adapter.primePreview) return;
   const draftId = state.draftId;
   const send = async () => {
@@ -105837,10 +105847,9 @@ function primePreview(adapter, state) {
       if (state.draftId !== draftId) return;
       if (result === "sent") {
         state.placeholderPrimed = true;
-        if (state.pendingThinkingText && adapter.sendPreview) {
-          await adapter.sendPreview(state.address, state.pendingThinkingText, draftId).catch(() => {
-          });
-          state.pendingThinkingText = "";
+        if (flushConfig && adapter.sendPreview) {
+          state.lastSentAt = 0;
+          flushPreview(adapter, state, flushConfig);
         }
       }
       if (result === "degrade") state.degraded = true;
@@ -105890,6 +105899,8 @@ function resetPreviewState(state) {
   state.inFlightSend = null;
   state.lastThinkingText = "";
   state.pendingThinkingText = "";
+  state.toolHistory = [];
+  state.pendingPlanText = "";
 }
 function clearLightweightActivityTimer(state) {
   if (state.timer) {
@@ -106364,12 +106375,18 @@ async function handleMessage(adapter, msg) {
       inFlightSend: null,
       streamStartedAt: Date.now(),
       lastThinkingText: "",
-      pendingThinkingText: ""
+      pendingThinkingText: "",
+      toolHistory: [],
+      pendingPlanText: ""
     };
     state.activePreviewByAddress.set(addressKey, previewState);
   }
   const streamCfg = previewState ? getStreamConfig(adapter.channelType) : null;
   const activityDelayMs = getStreamConfig(adapter.channelType).primeDelayMs;
+  if (previewState && adapter.primePreview && adapter.sendPreview && streamCfg) {
+    previewState.pendingText = "\u23F3 \u6B63\u5728\u5904\u7406\u2026";
+    primePreview(adapter, previewState, streamCfg);
+  }
   const previewFinalDelivery = caps?.finalDelivery || "separate_message";
   const previewFinalizesPerSegment = previewFinalDelivery === "segment_replace_preview";
   const lightweightActivityState = adapter.upsertActivityEvent ? {
@@ -106688,21 +106705,46 @@ async function handleMessage(adapter, msg) {
     if (!adapter.upsertActivityEvent) return;
     if (event.kind === "context_usage") return;
     const normalized = normalizeActivityEvent(event);
-    const shouldProjectActivity = adapter.shouldProjectActivityEvent?.(normalized) ?? true;
-    if (!shouldProjectActivity) return;
     if (normalized.kind === "reasoning_activity") {
       await markProgressCardVisible();
-      if (previewState) {
+      if (previewState && streamCfg) {
         const thinkingText = normalized.text || "";
         if (thinkingText && thinkingText !== previewState.lastThinkingText) {
           previewState.lastThinkingText = thinkingText;
-          const windowThinking = thinkingText.length > 1500 ? thinkingText.slice(-1500) : thinkingText;
-          previewState.pendingThinkingText = `> \u{1F4AD} **\u601D\u8003\u4E2D\u2026**
-${windowThinking.split("\n").map((l) => `> ${l}`).join("\n")}`;
+        }
+        if (!previewState.placeholderPrimed && adapter.primePreview) {
+          primePreview(adapter, previewState, streamCfg);
+        }
+        if (previewState.placeholderPrimed && adapter.sendPreview) {
+          flushPreview(adapter, previewState, streamCfg);
         }
       }
       return;
     }
+    if (normalized.kind === "tool_activity" && previewState && streamCfg) {
+      const toolName = normalized.toolName || "tool";
+      const status = normalized.status;
+      const inputPreview = normalized.inputPreview || "";
+      if (status === "running") {
+        const display = inputPreview ? `${toolName} \u2014 ${String(inputPreview).slice(0, 120)}` : toolName;
+        previewState.toolHistory.push(display);
+        if (!previewState.placeholderPrimed && adapter.primePreview) {
+          primePreview(adapter, previewState, streamCfg);
+        }
+        if (previewState.placeholderPrimed && adapter.sendPreview) {
+          flushPreview(adapter, previewState, streamCfg);
+        }
+      } else if (status === "completed" || status === "error") {
+        const idx = previewState.toolHistory.findIndex((line) => line.startsWith(toolName));
+        if (idx >= 0) previewState.toolHistory.splice(idx, 1);
+        if (previewState.placeholderPrimed && adapter.sendPreview) {
+          flushPreview(adapter, previewState, streamCfg);
+        }
+      }
+      if (previewState.placeholderPrimed) return;
+    }
+    const shouldProjectActivity = adapter.shouldProjectActivityEvent?.(normalized) ?? true;
+    if (!shouldProjectActivity) return;
     if (previewState?.placeholderPrimed) return;
     if (normalized.kind === "lightweight_activity") {
       if (lightweightActivityState?.current && lightweightActivityState.current.id === normalized.id && lightweightActivityState.current.status === normalized.status && lightweightActivityState.current.text === normalized.text) {
@@ -106728,7 +106770,7 @@ ${windowThinking.split("\n").map((l) => `> ${l}`).join("\n")}`;
     const elapsed = Date.now() - ps.lastSentAt;
     if (!ps.placeholderPrimed && ps.pendingText.trim()) {
       if (adapter.primePreview) {
-        primePreview(adapter, ps);
+        primePreview(adapter, ps, cfg);
       }
     }
     if (delta < cfg.minDeltaChars && ps.lastSentAt > 0) {
@@ -106835,137 +106877,181 @@ ${windowThinking.split("\n").map((l) => `> ${l}`).join("\n")}`;
       });
       return true;
     };
-    const result = await processMessage(binding, promptText, async (perm) => {
-      if (!planAttemptIsCurrent()) {
-        getBridgeContext().permissions.resolvePendingPermission?.(perm.permissionRequestId, {
-          behavior: "deny",
-          message: "Interrupted by a newer PLAN follow-up",
-          interrupt: true
-        });
-        return;
+    const PLAN_HOOK_KEY = "__ctiOnPlanPreview";
+    globalThis[PLAN_HOOK_KEY] = (planText) => {
+      if (!previewState || !planAttemptIsCurrent()) return;
+      previewState.pendingPlanText = planText;
+      if (!previewState.placeholderPrimed && adapter.primePreview) {
+        primePreview(adapter, previewState);
       }
-      const workflowId = effectivePlanWorkflowMeta?.workflowId;
-      const workflow = workflowId ? store.getPlanWorkflow(workflowId) : null;
-      const isClaudePlanExit = effectivePlanWorkflowMeta?.kind === "plan_request" && workflow && !isCodexRuntime(binding.codepilotSessionId) && isClaudePlanExitPermission(perm);
-      if (isClaudePlanExit) {
-        const planText = parseClaudePlanText(perm.toolInput);
-        const planFilePath = parseClaudePlanFilePath(perm.toolInput);
-        const allowedPrompts = parseClaudeAllowedPrompts(perm.toolInput);
-        const showClearContext = true;
-        const sent = await sendClaudePlanConfirmationCard(
-          workflow.workflowId,
-          planText,
-          allowedPrompts,
-          showClearContext,
-          perm.permissionRequestId,
-          planFilePath
-        );
-        if (sent) {
+      if (previewState.placeholderPrimed && adapter.sendPreview && streamCfg) {
+        flushPreview(adapter, previewState, streamCfg);
+      }
+    };
+    let result;
+    try {
+      result = await processMessage(binding, promptText, async (perm) => {
+        if (!planAttemptIsCurrent()) {
+          getBridgeContext().permissions.resolvePendingPermission?.(perm.permissionRequestId, {
+            behavior: "deny",
+            message: "Interrupted by a newer PLAN follow-up",
+            interrupt: true
+          });
           return;
         }
-        store.updatePlanWorkflow(workflow.workflowId, {
-          status: "awaiting_confirmation",
-          approvalRequestId: perm.permissionRequestId,
-          planText,
-          planFilePath,
-          allowedPrompts,
-          resolved: false
-        });
-        return;
-      }
-      hasVisibleProgressCard = true;
-      await dismissPlaceholderPreviewIfIdle();
-      await forwardPermissionRequest(
-        adapter,
-        msg.address,
-        perm.permissionRequestId,
-        perm.toolName,
-        perm.toolInput,
-        binding.codepilotSessionId,
-        perm.suggestions,
-        msg.messageId
-      );
-    }, taskAbort.signal, hasAttachments ? msg.attachments : void 0, onPartialText, {
-      storedUserText,
-      permissionModeOverride: effectivePlanWorkflowMeta?.permissionMode,
-      collaborationModeOverride: resolveCodexCollaborationMode(binding, effectivePlanWorkflowMeta),
-      onModeChanged: async (mode) => {
-        if (!planAttemptIsCurrent()) return;
-        if (isCodexRuntime(binding.codepilotSessionId)) return;
-        if (binding.claudePermissionMode === mode) return;
-        store.updateChannelBinding(binding.id, { claudePermissionMode: mode, mode: "code" });
-        binding.claudePermissionMode = mode;
-        binding.mode = "code";
-        if (adapter.channelType === "feishu") {
-          const feishuAdapter2 = adapter;
-          await feishuAdapter2.syncChatName?.(msg.address.chatId);
-        }
-      }
-    }, async (request) => {
-      if (!planAttemptIsCurrent()) {
-        getBridgeContext().permissions.resolvePendingStructuredInput?.(request.requestId, { answers: {} });
-        return;
-      }
-      hasVisibleProgressCard = true;
-      cancelPendingLightweightActivity();
-      if (previewState) {
-        clearPrimeTimer(previewState);
-      }
-      const hasPreviewOutput = !!(previewState && (previewState.placeholderPrimed || previewState.lastSentText.trim() || previewState.pendingText.trim() || previewState.lastSentAt > 0));
-      if (!hasVisibleAssistantOutput && !hasPreviewOutput) {
-        const preface = await deliverResponse(
-          adapter,
-          msg.address,
-          buildStructuredInputPreface(request),
-          binding.codepilotSessionId,
-          msg.messageId
-        );
-        if (preface.ok) {
-          hasVisibleAssistantOutput = true;
-        }
-      }
-      if (adapter.sendStructuredInputRequest) {
-        try {
-          const sent = await adapter.sendStructuredInputRequest(msg.address, request, msg.messageId);
-          if (sent.ok && sent.messageId) {
-            try {
-              store.upsertStructuredInputRequest({
-                requestId: request.requestId,
-                channelType: adapter.channelType,
-                channelInstanceId: msg.address.channelInstanceId || adapter.profileId,
-                chatId: msg.address.chatId,
-                codepilotSessionId: binding.codepilotSessionId,
-                address: msg.address,
-                routeKey: msg.address.threadId ? `${msg.address.chatId}:thread:${msg.address.threadId}` : `${msg.address.chatId}:main`,
-                threadId: request.threadId,
-                turnId: request.turnId,
-                itemId: request.itemId,
-                questions: request.questions,
-                messageId: sent.messageId,
-                openMessageId: sent.openMessageId,
-                resolved: false
-              });
-            } catch {
-            }
+        const workflowId = effectivePlanWorkflowMeta?.workflowId;
+        const workflow = workflowId ? store.getPlanWorkflow(workflowId) : null;
+        const isClaudePlanExit = effectivePlanWorkflowMeta?.kind === "plan_request" && workflow && !isCodexRuntime(binding.codepilotSessionId) && isClaudePlanExitPermission(perm);
+        if (isClaudePlanExit) {
+          const planText = parseClaudePlanText(perm.toolInput);
+          const planFilePath = parseClaudePlanFilePath(perm.toolInput);
+          const allowedPrompts = parseClaudeAllowedPrompts(perm.toolInput);
+          const showClearContext = true;
+          const sent = await sendClaudePlanConfirmationCard(
+            workflow.workflowId,
+            planText,
+            allowedPrompts,
+            showClearContext,
+            perm.permissionRequestId,
+            planFilePath
+          );
+          if (sent) {
             return;
           }
-        } catch (error) {
-          console.error("[bridge-manager] Failed to deliver structured input card:", error);
+          store.updatePlanWorkflow(workflow.workflowId, {
+            status: "awaiting_confirmation",
+            approvalRequestId: perm.permissionRequestId,
+            planText,
+            planFilePath,
+            allowedPrompts,
+            resolved: false
+          });
+          return;
         }
-      }
-      await deliver(adapter, {
-        address: msg.address,
-        text: "\u5F53\u524D\u8FD0\u884C\u65F6\u8BF7\u6C42\u8865\u5145\u4FE1\u606F\uFF0C\u4F46\u8BE5\u6E20\u9053\u5C1A\u672A\u5B9E\u73B0\u7ED3\u6784\u5316\u95EE\u7B54\u5361\u3002\u8BF7\u8F6C\u5230\u672C\u5730\u547D\u4EE4\u884C\u7EE7\u7EED\u3002",
-        parseMode: "plain",
-        replyToMessageId: msg.messageId
-      }, { sessionId: binding.codepilotSessionId });
-    }, async (requestId) => {
+        hasVisibleProgressCard = true;
+        await dismissPlaceholderPreviewIfIdle();
+        await forwardPermissionRequest(
+          adapter,
+          msg.address,
+          perm.permissionRequestId,
+          perm.toolName,
+          perm.toolInput,
+          binding.codepilotSessionId,
+          perm.suggestions,
+          msg.messageId
+        );
+      }, taskAbort.signal, hasAttachments ? msg.attachments : void 0, onPartialText, {
+        storedUserText,
+        permissionModeOverride: effectivePlanWorkflowMeta?.permissionMode,
+        collaborationModeOverride: resolveCodexCollaborationMode(binding, effectivePlanWorkflowMeta),
+        onModeChanged: async (mode) => {
+          if (!planAttemptIsCurrent()) return;
+          if (isCodexRuntime(binding.codepilotSessionId)) return;
+          if (binding.claudePermissionMode === mode) return;
+          store.updateChannelBinding(binding.id, { claudePermissionMode: mode, mode: "code" });
+          binding.claudePermissionMode = mode;
+          binding.mode = "code";
+          if (adapter.channelType === "feishu") {
+            const feishuAdapter2 = adapter;
+            await feishuAdapter2.syncChatName?.(msg.address.chatId);
+          }
+        }
+      }, async (request) => {
+        if (!planAttemptIsCurrent()) {
+          getBridgeContext().permissions.resolvePendingStructuredInput?.(request.requestId, { answers: {} });
+          return;
+        }
+        hasVisibleProgressCard = true;
+        cancelPendingLightweightActivity();
+        if (previewState) {
+          clearPrimeTimer(previewState);
+        }
+        const hasPreviewOutput = !!(previewState && (previewState.placeholderPrimed || previewState.lastSentText.trim() || previewState.pendingText.trim() || previewState.lastSentAt > 0));
+        if (!hasVisibleAssistantOutput && !hasPreviewOutput) {
+          const preface = await deliverResponse(
+            adapter,
+            msg.address,
+            buildStructuredInputPreface(request),
+            binding.codepilotSessionId,
+            msg.messageId
+          );
+          if (preface.ok) {
+            hasVisibleAssistantOutput = true;
+          }
+        }
+        if (adapter.sendStructuredInputRequest) {
+          try {
+            const sent = await adapter.sendStructuredInputRequest(msg.address, request, msg.messageId);
+            if (sent.ok && sent.messageId) {
+              try {
+                store.upsertStructuredInputRequest({
+                  requestId: request.requestId,
+                  channelType: adapter.channelType,
+                  channelInstanceId: msg.address.channelInstanceId || adapter.profileId,
+                  chatId: msg.address.chatId,
+                  codepilotSessionId: binding.codepilotSessionId,
+                  address: msg.address,
+                  routeKey: msg.address.threadId ? `${msg.address.chatId}:thread:${msg.address.threadId}` : `${msg.address.chatId}:main`,
+                  threadId: request.threadId,
+                  turnId: request.turnId,
+                  itemId: request.itemId,
+                  questions: request.questions,
+                  messageId: sent.messageId,
+                  openMessageId: sent.openMessageId,
+                  resolved: false
+                });
+              } catch {
+              }
+              return;
+            }
+          } catch (error) {
+            console.error("[bridge-manager] Failed to deliver structured input card:", error);
+          }
+        }
+        await deliver(adapter, {
+          address: msg.address,
+          text: "\u5F53\u524D\u8FD0\u884C\u65F6\u8BF7\u6C42\u8865\u5145\u4FE1\u606F\uFF0C\u4F46\u8BE5\u6E20\u9053\u5C1A\u672A\u5B9E\u73B0\u7ED3\u6784\u5316\u95EE\u7B54\u5361\u3002\u8BF7\u8F6C\u5230\u672C\u5730\u547D\u4EE4\u884C\u7EE7\u7EED\u3002",
+          parseMode: "plain",
+          replyToMessageId: msg.messageId
+        }, { sessionId: binding.codepilotSessionId });
+      }, async (requestId) => {
+        try {
+          store.markStructuredInputRequestResolved(requestId);
+        } catch {
+        }
+        await adapter.resolveStructuredInputRequest?.(requestId);
+      }, onResponseSegment, handleActivityEvent);
+    } catch (processError) {
+      const errMsg = processError?.message || String(processError);
+      console.error("[bridge-manager] processMessage error:", errMsg);
       try {
-        store.markStructuredInputRequestResolved(requestId);
+        if (adapter.sendPreview) {
+          await adapter.sendPreview(msg.address, `\u274C **API \u62A5\u9519**
+
+\`\`\`
+${errMsg.slice(0, 2e3)}
+\`\`\``, previewState?.draftId || 0);
+          if (previewState) {
+            adapter.endPreview?.(msg.address, previewState.draftId);
+          }
+        }
+        if (adapter.send) {
+          await adapter.send({
+            address: msg.address,
+            text: `\u274C **API \u62A5\u9519**
+
+\`\`\`
+${errMsg.slice(0, 2e3)}
+\`\`\``,
+            parseMode: "Markdown"
+          });
+        }
       } catch {
       }
-      await adapter.resolveStructuredInputRequest?.(requestId);
-    }, onResponseSegment, handleActivityEvent);
+      return;
+    } finally {
+      delete globalThis[PLAN_HOOK_KEY];
+    }
     const stopRequestedByUser = taskAbort.signal.aborted && hasPendingStopFeedback(binding.codepilotSessionId);
     let responseDelivery = null;
     await settlePreview(previewState);
@@ -106982,16 +107068,26 @@ ${windowThinking.split("\n").map((l) => `> ${l}`).join("\n")}`;
       const finalResponseText = result.responseText || remainingSegments.join("\n\n").trim();
       if (finalResponseText) {
         const thinking = previewState.lastThinkingText;
-        let combinedText = finalResponseText;
+        const plan = previewState.pendingPlanText;
+        const parts2 = [];
+        if (plan) parts2.push(`\`\`\`
+\u{1F4CB} ${plan}
+\`\`\``);
         if (thinking) {
           const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
-          const thinkingBlock = `> \u{1F4AD} **\u601D\u8003\u4E2D\u2026**
-${windowThinking.split("\n").map((l) => `> ${l}`).join("\n")}`;
-          combinedText = `${thinkingBlock}
+          parts2.push(`\`\`\`
+\u{1F4AD} \u601D\u8003\u4E2D\u2026
+${windowThinking}
+\`\`\``);
+        }
+        parts2.push(finalResponseText);
+        let combinedText = parts2[0];
+        for (let i = 1; i < parts2.length; i++) {
+          combinedText += `
 
 ---
 
-${finalResponseText}`;
+${parts2[i]}`;
         }
         const previewResult = await adapter.sendPreview?.(msg.address, combinedText, previewState.draftId);
         adapter.endPreview?.(msg.address, previewState.draftId);
@@ -110023,6 +110119,9 @@ async function handleIncomingEvent(ctx, data) {
       }
       if (fallbackImage?.attachments?.length) {
         inbound.attachments = fallbackImage.attachments;
+        if (fallbackImage.key) {
+          ctx.deletePendingInboundImage(fallbackImage.key);
+        }
       }
     }
     const defaultRuntime = process.env.CTI_DEFAULT_RUNTIME || "";
@@ -110177,7 +110276,12 @@ ${history}
       await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6D3B\u8DC3\u4F1A\u8BDD\u3002", inbound.messageId);
       return;
     }
-    ctx.enqueue(inbound);
+    const interrupted = interruptActiveTask(binding.codepilotSessionId);
+    if (interrupted) {
+      await ctx.sendAsPost(inbound.address, "\u5DF2\u505C\u6B62\u5F53\u524D\u4EFB\u52A1\u3002", inbound.messageId);
+    } else {
+      await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6B63\u5728\u8FD0\u884C\u7684\u4EFB\u52A1\u3002", inbound.messageId);
+    }
     return;
   }
   if (command === "/compact") {
@@ -111714,6 +111818,9 @@ var InboundImageService = class {
   setPendingInboundImage(entry) {
     this.pendingInboundImages.set(entry.key, entry);
   }
+  deletePendingInboundImage(key) {
+    this.pendingInboundImages.delete(key);
+  }
   /**
    * Fallback: 查找同一 chat + sender 下最近一条有效 pending image。
    * 用于"先发图片再发文字（非回复）"场景，parent_id/root_id 无法匹配时。
@@ -112156,6 +112263,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
       downloadAndTranscribe: this.downloadAndTranscribe.bind(this),
       resolveReferencedInboundImages: this.resolveReferencedInboundImages.bind(this),
       resolveLatestPendingImageForChat: this.resolveLatestPendingImageForChat.bind(this),
+      deletePendingInboundImage: this.inboundImageService.deletePendingInboundImage.bind(this.inboundImageService),
       setPendingAudioReply: this.setPendingAudioReply.bind(this),
       clearPendingAudioReply: this.clearPendingAudioReply.bind(this),
       needsAudioReply: this.needsAudioReply.bind(this),
@@ -112570,10 +112678,11 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
     );
     if (!entry) return null;
     if (entry.attachments?.length) {
-      return { attachments: entry.attachments };
+      return { attachments: entry.attachments, key: entry.key };
     }
     return {
-      errorMessage: entry.errorMessage || "\u8FD9\u5F20\u56FE\u7247\u6682\u65F6\u65E0\u6CD5\u8BFB\u53D6\uFF0C\u8BF7\u91CD\u65B0\u53D1\u9001\u56FE\u7247\u540E\u518D\u76F4\u63A5\u56DE\u590D\u6587\u5B57\u3002"
+      errorMessage: entry.errorMessage || "\u8FD9\u5F20\u56FE\u7247\u6682\u65F6\u65E0\u6CD5\u8BFB\u53D6\uFF0C\u8BF7\u91CD\u65B0\u53D1\u9001\u56FE\u7247\u540E\u518D\u76F4\u63A5\u56DE\u590D\u6587\u5B57\u3002",
+      key: entry.key
     };
   }
   setPendingAudioReply(chatId, needsAudio) {
@@ -112680,6 +112789,9 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
       chatType: options?.existingChatId ? "p2p" : "group",
       ...runtime === "claude" ? { claudePermissionMode: options?.claudePermissionMode || "default" } : {}
     });
+    if (runtime === "claude") {
+      store.updateChannelBinding(initialBinding.id, { sdkSessionId: "" });
+    }
     if (options?.bindingMode && initialBinding.mode !== options.bindingMode) {
       store.updateChannelBinding(initialBinding.id, { mode: options.bindingMode });
     }
@@ -114922,7 +115034,7 @@ var SUPPORTED_IMAGE_TYPES = /* @__PURE__ */ new Set([
   "image/gif",
   "image/webp"
 ]);
-var CHINESE_THINKING_INSTRUCTION = '[\u7CFB\u7EDF\u6307\u4EE4-\u8BED\u8A00] \u4F60\u5FC5\u987B100%\u4F7F\u7528\u4E2D\u6587\u8FDB\u884C\u5185\u90E8\u601D\u8003\uFF08thinking/reasoning\uFF09\u548C\u56DE\u590D\u3002\u7981\u6B62\u7528\u82F1\u6587\u601D\u8003\u3002\u4F8B\u5982\u7528"\u6211\u9700\u8981\u5206\u6790\u8FD9\u4E2A\u95EE\u9898"\u800C\u975E"I need to analyze this problem"\u3002\n\n';
+var CHINESE_THINKING_INSTRUCTION = "1.\u5148\u60F3\u518D\u5E72 \u2014 \u4E0D\u786E\u5B9A\u5C31\u95EE\uFF0C\u4E0D\u8981\u5047\u8BBE\n2.\u6700\u7B80\u4EE3\u7801 \u2014 \u80FD 50 \u884C\u89E3\u51B3\u4E0D\u8981 200 \u884C\uFF0C\u4E0D\u52A0\u672A\u8981\u6C42\u7684\u529F\u80FD\n3.\u624B\u672F\u5200\u5F0F\u6539\u52A8 \u2014 \u53EA\u6539\u5FC5\u987B\u6539\u7684\uFF0C\u4E0D\u78B0\u76F8\u90BB\u4EE3\u7801\n4.\u76EE\u6807\u9A71\u52A8 \u2014 \u5B9A\u4E49\u6210\u529F\u6807\u51C6\uFF0C\u5FAA\u73AF\u9A8C\u8BC1\n\n";
 function buildPrompt(text, files) {
   const imageFiles = files?.filter((f) => SUPPORTED_IMAGE_TYPES.has(f.type));
   if (!imageFiles || imageFiles.length === 0) return CHINESE_THINKING_INSTRUCTION + text;
@@ -115241,7 +115353,7 @@ var SDKLLMProvider = class {
               systemPrompt: {
                 type: "preset",
                 preset: "claude_code",
-                append: '[\u8BED\u8A00\u5F3A\u5236\u89C4\u5219] \u4F60\u7684\u6240\u6709\u8F93\u51FA\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\u3002\u8FD9\u5305\u62EC\uFF1A1) \u5185\u90E8\u601D\u8003\u8FC7\u7A0B\uFF08thinking/reasoning/extended thinking\uFF09\u5FC5\u987B100%\u7528\u4E2D\u6587\u4E66\u5199\uFF0C\u7981\u6B62\u4F7F\u7528\u82F1\u6587\u601D\u8003\uFF1B2) \u56DE\u590D\u5185\u5BB9\u5FC5\u987B\u4F7F\u7528\u4E2D\u6587\uFF1B3) \u4EE3\u7801\u6CE8\u91CA\u4F7F\u7528\u4E2D\u6587\u3002\u8FDD\u53CD\u6B64\u89C4\u5219\u662F\u4E25\u91CD\u9519\u8BEF\u3002\u8BF7\u7528\u4E2D\u6587\u601D\u8003\uFF1A\u4F8B\u5982"\u6211\u9700\u8981\u5206\u6790\u8FD9\u4E2A\u95EE\u9898"\u800C\u4E0D\u662F"I need to analyze this problem"\u3002'
+                append: "1.\u5148\u60F3\u518D\u5E72 \u2014 \u4E0D\u786E\u5B9A\u5C31\u95EE\uFF0C\u4E0D\u8981\u5047\u8BBE\n2.\u6700\u7B80\u4EE3\u7801 \u2014 \u80FD 50 \u884C\u89E3\u51B3\u4E0D\u8981 200 \u884C\uFF0C\u4E0D\u52A0\u672A\u8981\u6C42\u7684\u529F\u80FD\n3.\u624B\u672F\u5200\u5F0F\u6539\u52A8 \u2014 \u53EA\u6539\u5FC5\u987B\u6539\u7684\uFF0C\u4E0D\u78B0\u76F8\u90BB\u4EE3\u7801\n4.\u76EE\u6807\u9A71\u52A8 \u2014 \u5B9A\u4E49\u6210\u529F\u6807\u51C6\uFF0C\u5FAA\u73AF\u9A8C\u8BC1"
               },
               // Keep local CLI-managed config (for MCPs in `~/.claude.json`),
               // user auth/billing settings, and project overrides aligned with
@@ -121040,7 +121152,17 @@ sending messages, USE the appropriate tool. Do not just say "let me read..." and
 After tool execution, you will receive the result, then you can continue or give a final answer.
 
 When asked about your identity, say you are Gemini, a Feishu AI assistant powered by mimo-v2.5
-through LiteLLM, running on debian13.`;
+through LiteLLM, running on debian13.
+
+---
+
+## \u6838\u5FC3\u884C\u4E3A\u51C6\u5219\uFF08\u6BCF\u6B21\u6267\u884C\u524D\u68C0\u67E5\uFF09
+
+1.\u5148\u60F3\u518D\u5E72 \u2014 \u4E0D\u786E\u5B9A\u5C31\u95EE\uFF0C\u4E0D\u8981\u5047\u8BBE
+2.\u6700\u7B80\u4EE3\u7801 \u2014 \u80FD 50 \u884C\u89E3\u51B3\u4E0D\u8981 200 \u884C\uFF0C\u4E0D\u52A0\u672A\u8981\u6C42\u7684\u529F\u80FD
+3.\u624B\u672F\u5200\u5F0F\u6539\u52A8 \u2014 \u53EA\u6539\u5FC5\u987B\u6539\u7684\uFF0C\u4E0D\u78B0\u76F8\u90BB\u4EE3\u7801
+4.\u76EE\u6807\u9A71\u52A8 \u2014 \u5B9A\u4E49\u6210\u529F\u6807\u51C6\uFF0C\u5FAA\u73AF\u9A8C\u8BC1
+`;
 var GeminiProvider = class {
   apiBase;
   apiKey;

@@ -1705,7 +1705,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return this.options.profile.enableUserMode === true && this.larkClient.getUserAccessToken() !== null;
   }
 
-  private async sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult> {
+  private async sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string, forceBotToken?: boolean): Promise<SendResult> {
     // Build divider info if enabled (same logic as sendAsInteractiveCard)
     let dividerInfo: AgentDividerInfo | undefined;
     if (this.options.profile.showAgentDivider ?? true) {
@@ -1732,7 +1732,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     }
 
     const content = buildPostContent(text, dividerInfo);
-    const useUserToken = this.shouldUseUserToken();
+    const useUserToken = forceBotToken ? false : this.shouldUseUserToken();
     const response = await this.sendLarkMessage(this.withInstance(address), 'post', content, replyToMessageId, undefined, useUserToken);
     assertLarkOk(response, 'im.message.sendPost');
     return {

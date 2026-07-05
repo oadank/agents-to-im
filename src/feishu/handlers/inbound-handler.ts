@@ -306,7 +306,7 @@ export async function handleDirectMessage(
       const { binding } = await ctx.createBoundSession(runtime, sender, options);
       console.log(`[feishu-adapter] /new: auto-bound p2p chat ${inbound.address.chatId} runtime=${runtime}`);
       const feedback = `✅ 已新建 ${runtime} 会话｜工作区 \`${binding.workingDirectory}\`｜直接对话即可`;
-      await ctx.sendAsPost(inbound.address, feedback, inbound.messageId);
+      await ctx.sendAsPost(inbound.address, feedback, inbound.messageId, true);
     } catch (error) {
       console.error('[feishu-adapter] /new auto-bind failed:', error);
       await ctx.sendAsPost(
@@ -389,14 +389,14 @@ export async function handleDirectMessage(
     const store = ctx.getStore();
     const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
     if (!binding) {
-      await ctx.sendAsPost(inbound.address, '当前没有活跃会话。', inbound.messageId);
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话。', inbound.messageId, true);
       return;
     }
     const interrupted = interruptActiveTask(binding.codepilotSessionId);
     if (interrupted) {
-      await ctx.sendAsPost(inbound.address, '已停止当前任务。', inbound.messageId);
+      await ctx.sendAsPost(inbound.address, '已停止当前任务。', inbound.messageId, true);
     } else {
-      await ctx.sendAsPost(inbound.address, '当前没有正在运行的任务。', inbound.messageId);
+      await ctx.sendAsPost(inbound.address, '当前没有正在运行的任务。', inbound.messageId, true);
     }
     return;
   }
@@ -405,15 +405,15 @@ export async function handleDirectMessage(
     const store = ctx.getStore();
     const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
     if (!binding) {
-      await ctx.sendAsPost(inbound.address, '当前没有活跃会话，请先发送消息创建会话。', inbound.messageId);
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话，请先发送消息创建会话。', inbound.messageId, true);
       return;
     }
     const sessionId = binding.codepilotSessionId;
     if (!sessionId) {
-      await ctx.sendAsPost(inbound.address, '当前没有活跃会话。', inbound.messageId);
+      await ctx.sendAsPost(inbound.address, '当前没有活跃会话。', inbound.messageId, true);
       return;
     }
-    await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId);
+    await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId, true);
     const config = loadConfig();
     const result = await compactConversation(store, sessionId, config.compact);
     if (result.success) {
@@ -422,10 +422,10 @@ export async function handleDirectMessage(
         store.updateSdkSessionId(sessionId, '');
       }
       console.log(`[feishu-adapter] /compact: 压缩完成，${result.originalCount} 条消息 → 摘要`);
-      await ctx.sendAsPost(inbound.address, `✅ 上下文已压缩（${result.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`, inbound.messageId);
+      await ctx.sendAsPost(inbound.address, `✅ 上下文已压缩（${result.originalCount} 条消息 → 摘要）。下一条消息将使用压缩后的上下文。`, inbound.messageId, true);
     } else {
       console.warn(`[feishu-adapter] /compact 失败: ${result.error}`);
-      await ctx.sendAsPost(inbound.address, `❌ 压缩失败: ${result.error}`, inbound.messageId);
+      await ctx.sendAsPost(inbound.address, `❌ 压缩失败: ${result.error}`, inbound.messageId, true);
     }
     return;
   }

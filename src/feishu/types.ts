@@ -180,7 +180,7 @@ export interface AdapterContext {
   enqueueChatTask(chatId: string, task: () => Promise<void>): Promise<void>;
   /** Ingest message to OpenHuman memory_tree for semantic search. */
   ingestToMemoryTree(chatId: string, senderId: string, text: string, messageId: string): Promise<void>;
-  sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult>;
+  sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string, forceBotToken?: boolean): Promise<SendResult>;
   sendAsInteractiveCard(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult>;
   sendInteractiveCard(
     address: ChannelAddress,

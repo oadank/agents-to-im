@@ -64,7 +64,7 @@ async function callCompactApi(
   const baseUrl = process.env.CTI_COMPACT_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
   const model = compactConfig.model || 'codex-model';
 
-  if (!apiKey) return { error: 'ANTHROPIC_API_KEY 未设置' };
+  if (!apiKey) return { error: 'CTI_COMPACT_API_KEY 未设置' };
 
   try {
     const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;

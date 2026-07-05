@@ -25,6 +25,8 @@ export interface FeishuProfileConfig {
 
 export interface CompactConfig {
   model: string;
+  apiKey: string;
+  baseUrl: string;
   maxTokens: number;
   temperature: number;
   clearSdkSession: boolean;
@@ -117,6 +119,8 @@ function loadFeishuConfig(env: Map<string, string>): FeishuProfileConfig {
 function loadCompactConfig(env: Map<string, string>): CompactConfig {
   return {
     model: env.get('CTI_COMPACT_MODEL') || process.env.CTI_COMPACT_MODEL || 'codex-model',
+    apiKey: env.get('CTI_COMPACT_API_KEY') || process.env.CTI_COMPACT_API_KEY || '',
+    baseUrl: env.get('CTI_COMPACT_BASE_URL') || process.env.CTI_COMPACT_BASE_URL || 'https://api.anthropic.com',
     maxTokens: parseInt(env.get('CTI_COMPACT_MAX_TOKENS') || process.env.CTI_COMPACT_MAX_TOKENS || '3000'),
     temperature: parseFloat(env.get('CTI_COMPACT_TEMPERATURE') || process.env.CTI_COMPACT_TEMPERATURE || '0.2'),
     clearSdkSession: (env.get('CTI_COMPACT_CLEAR_SDK_SESSION') || process.env.CTI_COMPACT_CLEAR_SDK_SESSION || 'true') !== 'false',

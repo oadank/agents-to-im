@@ -414,11 +414,26 @@ export async function handleDirectMessage(
       return;
     }
     await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId, true);
-    const config = loadConfig();
-    const result = await compactConversation(store, sessionId, config.compact);
+
+    // Get session's runtime to use its model for compact
+    const sessionExt = store.getSessionExt(sessionId);
+    const runtime = sessionExt?.runtime || ctx.getDefaultRuntime();
+    const runtimeConfig = getRuntimeConfig(runtime);
+
+    // Create compact config from runtime config
+    const compactConfig: CompactConfig = {
+      model: runtimeConfig.model,
+      apiKey: '', // Will be filled by compactConversation from env/config
+      baseUrl: '', // Will be filled by compactConversation from env/config
+      maxTokens: 3000,
+      temperature: 0.2,
+      clearSdkSession: true
+    };
+
+    const result = await compactConversation(store, sessionId, compactConfig);
     if (result.success) {
       applyCompactResult(store, sessionId, result);
-      if (config.compact.clearSdkSession) {
+      if (compactConfig.clearSdkSession) {
         store.updateSdkSessionId(sessionId, '');
       }
       console.log(`[feishu-adapter] /compact: 压缩完成，${result.originalCount} 条消息 → 摘要`);
@@ -525,11 +540,25 @@ export async function handleGroupMessage(
       const sid2 = binding2.codepilotSessionId;
       if (sid2) {
         await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId);
-        const config2 = loadConfig();
-        const result2 = await compactConversation(store2, sid2, config2.compact);
+
+        // Get session's runtime to use its model for compact
+        const sessionExt2 = store2.getSessionExt(sid2);
+        const runtime2 = sessionExt2?.runtime || ctx.getDefaultRuntime();
+        const runtimeConfig2 = getRuntimeConfig(runtime2);
+
+        const compactConfig2: CompactConfig = {
+          model: runtimeConfig2.model,
+          apiKey: '',
+          baseUrl: '',
+          maxTokens: 3000,
+          temperature: 0.2,
+          clearSdkSession: true
+        };
+
+        const result2 = await compactConversation(store2, sid2, compactConfig2);
         if (result2.success) {
           applyCompactResult(store2, sid2, result2);
-          if (config2.compact.clearSdkSession) {
+          if (compactConfig2.clearSdkSession) {
             store2.updateSdkSessionId(sid2, '');
           }
           console.log(`[feishu-adapter] /compact: 压缩完成，${result2.originalCount} 条消息 → 摘要`);

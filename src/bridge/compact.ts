@@ -60,9 +60,31 @@ async function callCompactApi(
   prompt: string,
   compactConfig: CompactConfig,
 ): Promise<{ text?: string; error?: string }> {
-  const apiKey = compactConfig.apiKey;
-  const baseUrl = compactConfig.baseUrl;
-  const model = compactConfig.model || 'codex-model';
+  let apiKey = compactConfig.apiKey;
+  let baseUrl = compactConfig.baseUrl;
+  let model = compactConfig.model || 'codex-model';
+
+  // 如果 compact 配置中没有 apiKey，尝试从 Claude SDK providers.json 读取
+  if (!apiKey) {
+    try {
+      const fs = await import('node:fs');
+      const providersPath = '/root/.claude/cc-haha/providers.json';
+      if (fs.existsSync(providersPath)) {
+        const providersContent = fs.readFileSync(providersPath, 'utf-8');
+        const providersData = JSON.parse(providersContent);
+        const activeProvider = providersData.providers.find(
+          (p: any) => p.id === providersData.activeId
+        );
+        if (activeProvider) {
+          apiKey = activeProvider.apiKey || '';
+          baseUrl = activeProvider.baseUrl || '';
+          model = activeProvider.models?.main || model;
+        }
+      }
+    } catch (e) {
+      // 如果读取失败，继续使用原有的值（可能为空）
+    }
+  }
 
   if (!apiKey) return { error: 'CTI_COMPACT_API_KEY 未设置' };
 

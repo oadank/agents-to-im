@@ -107609,6 +107609,8 @@ function loadFeishuConfig(env) {
 function loadCompactConfig(env) {
   return {
     model: env.get("CTI_COMPACT_MODEL") || process.env.CTI_COMPACT_MODEL || "codex-model",
+    apiKey: env.get("CTI_COMPACT_API_KEY") || process.env.CTI_COMPACT_API_KEY || "",
+    baseUrl: env.get("CTI_COMPACT_BASE_URL") || process.env.CTI_COMPACT_BASE_URL || "https://api.anthropic.com",
     maxTokens: parseInt(env.get("CTI_COMPACT_MAX_TOKENS") || process.env.CTI_COMPACT_MAX_TOKENS || "3000"),
     temperature: parseFloat(env.get("CTI_COMPACT_TEMPERATURE") || process.env.CTI_COMPACT_TEMPERATURE || "0.2"),
     clearSdkSession: (env.get("CTI_COMPACT_CLEAR_SDK_SESSION") || process.env.CTI_COMPACT_CLEAR_SDK_SESSION || "true") !== "false"
@@ -107750,10 +107752,29 @@ Your summary should include the following sections:
 
 REMINDER: Do NOT call any tools. Respond with plain text only \u2014 an <analysis> block followed by a <summary> block. Tool calls will be rejected and you will fail the task.`;
 async function callCompactApi(prompt, compactConfig) {
-  const apiKey = process.env.CTI_COMPACT_API_KEY || process.env.ANTHROPIC_API_KEY || "";
-  const baseUrl = process.env.CTI_COMPACT_BASE_URL || process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
-  const model = compactConfig.model || "codex-model";
-  if (!apiKey) return { error: "ANTHROPIC_API_KEY \u672A\u8BBE\u7F6E" };
+  let apiKey = compactConfig.apiKey;
+  let baseUrl = compactConfig.baseUrl;
+  let model = compactConfig.model || "codex-model";
+  if (!apiKey) {
+    try {
+      const fs19 = await import("node:fs");
+      const providersPath = "/root/.claude/cc-haha/providers.json";
+      if (fs19.existsSync(providersPath)) {
+        const providersContent = fs19.readFileSync(providersPath, "utf-8");
+        const providersData = JSON.parse(providersContent);
+        const activeProvider = providersData.providers.find(
+          (p) => p.id === providersData.activeId
+        );
+        if (activeProvider) {
+          apiKey = activeProvider.apiKey || "";
+          baseUrl = activeProvider.baseUrl || "";
+          model = activeProvider.models?.main || model;
+        }
+      }
+    } catch (e) {
+    }
+  }
+  if (!apiKey) return { error: "CTI_COMPACT_API_KEY \u672A\u8BBE\u7F6E" };
   try {
     const url2 = `${baseUrl.replace(/\/$/, "")}/v1/chat/completions`;
     const response = await fetch(url2, {
@@ -110190,7 +110211,7 @@ async function handleDirectMessage(ctx, sender, inbound) {
       const { binding } = await ctx.createBoundSession(runtime, sender, options);
       console.log(`[feishu-adapter] /new: auto-bound p2p chat ${inbound.address.chatId} runtime=${runtime}`);
       const feedback = `\u2705 \u5DF2\u65B0\u5EFA ${runtime} \u4F1A\u8BDD\uFF5C\u5DE5\u4F5C\u533A \`${binding.workingDirectory}\`\uFF5C\u76F4\u63A5\u5BF9\u8BDD\u5373\u53EF`;
-      await ctx.sendAsPost(inbound.address, feedback, inbound.messageId);
+      await ctx.sendAsPost(inbound.address, feedback, inbound.messageId, true);
     } catch (error) {
       console.error("[feishu-adapter] /new auto-bind failed:", error);
       await ctx.sendAsPost(
@@ -110273,14 +110294,14 @@ ${history}
     const store2 = ctx.getStore();
     const binding = store2.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
     if (!binding) {
-      await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6D3B\u8DC3\u4F1A\u8BDD\u3002", inbound.messageId);
+      await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6D3B\u8DC3\u4F1A\u8BDD\u3002", inbound.messageId, true);
       return;
     }
     const interrupted = interruptActiveTask(binding.codepilotSessionId);
     if (interrupted) {
-      await ctx.sendAsPost(inbound.address, "\u5DF2\u505C\u6B62\u5F53\u524D\u4EFB\u52A1\u3002", inbound.messageId);
+      await ctx.sendAsPost(inbound.address, "\u5DF2\u505C\u6B62\u5F53\u524D\u4EFB\u52A1\u3002", inbound.messageId, true);
     } else {
-      await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6B63\u5728\u8FD0\u884C\u7684\u4EFB\u52A1\u3002", inbound.messageId);
+      await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6B63\u5728\u8FD0\u884C\u7684\u4EFB\u52A1\u3002", inbound.messageId, true);
     }
     return;
   }
@@ -110288,15 +110309,15 @@ ${history}
     const store2 = ctx.getStore();
     const binding = store2.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
     if (!binding) {
-      await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6D3B\u8DC3\u4F1A\u8BDD\uFF0C\u8BF7\u5148\u53D1\u9001\u6D88\u606F\u521B\u5EFA\u4F1A\u8BDD\u3002", inbound.messageId);
+      await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6D3B\u8DC3\u4F1A\u8BDD\uFF0C\u8BF7\u5148\u53D1\u9001\u6D88\u606F\u521B\u5EFA\u4F1A\u8BDD\u3002", inbound.messageId, true);
       return;
     }
     const sessionId = binding.codepilotSessionId;
     if (!sessionId) {
-      await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6D3B\u8DC3\u4F1A\u8BDD\u3002", inbound.messageId);
+      await ctx.sendAsPost(inbound.address, "\u5F53\u524D\u6CA1\u6709\u6D3B\u8DC3\u4F1A\u8BDD\u3002", inbound.messageId, true);
       return;
     }
-    await ctx.sendAsPost(inbound.address, "\u23F3 \u6B63\u5728\u538B\u7F29\u4E0A\u4E0B\u6587\uFF0C\u8BF7\u7A0D\u5019\u2026", inbound.messageId);
+    await ctx.sendAsPost(inbound.address, "\u23F3 \u6B63\u5728\u538B\u7F29\u4E0A\u4E0B\u6587\uFF0C\u8BF7\u7A0D\u5019\u2026", inbound.messageId, true);
     const config = loadConfig();
     const result = await compactConversation(store2, sessionId, config.compact);
     if (result.success) {
@@ -110305,10 +110326,10 @@ ${history}
         store2.updateSdkSessionId(sessionId, "");
       }
       console.log(`[feishu-adapter] /compact: \u538B\u7F29\u5B8C\u6210\uFF0C${result.originalCount} \u6761\u6D88\u606F \u2192 \u6458\u8981`);
-      await ctx.sendAsPost(inbound.address, `\u2705 \u4E0A\u4E0B\u6587\u5DF2\u538B\u7F29\uFF08${result.originalCount} \u6761\u6D88\u606F \u2192 \u6458\u8981\uFF09\u3002\u4E0B\u4E00\u6761\u6D88\u606F\u5C06\u4F7F\u7528\u538B\u7F29\u540E\u7684\u4E0A\u4E0B\u6587\u3002`, inbound.messageId);
+      await ctx.sendAsPost(inbound.address, `\u2705 \u4E0A\u4E0B\u6587\u5DF2\u538B\u7F29\uFF08${result.originalCount} \u6761\u6D88\u606F \u2192 \u6458\u8981\uFF09\u3002\u4E0B\u4E00\u6761\u6D88\u606F\u5C06\u4F7F\u7528\u538B\u7F29\u540E\u7684\u4E0A\u4E0B\u6587\u3002`, inbound.messageId, true);
     } else {
       console.warn(`[feishu-adapter] /compact \u5931\u8D25: ${result.error}`);
-      await ctx.sendAsPost(inbound.address, `\u274C \u538B\u7F29\u5931\u8D25: ${result.error}`, inbound.messageId);
+      await ctx.sendAsPost(inbound.address, `\u274C \u538B\u7F29\u5931\u8D25: ${result.error}`, inbound.messageId, true);
     }
     return;
   }
@@ -113337,7 +113358,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
   shouldUseUserToken() {
     return this.options.profile.enableUserMode === true && this.larkClient.getUserAccessToken() !== null;
   }
-  async sendAsPost(address, text, replyToMessageId) {
+  async sendAsPost(address, text, replyToMessageId, forceBotToken) {
     let dividerInfo;
     if (this.options.profile.showAgentDivider ?? true) {
       const store = this.getStore();
@@ -113356,7 +113377,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
       };
     }
     const content = buildPostContent(text, dividerInfo);
-    const useUserToken = this.shouldUseUserToken();
+    const useUserToken = forceBotToken ? false : this.shouldUseUserToken();
     const response = await this.sendLarkMessage(this.withInstance(address), "post", content, replyToMessageId, void 0, useUserToken);
     assertLarkOk(response, "im.message.sendPost");
     return {

@@ -963,7 +963,7 @@ export class CodexProvider implements LLMProvider {
     }
 
     const threadParams: JsonRecord = {
-      experimentalRawEvents: false,
+      experimentalRawEvents: true,
       persistExtendedHistory: true,
     };
     if (params.workingDirectory) {

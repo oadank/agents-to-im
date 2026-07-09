@@ -59,7 +59,7 @@ export class InboundAudioService {
   }
 
   async transcribeAudio(audioPath: string): Promise<TranscribeResult> {
-    const transcribeScript = '/opt/.codex/skills/voice-engine/transcribe.sh';
+    const transcribeScript = '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
     
     const startTime = Date.now();
     

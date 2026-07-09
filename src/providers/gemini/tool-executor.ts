@@ -10,11 +10,13 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const CWD = '/opt';
-const AGENTMEMORY_URL = 'http://127.0.0.1:3111';
-const TOKEN_FILE = '/opt/.agents-to-im/user-token.json';
+const CWD = process.env.CTI_WORKDIR || os.homedir();
+const AGENTMEMORY_URL = process.env.CTI_AGENTMEMORY_URL || 'http://127.0.0.1:3111';
+const CTI_HOME = process.env.CTI_HOME || path.join(os.homedir(), '.agents-to-im');
+const TOKEN_FILE = path.join(CTI_HOME, 'user-token.json');
 
 /** run_bash 黑名单（命中即拒绝） */
 const BASH_BLACKLIST = [

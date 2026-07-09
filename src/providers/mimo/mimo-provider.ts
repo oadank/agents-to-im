@@ -12,6 +12,7 @@
 
 import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
@@ -29,7 +30,7 @@ function loadMiMoMcpServers(): MiMoMcpServer[] {
   const configDir = process.env.CTI_MIMO_ACP_CWD || '';
   const configPath = configDir
     ? path.join(configDir, '.mimocode/config/mimocode.json')
-    : '/opt/.mimocode/config/mimocode.json';
+    : path.join(os.homedir(), '.mimocode', 'config', 'mimocode.json');
   try {
     if (!fs.existsSync(configPath)) return [];
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -49,7 +50,7 @@ function loadMiMoMcpServers(): MiMoMcpServer[] {
 
 function loadMemoryContent(agentName?: string): string {
   const parts: string[] = [];
-  const memBase = '/opt/agents-memory';
+  const memBase = process.env.CTI_AGENTS_MEMORY || path.join(os.homedir(), 'agents-memory');
   const agent = agentName || 'mimo';
 
   // 1. Agent-specific memory
@@ -122,7 +123,7 @@ export class MiMoProvider implements LLMProvider {
   private acpCache = new Map<string, CachedAcpSession>();
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private static IDLE_TIMEOUT_MS = parseInt(process.env.CTI_MIMO_IDLE_TIMEOUT_MS || '900000'); // 默认 15 分钟
-  private static SESSION_DIR = '/opt/.mimocode/sessions';
+  private static SESSION_DIR = path.join(os.homedir(), '.mimocode', 'sessions');
 
   constructor() {
     this.startCleanupTimer();

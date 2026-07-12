@@ -570,16 +570,14 @@ function flushPreview(
     if (includeTool && tools.length > 0) {
       parts.push(`\`\`\`\n🔧 执行中\n${tools.join('\n')}\n\`\`\``);
     }
+    // 构建思考+正文的 body
+    const bodyParts: string[] = [];
     if (thinking) {
-      const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
-      // thinking 改回引用块（去掉 code block 行号），空行用 <br> 避免断裂
-      const safeThinking = windowThinking
-        .replace(/\n\n+/g, '\n<br>\n')
-        .replace(/\n/g, '\n> ');
-      parts.push(`> 💭 **思考中…**\n> ${safeThinking}`);
+      const thinkingLines = thinking.split('\n').map(l => `> ${l}`).join('\n');
+      bodyParts.push(`> 💭 **思考中…**\n${thinkingLines}`);
     }
-    const body = text.trim();
-    if (body) parts.push(body);
+    if (text.trim()) bodyParts.push(text);
+    if (bodyParts.length > 0) parts.push(bodyParts.join('\n\n'));
     if (parts.length === 0) parts.push('⏳ 正在处理…');
     // 最后一个块（正文或占位）前面加分隔线，与前面代码块视觉区分
     if (parts.length > 1) {
@@ -594,6 +592,10 @@ function flushPreview(
       const result = await adapter.sendPreview!(state.address, combined, draftId);
       if (state.draftId !== draftId) return;
       if (result === 'degrade') state.degraded = true;
+      // 成功发送后更新已 flush 的 thinking 水位线
+      if (result === 'sent' && state.lastThinkingText) {
+        state.lastFlushedThinkingText = state.lastThinkingText;
+      }
     } catch {
       // Network error — transient, don't degrade
     }
@@ -704,6 +706,7 @@ function resetPreviewState(state: StreamingPreviewState): void {
   state.pendingText = '';
   state.inFlightSend = null;
   state.lastThinkingText = '';
+  state.lastFlushedThinkingText = '';
   state.pendingThinkingText = '';
   state.toolHistory = [];
   state.pendingPlanText = '';
@@ -1391,6 +1394,7 @@ async function handleMessage(
       inFlightSend: null,
       streamStartedAt: Date.now(),
       lastThinkingText: '',
+      lastFlushedThinkingText: '',
       pendingThinkingText: '',
       toolHistory: [],
       pendingPlanText: '',
@@ -1795,9 +1799,18 @@ async function handleMessage(
         if (!previewState.placeholderPrimed && adapter.primePreview) {
           primePreview(adapter, previewState, streamCfg);
         }
-        // 即使正文没到也刷新预览（显示思考区）
+        // 刷新预览，但限流：思考内容没有显著增加时不刷（防频繁全量刷新导致覆盖）
         if (previewState.placeholderPrimed && adapter.sendPreview) {
-          flushPreview(adapter, previewState, streamCfg);
+          const now = Date.now();
+          const thinkingLen = (thinkingText || '').length;
+          const elapsed = now - (previewState as any).lastReasoningFlushAt || 0;
+          const grew = thinkingLen - ((previewState as any).lastReasoningFlushedLen || 0);
+          // 首次或间隔超200ms且内容增长明显时才刷新
+          if (!(previewState as any).lastReasoningFlushAt || (elapsed > 200 && grew > 20)) {
+            (previewState as any).lastReasoningFlushAt = now;
+            (previewState as any).lastReasoningFlushedLen = thinkingLen;
+            flushPreview(adapter, previewState, streamCfg);
+          }
         }
       }
       return;
@@ -2213,14 +2226,19 @@ async function handleMessage(
     if (previewState && previewFinalDelivery === 'replace_preview') {
       const finalResponseText = result.responseText || remainingSegments.join('\n\n').trim();
       if (finalResponseText) {
-        // 最终消息：plan(永久) + thinking + 正文（无 tool 区）
+        // 最终消息：plan(永久) + tool + thinking + 正文
         const thinking = previewState.lastThinkingText;
         const plan = previewState.pendingPlanText;
+        const tools = previewState.toolHistory;
         const parts: string[] = [];
         if (plan) parts.push(`\`\`\`\n📋 ${plan}\n\`\`\``);
+        if (tools.length > 0) {
+          parts.push(`\`\`\`\n🔧 工具执行\n${tools.join('\n')}\n\`\`\``);
+        }
         if (thinking) {
           const windowThinking = thinking.length > 1500 ? thinking.slice(-1500) : thinking;
-          parts.push(`\`\`\`\n💭 思考中…\n${windowThinking}\n\`\`\``);
+          const thinkingLines = windowThinking.split('\n').map(l => `> ${l}`).join('\n');
+          parts.push(`> 💭 **思考中…**\n${thinkingLines}`);
         }
         parts.push(finalResponseText);
         let combinedText = parts[0];

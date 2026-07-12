@@ -1,279 +1,296 @@
 /**
- * Gemini Provider — LiteLLM API (OpenAI-compatible) + tool_calls 支持
+ * Gemini Provider — Gemini CLI ACP (Agent Chat Protocol) integration
  *
- * 调用 LiteLLM 代理 http://127.0.0.1:4000/v1/chat/completions
- * 支持 function calling：模型可调用 7 个本地工具
+ * 调用 gemini --acp --yolo 子进程，通过 JSON-RPC 2.0 over stdin/stdout 通信
+ * 使用 GEMINI_API_KEY + GOOGLE_GEMINI_BASE_URL 指向 LiteLLM 代理
  *
- * 工具循环上限 10 次，超过则报错终止（防无限循环）
+ * ACP 协议（基于 Zed/Gemini 兼容）：
+ * - initialize → authenticate(gateway) → session/new → session/prompt
+ * - session/update notifications: agent_message_chunk, available_commands_update
+ *
+ * Session update 事件映射：
+ * - agent_message_chunk → text
+ * - available_commands_update → 忽略（命令列表，非对话内容）
  */
 
+import { GeminiAppServerClient, type GeminiServerMessage } from './gemini-app-server-client.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
-import { GEMINI_TOOLS } from './tool-definitions.js';
-import { executeTool, type ParsedToolCall } from './tool-executor.js';
 
-export interface GeminiConfig {
-  apiBase?: string;
-  apiKey?: string;
-  model?: string;
+type JsonRecord = Record<string, unknown>;
+
+// ── Gemini ACP types ────────────────────────────────────────────────────────
+
+interface GeminiSessionNewResult {
+  sessionId: string;
+  modes?: {
+    availableModes: Array<{ id: string; name: string; description: string }>;
+    currentModeId: string;
+  };
+  models?: {
+    availableModels: Array<{ modelId: string; name: string; description: string }>;
+    currentModelId: string;
+  };
 }
 
-const DEFAULT_API_BASE = 'http://127.0.0.1:4000/v1';
-const DEFAULT_API_KEY = 'sk-200418';
-const DEFAULT_MODEL = 'gemini-model';
-const MAX_TOOL_ROUNDS = 10;
-const SYSTEM_PROMPT = `You are a helpful AI assistant running as a Feishu bot named "Gemini".
-You are connected via the Gemini bridge through LiteLLM to the mimo-v2.5 model.
+interface GeminiPromptResult {
+  stopReason: string;
+  _meta?: {
+    quota?: {
+      token_count?: {
+        input_tokens?: number;
+        output_tokens?: number;
+      };
+      model_usage?: unknown[];
+    };
+  };
+}
 
-You have access to 7 tools:
-- read_file / write_file / list_files / run_bash (file and command operations, cwd=/opt)
-- send_feishu_message (send Feishu messages to any chat_id)
-- memory_recall / memory_save (long-term memory via agentmemory)
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-When the user asks you to do something that requires reading files, running commands, or
-sending messages, USE the appropriate tool. Do not just say "let me read..." and stop.
+function firstString(...values: unknown[]): string {
+  for (const v of values) {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return '';
+}
 
-After tool execution, you will receive the result, then you can continue or give a final answer.
+function extractSessionId(msg: GeminiServerMessage): string {
+  const params = typeof msg.params === 'object' && msg.params ? msg.params as JsonRecord : {};
+  return typeof params.sessionId === 'string' ? params.sessionId : '';
+}
 
-When asked about your identity, say you are Gemini, a Feishu AI assistant powered by mimo-v2.5
-through LiteLLM, running on debian13.
+function sessionUpdateType(params: JsonRecord): string {
+  const update = params.update as JsonRecord | undefined;
+  if (!update) return '';
+  return typeof update.sessionUpdate === 'string' ? String(update.sessionUpdate) : '';
+}
 
----
+// ── GeminiProvider ───────────────────────────────────────────────────────────
 
-## 核心行为准则（每次执行前检查）
-
-1.先想再干 — 不确定就问，不要假设
-2.最简代码 — 能 50 行解决不要 200 行，不加未要求的功能
-3.手术刀式改动 — 只改必须改的，不碰相邻代码
-4.目标驱动 — 定义成功标准，循环验证
-`;
-
-/** OpenAI tool_call delta 累积器 */
-interface ToolCallAccumulator {
-  index: number;
-  id: string;
-  name: string;
-  argsBuf: string;
+export interface GeminiConfig {
+  cliPath?: string;
+  acpArgs?: string[];
+  apiKey?: string;
+  baseUrl?: string;
+  workingDirectory?: string;
 }
 
 export class GeminiProvider implements LLMProvider {
-  private readonly apiBase: string;
+  private client: GeminiAppServerClient | null = null;
+  private pidChanged = false;
   private readonly apiKey: string;
-  private readonly model: string;
+  private readonly baseUrl: string;
+  private readonly cliPath: string;
+  private readonly acpArgs: string[];
+  private readonly workingDirectory: string;
 
   constructor(config?: GeminiConfig) {
-    this.apiBase = config?.apiBase || process.env.CTI_GEMINI_API_BASE || DEFAULT_API_BASE;
-    this.apiKey = config?.apiKey || process.env.CTI_GEMINI_API_KEY || DEFAULT_API_KEY;
-    this.model = config?.model || process.env.CTI_GEMINI_MODEL || DEFAULT_MODEL;
+    this.apiKey = config?.apiKey || process.env.CTI_GEMINI_API_KEY || process.env.LITELLM_API_KEY || 'sk-200418';
+    this.baseUrl = config?.baseUrl || process.env.CTI_GEMINI_BASE_URL || 'http://127.0.0.1:4000';
+    this.cliPath = config?.cliPath || process.env.CTI_GEMINI_CLI_PATH || 'gemini';
+    this.acpArgs = config?.acpArgs || ['--acp', '--yolo'];
+    this.workingDirectory = config?.workingDirectory || process.env.CTI_GEMINI_WORKING_DIR || '/opt';
+  }
+
+  private async ensureClient(): Promise<GeminiAppServerClient> {
+    if (this.client) {
+      await this.client.prepare();
+      return this.client;
+    }
+    const client = new GeminiAppServerClient({
+      executable: this.cliPath,
+      acpArgs: this.acpArgs,
+      apiKey: this.apiKey,
+      baseUrl: this.baseUrl,
+    });
+    if (client.checkPidChanged()) {
+      this.pidChanged = true;
+    }
+    await client.prepare();
+    this.client = client;
+    return client;
   }
 
   async prepare(): Promise<void> {
-    try {
-      const res = await fetch(`${this.apiBase}/models`, {
-        headers: { 'Authorization': `Bearer ${this.apiKey}` },
-      });
-      if (!res.ok) {
-        console.warn(`[gemini-provider] LiteLLM health check failed: ${res.status}`);
-      }
-    } catch (err) {
-      console.warn(`[gemini-provider] LiteLLM not reachable: ${err}`);
-    }
+    await this.ensureClient();
+  }
+
+  didPidChange(): boolean {
+    return this.pidChanged;
+  }
+
+  resetPidChanged(): void {
+    this.pidChanged = false;
+  }
+
+  async close(): Promise<void> {
+    await this.client?.close();
+    this.client = null;
   }
 
   streamChat(params: StreamChatParams): ReadableStream<string> {
     const self = this;
     return new ReadableStream<string>({
       start(controller) {
-        void self.runStream(controller, params);
+        void self.run(controller, params);
       },
     });
   }
 
-  private async runStream(
+  private async run(
     controller: ReadableStreamDefaultController<string>,
     params: StreamChatParams,
   ): Promise<void> {
-    const { prompt, sdkSessionId, abortController, conversationHistory } = params;
+    const client = await this.ensureClient();
+    let unsubscribe: (() => void) | null = null;
+    const queue: GeminiServerMessage[] = [];
+    let wakeQueue: (() => void) | null = null;
 
-    // 构建初始 messages
-    const messages: Array<{ role: string; content: string }> = [{ role: 'system', content: SYSTEM_PROMPT }];
-    if (conversationHistory && conversationHistory.length > 0) {
-      const recent = conversationHistory.slice(-20);
-      for (const msg of recent) {
-        messages.push({ role: msg.role, content: msg.content });
-      }
-    }
-    messages.push({ role: 'user', content: prompt });
+    try {
+      // 创建会话
+      const newSession = await client.call<GeminiSessionNewResult>('session/new', {
+        cwd: params.workingDirectory || this.workingDirectory,
+        mcpServers: [],
+      });
+      const sessionId = newSession.sessionId;
+      console.log(`[gemini-provider] Session ${sessionId} created (model: ${newSession.models?.currentModelId || 'unknown'})`);
 
-    // 工具调用循环（max 10 次）
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const result = await this.callLLM(controller, messages, abortController, sdkSessionId, round);
-      if (result.finishReason === 'stop' || result.finishReason === 'length') {
-        // 正常结束
-        emitCanonicalTurnEvent(controller, { type: 'result', data: { session_id: sdkSessionId || '', is_error: false } });
-        emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
-        controller.close();
-        return;
-      }
-      if (result.finishReason === 'tool_calls') {
-        if (!result.toolCalls || result.toolCalls.length === 0) {
-          // 异常：finish_reason=tool_calls 但无 tool_calls
-          console.error(`[gemini-provider] Round ${round}: finish_reason=tool_calls 但无 tool_calls`);
-          emitCanonicalTurnEvent(controller, { type: 'error', data: 'LLM 返回 tool_calls 但未提供工具调用详情' });
-          emitCanonicalTurnEvent(controller, { type: 'result', data: { session_id: sdkSessionId || '', is_error: true } });
-          emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
-          controller.close();
-          return;
-        }
-        // 把 assistant 的 tool_calls 消息加入历史
-        messages.push({
-          role: 'assistant',
-          content: result.textContent || '',
-          // @ts-expect-error OpenAI 扩展字段
-          tool_calls: result.toolCalls.map(tc => ({
-            id: tc.id, type: 'function',
-            function: { name: tc.name, arguments: JSON.stringify(tc.args) },
-          })),
-        });
-        // 依次执行工具，把结果作为 tool 消息加入历史
-        for (const tc of result.toolCalls) {
-          console.log(`[gemini-provider] Round ${round} tool: ${tc.name} args=${JSON.stringify(tc.args).slice(0, 200)}`);
-          const toolResult = await executeTool(tc);
-          console.log(`[gemini-provider] Round ${round} tool ${tc.name} result: ${toolResult.slice(0, 200)}`);
-          messages.push({
-            role: 'tool',
-            // @ts-expect-error OpenAI 扩展字段
-            tool_call_id: tc.id,
-            content: toolResult,
+      // 订阅 server notifications
+      unsubscribe = client.subscribe((message) => {
+        if (extractSessionId(message) !== sessionId) return;
+        queue.push(message);
+        wakeQueue?.();
+        wakeQueue = null;
+      });
+
+      emitCanonicalTurnEvent(controller, {
+        type: 'status',
+        data: { session_id: sessionId },
+      });
+
+      // 发送 prompt
+      const promptInput = this.buildPrompt(params);
+      const result = await client.call<GeminiPromptResult>('session/prompt', {
+        sessionId,
+        prompt: promptInput,
+      });
+
+      // 处理流式 notifications
+      while (true) {
+        if (params.abortController?.signal.aborted) break;
+
+        const message = await this.readNext(queue, () => {
+          if (wakeQueue) return;
+          wakeQueue = () => {};
+        }, () => {
+          if (queue.length > 0) return;
+          return new Promise<void>((resolve) => {
+            wakeQueue = resolve;
           });
-        }
-        // 继续下一轮 LLM 调用
-        continue;
-      }
-      // 其他 finish_reason（content_filter 等）
-      console.error(`[gemini-provider] Round ${round}: 未知 finish_reason=${result.finishReason}`);
-      emitCanonicalTurnEvent(controller, { type: 'error', data: `LLM 异常终止 (finish_reason=${result.finishReason})` });
-      emitCanonicalTurnEvent(controller, { type: 'result', data: { session_id: sdkSessionId || '', is_error: true } });
-      emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
-      controller.close();
-      return;
-    }
+        });
+        if (!message) continue;
+        if (message.kind === 'request') continue; // 暂不支持 request
 
-    // 超过 MAX_TOOL_ROUNDS
-    console.error(`[gemini-provider] 超过 ${MAX_TOOL_ROUNDS} 轮工具调用，强制终止`);
-    emitCanonicalTurnEvent(controller, { type: 'error', data: `超过 ${MAX_TOOL_ROUNDS} 轮工具调用上限，终止` });
-    emitCanonicalTurnEvent(controller, { type: 'result', data: { session_id: sdkSessionId || '', is_error: true } });
-    emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
-    controller.close();
+        const paramsRecord = (typeof message.params === 'object' && message.params ? message.params as JsonRecord : {});
+        const updateType = sessionUpdateType(paramsRecord);
+        const update = paramsRecord.update as JsonRecord | undefined;
+        const content = update?.content as JsonRecord | undefined;
+
+        switch (updateType) {
+          case 'agent_message_chunk':
+            if (content && typeof content.text === 'string') {
+              emitCanonicalTurnEvent(controller, { type: 'text', data: content.text });
+            }
+            break;
+          case 'agent_thought_chunk':
+            if (content && typeof content.text === 'string') {
+              emitCanonicalTurnEvent(controller, { type: 'status', data: { reasoning: content.text } });
+            }
+            break;
+          case 'available_commands_update':
+            // 忽略命令列表
+            break;
+          case 'usage_update':
+            // Gemini 的 quota 信息在 result 中返回，此处忽略
+            break;
+          default:
+            // 忽略其他未处理的 update 类型
+            break;
+        }
+      }
+
+      // 发送最终 result
+      const isError = result.stopReason !== 'end_turn';
+      const usage = result._meta?.quota?.token_count;
+      emitCanonicalTurnEvent(controller, {
+        type: 'result',
+        data: {
+          session_id: sessionId,
+          is_error: isError,
+          ...(usage ? {
+            usage: {
+              input_tokens: usage.input_tokens || 0,
+              output_tokens: usage.output_tokens || 0,
+            },
+          } : {}),
+        },
+      });
+
+      // 压缩上下文（下次更快）
+      try {
+        await client.notify('session/compact', { sessionId });
+      } catch {
+        // non-critical
+      }
+
+      controller.close();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error('[gemini-provider] Error:', msg);
+      try {
+        emitCanonicalTurnEvent(controller, { type: 'error', data: msg });
+        controller.close();
+      } catch {
+        // already closed
+      }
+    } finally {
+      unsubscribe?.();
+    }
   }
 
-  /** 单次 LLM 调用 + SSE 流式解析 */
-  private async callLLM(
-    controller: ReadableStreamDefaultController<string>,
-    messages: Array<{ role: string; content: string }>,
-    abortController: AbortController | undefined,
-    sdkSessionId: string | undefined,
-    round: number,
-  ): Promise<{ finishReason: string; textContent: string; toolCalls: ParsedToolCall[] }> {
-    const body = {
-      model: this.model,
-      messages,
-      stream: true,
-      max_tokens: 4096,
-      tools: GEMINI_TOOLS,
-    };
+  private buildPrompt(
+    params: StreamChatParams,
+  ): Array<{ type: string; text?: string }> {
+    const parts: Array<{ type: string; text?: string }> = [];
 
-    console.log(`[gemini-provider] Round ${round}: POST ${this.apiBase}/chat/completions model=${this.model} msgs=${messages.length}`);
-
-    const res = await fetch(`${this.apiBase}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: abortController?.signal,
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      const errMsg = `LiteLLM API error: ${res.status} ${errText.slice(0, 300)}`;
-      console.error(`[gemini-provider] ${errMsg}`);
-      emitCanonicalTurnEvent(controller, { type: 'error', data: errMsg });
-      emitCanonicalTurnEvent(controller, { type: 'result', data: { session_id: sdkSessionId || '', is_error: true } });
-      emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
-      controller.close();
-      // 抛异常终止外层循环
-      throw new Error(errMsg);
+    // 注入历史（如果需要）
+    const history = params.conversationHistory;
+    if (history && history.length > 0) {
+      const historyText = history
+        .slice(-20)
+        .map((msg) => `${msg.role === 'user' ? '用户' : '助手'}：${msg.content}`)
+        .join('\n\n');
+      parts.push({
+        type: 'text',
+        text: `以下是之前的对话历史，请继续对话：\n\n${historyText}\n\n---\n\n用户最新消息：\n${params.prompt}`,
+      });
+    } else {
+      parts.push({ type: 'text', text: params.prompt });
     }
 
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let lineBuf = '';
-    let textContent = '';
-    let finishReason = 'stop';
-    const accumulators = new Map<number, ToolCallAccumulator>();
+    return parts;
+  }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      lineBuf += decoder.decode(value, { stream: true });
-      const lines = lineBuf.split('\n');
-      lineBuf = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-        const data = trimmed.slice(6);
-        if (data === '[DONE]') continue;
-
-        try {
-          const chunk = JSON.parse(data);
-          const choice = chunk.choices?.[0];
-          if (!choice) continue;
-          const delta = choice.delta || {};
-          if (delta.content) {
-            textContent += delta.content;
-            emitCanonicalTurnEvent(controller, { type: 'text', data: delta.content });
-          }
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index ?? 0;
-              if (!accumulators.has(idx)) {
-                accumulators.set(idx, {
-                  index: idx,
-                  id: tc.id || '',
-                  name: tc.function?.name || '',
-                  argsBuf: '',
-                });
-              }
-              const acc = accumulators.get(idx)!;
-              if (tc.id) acc.id = tc.id;
-              if (tc.function?.name) acc.name = tc.function.name;
-              if (tc.function?.arguments) acc.argsBuf += tc.function.arguments;
-            }
-          }
-          if (choice.finish_reason) {
-            finishReason = choice.finish_reason;
-          }
-        } catch {
-          // 忽略解析失败的 chunk
-        }
-      }
-    }
-
-    // 把累积的 tool_calls 解析为 ParsedToolCall[]
-    const toolCalls: ParsedToolCall[] = [];
-    for (const acc of accumulators.values()) {
-      let args: Record<string, unknown> = {};
-      if (acc.argsBuf) {
-        try { args = JSON.parse(acc.argsBuf); } catch { args = { _raw: acc.argsBuf }; }
-      }
-      toolCalls.push({ id: acc.id || `tc_${Date.now()}_${acc.index}`, name: acc.name, args });
-    }
-
-    console.log(`[gemini-provider] Round ${round} done: finish=${finishReason} text=${textContent.length}chars tools=${toolCalls.length}`);
-    return { finishReason, textContent, toolCalls };
+  private async readNext(
+    queue: GeminiServerMessage[],
+    _arm: () => void,
+    wait: () => Promise<void> | undefined,
+  ): Promise<GeminiServerMessage | null> {
+    if (queue.length > 0) return queue.shift() || null;
+    const w = wait();
+    if (w) await w;
+    return queue.shift() || null;
   }
 }
 

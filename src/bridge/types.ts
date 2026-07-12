@@ -226,7 +226,8 @@ export interface StreamingPreviewState {
   pendingText: string;
   inFlightSend: Promise<void> | null;
   streamStartedAt: number;
-  lastThinkingText: string;   // last thinking text sent to card (for delta calc)
+  lastThinkingText: string;   // current full thinking text from LLM
+  lastFlushedThinkingText: string; // last thinking text that was flushed to card
   pendingThinkingText: string; // buffered thinking when card not yet created
   toolHistory: string[];        // 正在执行的工具列表，每条一行；completed 时移除
   pendingPlanText: string;     // 计划内容（永久块，最终消息保留）

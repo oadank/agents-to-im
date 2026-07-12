@@ -782,7 +782,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     
     // 调用 transcribe.sh 转写
     const { execSync } = await import('node:child_process');
-    const transcribeScript = '/opt/.codex/skills/voice-engine/transcribe.sh';
+    const transcribeScript = '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
     try {
       const text = execSync(`bash "${transcribeScript}" "${tmpFile}"`, {
         encoding: 'utf-8',

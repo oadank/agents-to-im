@@ -4,6 +4,8 @@
  */
 
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 export interface RuntimeConfig {
   model: string;      // 实际模型名
@@ -11,14 +13,17 @@ export interface RuntimeConfig {
   displayName?: string; // 显示名称（可选）
 }
 
+// CTI_HOME 解析：优先环境变量，否则使用用户主目录
+const CTI_HOME = process.env.CTI_HOME || path.join(os.homedir(), '.agents-to-im');
+
 /**
  * 读取 Claude SDK 配置目录下的 settings.json 和 providers.json
  * 返回当前实际使用的 model 和 provider
  */
 function readClaudeConfig(): { model: string; provider: string } {
   try {
-    const settingsPath = '/root/.claude/cc-haha/settings.json';
-    const providersPath = '/root/.claude/cc-haha/providers.json';
+    const settingsPath = path.join(os.homedir(), '.claude', 'cc-haha', 'settings.json');
+    const providersPath = path.join(os.homedir(), '.claude', 'cc-haha', 'providers.json');
 
     let model: string | undefined;
     let provider: string | undefined;
@@ -56,7 +61,7 @@ function readClaudeConfig(): { model: string; provider: string } {
  * config.env 是 agents-to-im 的统一配置文件，每次调用都重新读取
  */
 function readConfigEnv(): Record<string, string> {
-  const configPath = '/opt/.agents-to-im/config.env';
+  const configPath = path.join(CTI_HOME, 'config.env');
   const result: Record<string, string> = {};
   try {
     if (!fs.existsSync(configPath)) return result;
@@ -101,6 +106,16 @@ function readMimoConfig(): { model: string; provider: string } {
 }
 
 /**
+ * 读取 Hermes 运行时配置：实时读 config.env
+ */
+function readHermesConfig(): { model: string; provider: string } {
+  const env = readConfigEnv();
+  const model = env.CTI_BOT_HERMES_MODEL_GROUP || 'codex-model';
+  const provider = env.CTI_BOT_HERMES_MODEL_PROVIDER || 'LiteLLM';
+  return { model, provider };
+}
+
+/**
  * 获取指定 runtime 的配置（每次调用时重新读取配置文件）
  * @param runtime runtime 名称
  * @returns RuntimeConfig 配置对象
@@ -127,6 +142,13 @@ export function getRuntimeConfig(runtime: string): RuntimeConfig {
     return { model, provider, displayName: 'MimoCode' };
   }
 
+  // Hermes runtime：实时读取 config.env
+  if (runtime === 'hermes') {
+    const { model, provider } = readHermesConfig();
+    console.log(`[runtime-configs] runtime=hermes → model=${model} provider=${provider} (from config.env)`);
+    return { model, provider, displayName: 'Hermes' };
+  }
+
   // 其他 runtime 保持原有逻辑（环境变量 + 默认值）
   const runtimeUpper = runtime.toUpperCase();
   const botModelKey = `CTI_BOT_${runtimeUpper}_MODEL_GROUP`;
@@ -141,6 +163,7 @@ export function getRuntimeConfig(runtime: string): RuntimeConfig {
     zcode:      { model: 'zcode-v1',      provider: 'zcode',     displayName: 'ZCode' },
     openhuman:  { model: 'openhuman-v1',  provider: 'openhuman', displayName: 'OpenHuman' },
     gemini:     { model: 'gemini-model',  provider: 'LiteLLM',   displayName: 'Gemini' },
+    hermes:     { model: 'codex-model',   provider: 'LiteLLM',   displayName: 'Hermes' },
   };
 
   const d = defaults[runtime] || defaults.mimo;

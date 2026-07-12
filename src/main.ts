@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import crypto from 'node:crypto';
 
 import { initBridgeContext } from './bridge/context.js';
@@ -58,22 +59,23 @@ function generateMcpConfigs(): void {
 
   console.log(`[agents-to-im] Syncing MCP config: ${Object.keys(mcpServers).join(', ')}`);
 
-  // 1. Claude: /opt/.claude/mcp.json
+  // 1. Claude: .claude/mcp.json (relative to home)
   try {
     const claudeMcp: Record<string, unknown> = { mcpServers: {} };
     for (const [name, cfg] of Object.entries(mcpServers)) {
       (claudeMcp.mcpServers as Record<string, unknown>)[name] = { type: 'http', url: cfg.url };
     }
-    fs.mkdirSync(path.dirname('/opt/.claude/mcp.json'), { recursive: true });
-    fs.writeFileSync('/opt/.claude/mcp.json', JSON.stringify(claudeMcp, null, 2));
+    const mcpPath = path.join(os.homedir(), '.claude', 'mcp.json');
+    fs.mkdirSync(path.dirname(mcpPath), { recursive: true });
+    fs.writeFileSync(mcpPath, JSON.stringify(claudeMcp, null, 2));
   } catch (err) {
     console.warn('[agents-to-im] Failed to write Claude MCP config:', err);
   }
 
-  // 2. MiMo/Gemini ACP: mimocode.json
+  // 2. MiMo/Gemini ACP: mimocode.json (relative to home)
   const mimocodePaths = [
-    '/opt/.mimocode/config/mimocode.json',
-    '/opt/.gemini-acp/.mimocode/config/mimocode.json',
+    path.join(os.homedir(), '.mimocode', 'config', 'mimocode.json'),
+    path.join(os.homedir(), '.gemini-acp', '.mimocode', 'config', 'mimocode.json'),
   ];
   for (const configPath of mimocodePaths) {
     try {

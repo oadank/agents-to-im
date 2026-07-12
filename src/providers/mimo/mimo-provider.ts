@@ -17,6 +17,42 @@ import path from 'node:path';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
+/**
+ * 在 Windows 上，NSSM 服务环境的 PATH/ComSpec/SystemRoot 可能不完整，
+ * 导致 CreateProcess 找不到 node.exe 或 cmd.exe。
+ * 此函数确保 spawn 的 env 包含最少必需的系统变量。
+ */
+function buildSpawnEnv(): NodeJS.ProcessEnv {
+  if (process.platform !== 'win32') return { ...process.env };
+  return {
+    ...process.env,
+    ComSpec: process.env.ComSpec || 'C:\\WINDOWS\\system32\\cmd.exe',
+    SystemRoot: process.env.SystemRoot || 'C:\\WINDOWS',
+    PATH: [
+      'C:\\WINDOWS\\system32',
+      'C:\\WINDOWS',
+      'C:\\WINDOWS\\System32\\Wbem',
+      'C:\\Program Files\\nodejs',
+      'C:\\Users\\oadan\\AppData\\Roaming\\npm',
+    ].join(';'),
+  };
+}
+
+function resolveMimoExecutable(): { command: string; args: string[] } {
+  if (process.platform === 'win32') {
+    const candidates = [
+      'C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\@mimo-ai\\cli\\node_modules\\@mimo-ai\\mimocode-windows-x64\\bin\\mimo.exe',
+      'C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\@mimo-ai\\cli\\node_modules\\@mimo-ai\\mimocode-windows-x64-baseline\\bin\\mimo.exe',
+    ];
+    for (const exe of candidates) {
+      if (fs.existsSync(exe)) {
+        return { command: exe, args: [] };
+      }
+    }
+  }
+  return { command: 'mimo', args: [] };
+}
+
 // ── MiMo MCP 配置加载 ──
 
 interface MiMoMcpServer {
@@ -142,8 +178,10 @@ export class MiMoProvider implements LLMProvider {
 
   async prepare(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const child = spawn('mimo', ['--version'], {
+      const { command, args } = resolveMimoExecutable();
+      const child = spawn(command, [...args, '--version'], {
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: buildSpawnEnv(),
       });
       child.on('close', (code) => {
         code === 0 ? resolve() : reject(new Error('mimo CLI not available'));
@@ -185,16 +223,29 @@ export class MiMoProvider implements LLMProvider {
     }
 
     // 新建 session
-    const cwd = params.workingDirectory || process.cwd();
-    const env: NodeJS.ProcessEnv = { ...process.env };
+    // Windows spawn 的 cwd 必须指向实际存在的目录，否则报 ENOENT
+    const rawCwd = params.workingDirectory || process.cwd();
+    const cwd = process.platform === 'win32' && !fs.existsSync(rawCwd)
+      ? (process.env.USERPROFILE || 'C:\\Users\\oadan')
+      : rawCwd;
 
     console.log(`[mimo-provider] ACP spawn: bin=mimo cwd=${cwd}`);
     const configCwd = process.env.CTI_MIMO_ACP_CWD || cwd;
+    // session/new 必须传绝对路径，否则 mimo 的信任列表检查可能不匹配
+    const sessionNewCwd = process.platform === 'win32' ? cwd : configCwd;
 
     const saved = this.loadSavedSession(cacheKey);
 
-    const child = spawn('mimo', ['acp', '--hostname', '127.0.0.1', '--cwd', configCwd], {
-      cwd, env, stdio: ['pipe', 'pipe', 'pipe'],
+    const { command, args } = resolveMimoExecutable();
+    const child = spawn(command, [...args, 'acp', '--hostname', '127.0.0.1', '--cwd', configCwd], {
+      cwd, stdio: ['pipe', 'pipe', 'pipe'],
+      env: buildSpawnEnv(),
+    });
+
+    // 必须读 stderr，否则管道满了进程卡死
+    child.stderr!.on('data', (chunk: Buffer) => {
+      const text = chunk.toString().trim();
+      if (text) console.error(`[mimo-provider] ACP stderr: ${text.slice(0, 500)}`);
     });
 
     emitCanonicalTurnEvent(controller, {
@@ -248,6 +299,10 @@ export class MiMoProvider implements LLMProvider {
         return cached;
       };
 
+      // session/new 的 cwd 参数在 Windows 上不能用绝对路径（mimo.exe 内部 bug），
+      // 用 '.' 让它使用 --cwd 参数指定的目录即可
+      const sessionNewCwd = process.platform === 'win32' ? '.' : cwd;
+
       const fallbackToNew = () => {
         console.log(`[mimo-provider] Resume failed, falling back to session/new`);
         this.removeSavedSession(cacheKey);
@@ -255,7 +310,7 @@ export class MiMoProvider implements LLMProvider {
         sessionId2 = 99;
         child.stdin!.write(JSON.stringify({
           jsonrpc: '2.0', id: sessionId2, method: 'session/new',
-          params: { cwd, mcpServers: [] },
+          params: { cwd: sessionNewCwd, mcpServers: [] },
         }) + '\n');
       };
 
@@ -289,12 +344,12 @@ export class MiMoProvider implements LLMProvider {
                 console.log(`[mimo-provider] Attempting session/load: ${saved.sessionId}`);
                 child.stdin!.write(JSON.stringify({
                   jsonrpc: '2.0', id: sessionId2, method: 'session/load',
-                  params: { sessionId: saved.sessionId, cwd: saved.cwd, mcpServers: [] },
+                  params: { sessionId: saved.sessionId, cwd: sessionNewCwd, mcpServers: [] },
                 }) + '\n');
               } else {
                 child.stdin!.write(JSON.stringify({
                   jsonrpc: '2.0', id: sessionId2, method: 'session/new',
-                  params: { cwd, mcpServers: [] },
+                  params: { cwd: sessionNewCwd, mcpServers: [] },
                 }) + '\n');
               }
               continue;
@@ -376,9 +431,11 @@ export class MiMoProvider implements LLMProvider {
               cached.currentSettle = null;
               const newSessionId = cached.nextId++;
               cached.currentPromptId = newSessionId;
+              // session/new cwd: on Windows must be relative ('.') to avoid mimo.exe path check bug
+              const recoverCwd = process.platform === 'win32' ? '.' : cached.cwd;
               cached.child.stdin!.write(JSON.stringify({
                 jsonrpc: '2.0', id: newSessionId, method: 'session/new',
-                params: { cwd: cached.cwd, mcpServers: [] },
+                params: { cwd: recoverCwd, mcpServers: [] },
               }) + '\n');
               continue;
             }
@@ -467,7 +524,24 @@ export class MiMoProvider implements LLMProvider {
           }
           if (update?.sessionUpdate === 'tool_call') {
             const toolInfo = update.input ? `${update.title} ${JSON.stringify(update.input).slice(0, 100)}` : (update.title || '工具');
-            console.log(`[mimo-provider] ACP tool_call: ${toolInfo} status=${update.status}`);
+            const toolStatus = (update.status as string) || 'running';
+            const toolCallId = String((update as any).toolCallId || (update as any).callId || `mimo-tool:${update.title || 'tool'}:${Date.now()}`);
+            const toolName = String(update.title || 'tool');
+            console.log(`[mimo-provider] ACP tool_call: ${toolInfo} status=${toolStatus} id=${toolCallId}`);
+            // 只发 activity_event，不改 tool_use/tool_result（避免破坏现有的 block 格式）
+            if (cached.currentController) {
+              emitCanonicalTurnEvent(cached.currentController, {
+                type: 'activity_event',
+                data: {
+                  kind: 'tool_activity',
+                  toolUseId: toolCallId,
+                  toolName,
+                  status: toolStatus === 'failed' ? 'failed' : (toolStatus === 'completed' ? 'completed' : 'running'),
+                  inputPreview: update.input && typeof update.input === 'object' ? JSON.stringify(update.input).slice(0, 220) : '',
+                  resultPreview: update.output && typeof update.output === 'string' ? update.output.slice(0, 220) : '',
+                },
+              });
+            }
           }
           continue;
         }
@@ -492,7 +566,7 @@ export class MiMoProvider implements LLMProvider {
         // init 阶段响应（已处理）
         if (id != null && id <= 2 && isResponse) continue;
 
-        // Session not found 恢复
+        // Session recovery: new session + retry
         if (isResponse && cached.pendingRetryPrompt && cached.pendingRetrySettle && id != null && id === cached.currentPromptId) {
           if (msg.error) {
             console.error(`[mimo-provider] ACP session recovery failed:`, JSON.stringify(msg.error));
@@ -506,8 +580,8 @@ export class MiMoProvider implements LLMProvider {
           const newSessionId = r.sessionId as string;
           console.log(`[mimo-provider] ACP session recovered: ${newSessionId}`);
           cached.sessionId = newSessionId;
-          const retryPrompt = cached.pendingRetryPrompt;
-          const retrySettle = cached.pendingRetrySettle;
+          const retryPrompt = cached.pendingRetryPrompt!;
+          const retrySettle = cached.pendingRetrySettle!;
           cached.pendingRetryPrompt = null;
           cached.pendingRetrySettle = null;
           cached.pendingRetryController = null;
@@ -515,6 +589,8 @@ export class MiMoProvider implements LLMProvider {
           cached.currentPromptId = retryId;
           cached.currentText = '';
           cached.currentSettle = retrySettle;
+          // session/new cwd: on Windows must be relative, not absolute (mimo internal bug)
+          const retrySessionNewCwd = process.platform === 'win32' ? '.' : cached.cwd;
           cached.child.stdin!.write(JSON.stringify({
             jsonrpc: '2.0', id: retryId, method: 'session/prompt',
             params: {

@@ -292,7 +292,7 @@ export async function handleDirectMessage(
       await ctx.ensureRuntimeAvailable(runtime);
       const store = ctx.getStore();
       const options: Parameters<typeof ctx.createBoundSession>[2] = {
-        cwd: '/opt',
+        cwd: process.platform === 'win32' ? (process.env.USERPROFILE || 'C:\\Users\\oadan') : '/opt',
         bindingMode: 'code',
         existingChatId: inbound.address.chatId,
         skipReadyMessage: true,

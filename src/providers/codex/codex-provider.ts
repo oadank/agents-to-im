@@ -1,5 +1,6 @@
-import { execSync } from 'node:child_process';
-import fs from 'node:fs';
+import { exec } from 'node:child_process';
+import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -103,7 +104,7 @@ export function isTrustedCodexWorkingDirectory(workingDirectory: string | undefi
 }
 
 function hasLocalCodexConfig(): boolean {
-  return fs.existsSync(path.join(resolveCodexHome(), 'config.toml'));
+  return fsSync.existsSync(path.join(resolveCodexHome(), 'config.toml'));
 }
 
 function looksLikeClaudeModel(model?: string): boolean {
@@ -582,7 +583,7 @@ ${prompt}`;
     if (!file.type.startsWith('image/')) continue;
     const ext = MIME_EXT[file.type] || '.png';
     const tmpPath = path.join(os.tmpdir(), `cti-img-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
-    fs.writeFileSync(tmpPath, Buffer.from(file.data, 'base64'));
+    fsSync.writeFileSync(tmpPath, Buffer.from(file.data, 'base64'));
     tempFiles.push(tmpPath);
     input.push({ type: 'localImage', path: tmpPath });
   }
@@ -965,7 +966,7 @@ export class CodexProvider implements LLMProvider {
       unsubscribe?.();
       for (const tmp of tempFiles) {
         try {
-          fs.unlinkSync(tmp);
+          fsSync.unlinkSync(tmp);
         } catch {
           // ignore
         }
@@ -1079,6 +1080,17 @@ export class CodexProvider implements LLMProvider {
         },
       });
 
+      // Emit running activity FIRST so three-panel preview card shows tool in progress
+      emitCanonicalTurnEvent(controller, {
+        type: 'activity_event',
+        data: buildToolActivity(
+          callId,
+          'running',
+          namespace ? `${namespace}/${tool}` : tool,
+          { turnId, source: 'tool_call', inputPreview: truncatePreview(JSON.stringify(toolArgs)) },
+        ),
+      });
+
       try {
         let resultText = '';
         let success = false;
@@ -1097,50 +1109,65 @@ export class CodexProvider implements LLMProvider {
           const command = String(toolArgs.command || '');
           const cwd = toolArgs.cwd ? String(toolArgs.cwd) : undefined;
           try {
-            const result = execSync(command, {
-              cwd,
-              encoding: 'utf8',
-              maxBuffer: 10 * 1024 * 1024,
-              timeout: 120000,
-              windowsHide: true,
+            const { stdout, stderr, exitCode } = await new Promise<{ stdout: string; stderr: string; exitCode: number | null }>((resolve, reject) => {
+              exec(command, {
+                cwd,
+                encoding: 'utf8',
+                maxBuffer: 10 * 1024 * 1024,
+                timeout: 120000,
+                windowsHide: true,
+              }, (error, stdout, stderr) => {
+                if (error) {
+                  resolve({ stdout: stdout || '', stderr: stderr || '', exitCode: error.code ?? 1 });
+                } else {
+                  resolve({ stdout: stdout || '', stderr: stderr || '', exitCode: 0 });
+                }
+              });
             });
-            resultText = result || '(no output)';
-            success = true;
+            resultText = stdout || '(no output)';
+            success = exitCode === 0;
           } catch (execError: unknown) {
-            const err = execError as (NodeJS.ErrnoException & { stdout?: string; stderr?: string });
-            const stdout = err.stdout || '';
-            const stderr = err.stderr || '';
-            resultText = stdout + '\n' + (stderr || err.message || String(execError));
+            resultText = String(execError);
             success = false;
           }
         } else if (tool === 'Read') {
           const filePath = String(toolArgs.path || toolArgs.file || '');
-          resultText = fs.readFileSync(filePath, 'utf8');
+          resultText = await fs.readFile(filePath, 'utf8');
           success = true;
         } else if (tool === 'Edit' || tool === 'Write') {
           const filePath = String(toolArgs.path || toolArgs.file || '');
           const content = String(toolArgs.content || toolArgs.text || '');
-          fs.writeFileSync(filePath, content, 'utf8');
+          await fs.writeFile(filePath, content, 'utf8');
           resultText = 'Done';
           success = true;
         } else if (tool === 'Glob') {
           const pattern = String(toolArgs.pattern || '');
           const searchPath = toolArgs.path ? String(toolArgs.path) : undefined;
-          resultText = fs.readdirSync(searchPath || '.').join('\n') || '(no files)';
+          const files = await fs.readdir(searchPath || '.');
+          resultText = files.join('\n') || '(no files)';
           success = true;
         } else if (tool === 'Grep') {
           const pattern = String(toolArgs.pattern || '');
           const filePath = String(toolArgs.path || toolArgs.file || '.');
           try {
-            const result = execSync(
-              `findstr /s /c:"${pattern.replace(/["<>|]/g, '')}" "${filePath}"`,
-              { encoding: 'utf8', timeout: 15000, windowsHide: true }
-            );
-            resultText = result || '(no matches)';
-            success = true;
+            const { stdout } = await new Promise<{ stdout: string; stderr: string; exitCode: number | null }>((resolve, reject) => {
+              exec(
+                `findstr /s /c:"${pattern.replace(/["<>|]/g, '')}" "${filePath}"`,
+                { encoding: 'utf8', timeout: 15000, windowsHide: true },
+                (error, stdout, stderr) => {
+                  if (error) {
+                    resolve({ stdout: stdout || '', stderr: stderr || '', exitCode: error.code ?? 1 });
+                  } else {
+                    resolve({ stdout: stdout || '', stderr: stderr || '', exitCode: 0 });
+                  }
+                }
+              );
+            });
+            resultText = stdout || '(no matches)';
+            success = true; // grep exit code 1 = no matches, not an error
           } catch {
             resultText = '(no matches)';
-            success = true; // grep exit code 1 = no matches, not an error
+            success = true;
           }
         } else {
           throw new Error(`Unsupported tool: ${tool}`);

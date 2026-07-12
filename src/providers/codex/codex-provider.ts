@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -893,6 +894,22 @@ export class CodexProvider implements LLMProvider {
           case 'serverRequest/resolved':
             emitCanonicalTurnEvent(controller, { type: 'server_request_resolved', data: paramsRecord });
             break;
+          case 'rawResponseItem/completed': {
+            // codex 0.144.1+ sends raw OpenAI response items - handle for completeness
+            const rawItem = paramsRecord.item as JsonRecord | undefined;
+            if (rawItem) {
+              const rawType = normalizeItemType(rawItem.type);
+              if (rawType === 'agent_message') {
+                const text = typeof rawItem.text === 'string' ? rawItem.text : '';
+                if (text) {
+                  emitCanonicalTurnEvent(controller, { type: 'text_segment', data: text });
+                }
+              } else if (rawType === 'local_shell_call' || rawType === 'function_call' || rawType === 'custom_tool_call') {
+                // These are handled by item/completed with ThreadItem types
+              }
+            }
+            break;
+          }
           case 'codex/event/exec_command_begin':
           case 'codex/event/exec_command_output_delta':
           case 'codex/event/exec_command_end':
@@ -963,7 +980,7 @@ export class CodexProvider implements LLMProvider {
     }
 
     const threadParams: JsonRecord = {
-      experimentalRawEvents: false,
+      experimentalRawEvents: true,
       persistExtendedHistory: true,
     };
     if (params.workingDirectory) {
@@ -1042,6 +1059,137 @@ export class CodexProvider implements LLMProvider {
       });
       const resolution = await this.pendingApprovals.waitFor(requestId);
       await client.respond(message.id, approvalResponseFor(message.method, params, resolution));
+      return;
+    }
+
+    if (message.method === 'item/tool/call') {
+      const tool = String(params.tool);
+      const namespace = params.namespace ? String(params.namespace) : null;
+      const toolArgs = typeof params.arguments === 'object' && params.arguments ? params.arguments as JsonRecord : {};
+      const turnId = typeof params.turnId === 'string' ? params.turnId : '';
+      const callId = String(params.callId || message.id || 'unknown');
+
+      // Emit tool_use event so Feishu shows the tool being invoked
+      emitCanonicalTurnEvent(controller, {
+        type: 'tool_use',
+        data: {
+          id: callId,
+          name: namespace ? `${namespace}/${tool}` : tool,
+          input: toolArgs,
+        },
+      });
+
+      try {
+        let resultText = '';
+        let success = false;
+
+        if (namespace) {
+          // MCP tool: delegate via server-side mcpServer/tool/call
+          const mcpResult = await client.call('mcpServer/tool/call', {
+            serverName: namespace,
+            toolName: tool,
+            arguments: toolArgs,
+          });
+          resultText = typeof mcpResult === 'string' ? mcpResult
+            : JSON.stringify(mcpResult, null, 2);
+          success = true;
+        } else if (tool === 'Bash') {
+          const command = String(toolArgs.command || '');
+          const cwd = toolArgs.cwd ? String(toolArgs.cwd) : undefined;
+          try {
+            const result = execSync(command, {
+              cwd,
+              encoding: 'utf8',
+              maxBuffer: 10 * 1024 * 1024,
+              timeout: 120000,
+              windowsHide: true,
+            });
+            resultText = result || '(no output)';
+            success = true;
+          } catch (execError: unknown) {
+            const err = execError as (NodeJS.ErrnoException & { stdout?: string; stderr?: string });
+            const stdout = err.stdout || '';
+            const stderr = err.stderr || '';
+            resultText = stdout + '\n' + (stderr || err.message || String(execError));
+            success = false;
+          }
+        } else if (tool === 'Read') {
+          const filePath = String(toolArgs.path || toolArgs.file || '');
+          resultText = fs.readFileSync(filePath, 'utf8');
+          success = true;
+        } else if (tool === 'Edit' || tool === 'Write') {
+          const filePath = String(toolArgs.path || toolArgs.file || '');
+          const content = String(toolArgs.content || toolArgs.text || '');
+          fs.writeFileSync(filePath, content, 'utf8');
+          resultText = 'Done';
+          success = true;
+        } else if (tool === 'Glob') {
+          const pattern = String(toolArgs.pattern || '');
+          const searchPath = toolArgs.path ? String(toolArgs.path) : undefined;
+          resultText = fs.readdirSync(searchPath || '.').join('\n') || '(no files)';
+          success = true;
+        } else if (tool === 'Grep') {
+          const pattern = String(toolArgs.pattern || '');
+          const filePath = String(toolArgs.path || toolArgs.file || '.');
+          try {
+            const result = execSync(
+              `findstr /s /c:"${pattern.replace(/["<>|]/g, '')}" "${filePath}"`,
+              { encoding: 'utf8', timeout: 15000, windowsHide: true }
+            );
+            resultText = result || '(no matches)';
+            success = true;
+          } catch {
+            resultText = '(no matches)';
+            success = true; // grep exit code 1 = no matches, not an error
+          }
+        } else {
+          throw new Error(`Unsupported tool: ${tool}`);
+        }
+
+        // Emit tool_result event
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_result',
+          data: {
+            tool_use_id: callId,
+            content: resultText,
+            is_error: !success,
+          },
+        });
+
+        // Also emit as activity event for better visibility in Feishu
+        const activity = buildToolActivity(
+          callId,
+          success ? 'completed' : 'failed',
+          namespace ? `${namespace}/${tool}` : tool,
+          {
+            turnId,
+            source: 'tool_call',
+            inputPreview: truncatePreview(JSON.stringify(toolArgs)),
+            resultPreview: truncatePreview(resultText),
+          },
+        );
+        emitCanonicalTurnEvent(controller, { type: 'activity_event', data: activity });
+
+        await client.respond(message.id, {
+          contentItems: [{ type: 'inputText', text: resultText }],
+          success,
+        });
+      } catch (error) {
+        console.error('[codex-provider] Error handling item/tool/call:', error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_result',
+          data: {
+            tool_use_id: callId,
+            content: errorMsg,
+            is_error: true,
+          },
+        });
+        await client.respond(message.id, {
+          contentItems: [{ type: 'inputText', text: errorMsg }],
+          success: false,
+        });
+      }
       return;
     }
 
@@ -1207,10 +1355,186 @@ export class CodexProvider implements LLMProvider {
       }
       case 'reasoning': {
         const parts = Array.isArray(item.content) ? item.content.filter((part): part is string => typeof part === 'string') : [];
-        const text = parts.join('\n').trim();
+        const summaryParts = Array.isArray(item.summary) ? item.summary.filter((part): part is string => typeof part === 'string') : [];
+        const text = parts.join('\n').trim() || summaryParts.join('\n').trim();
         if (text) {
           emitCanonicalTurnEvent(controller, { type: 'status', data: { reasoning: text, turn_id: resolvedTurnId } });
+          // Also emit completed reasoning activity
+          emitCanonicalTurnEvent(controller, {
+            type: 'activity_event',
+            data: {
+              kind: 'reasoning_activity',
+              id: `reasoning:${resolvedTurnId || item.id}`,
+              turnId: resolvedTurnId,
+              status: 'completed',
+              text,
+              source: 'reasoning',
+            } satisfies ActivityEvent,
+          });
         }
+        break;
+      }
+      // --- codex 0.144.1 new item types ---
+      case 'local_shell_call': {
+        const toolId = typeof item.id === 'string' ? item.id : `local-shell:${resolvedTurnId || Date.now()}`;
+        const action = item.action as JsonRecord | undefined;
+        const cmdArray = Array.isArray(action?.command) ? action.command : [];
+        const commandStr = cmdArray.join(' ');
+        const cwd = typeof action?.working_directory === 'string' ? action.working_directory : (typeof item.cwd === 'string' ? item.cwd : undefined);
+        emitCanonicalTurnEvent(controller, {
+          type: 'activity_event',
+          data: {
+            kind: 'command_execution',
+            id: toolId,
+            turnId: resolvedTurnId,
+            status: 'completed',
+            command: commandStr,
+            cwd,
+            output: '',
+            exitCode: 0,
+          } satisfies ActivityEvent,
+        });
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_use',
+          data: {
+            id: toolId,
+            name: 'Bash',
+            input: { command: commandStr, cwd },
+          },
+        });
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_result',
+          data: {
+            tool_use_id: toolId,
+            content: commandStr ? `Executed: ${commandStr}` : 'Executed command',
+            is_error: false,
+          },
+        });
+        break;
+      }
+      case 'function_call': {
+        const toolId = typeof item.id === 'string' ? item.id : `func:${resolvedTurnId || Date.now()}`;
+        const funcName = typeof item.name === 'string' ? item.name : 'function_call';
+        const args = typeof item.arguments === 'string' ? (() => { try { return JSON.parse(item.arguments); } catch { return {}; } })() : {};
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_use',
+          data: {
+            id: toolId,
+            name: funcName,
+            input: args,
+          },
+        });
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_result',
+          data: {
+            tool_use_id: toolId,
+            content: `Called ${funcName}`,
+            is_error: false,
+          },
+        });
+        break;
+      }
+      case 'function_call_output': {
+        const toolId = typeof item.id === 'string' ? item.id : `func-out:${resolvedTurnId || Date.now()}`;
+        const output = item.output as JsonRecord | undefined;
+        const content = typeof output?.text === 'string' ? output.text
+          : typeof output?.content === 'string' ? output.content
+          : JSON.stringify(output || {}, null, 2);
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_result',
+          data: {
+            tool_use_id: item.call_id || toolId,
+            content,
+            is_error: false,
+          },
+        });
+        break;
+      }
+      case 'custom_tool_call': {
+        const toolId = typeof item.id === 'string' ? item.id : `custom:${resolvedTurnId || Date.now()}`;
+        const funcName = typeof item.name === 'string' ? item.name : 'custom_tool';
+        const ns = typeof item.namespace === 'string' ? item.namespace : '';
+        const fullName = ns ? `${ns}/${funcName}` : funcName;
+        const args = typeof item.input === 'string' ? (() => { try { return JSON.parse(item.input); } catch { return {}; } })() : {};
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_use',
+          data: {
+            id: toolId,
+            name: fullName,
+            input: args,
+          },
+        });
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_result',
+          data: {
+            tool_use_id: toolId,
+            content: `Called ${fullName}`,
+            is_error: false,
+          },
+        });
+        break;
+      }
+      case 'custom_tool_call_output': {
+        const toolId = typeof item.id === 'string' ? item.id : `custom-out:${resolvedTurnId || Date.now()}`;
+        const output = item.output as JsonRecord | undefined;
+        const content = typeof output?.text === 'string' ? output.text
+          : typeof output?.content === 'string' ? output.content
+          : JSON.stringify(output || {}, null, 2);
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_result',
+          data: {
+            tool_use_id: item.call_id || toolId,
+            content,
+            is_error: false,
+          },
+        });
+        break;
+      }
+      case 'agent_message': {
+        const text = typeof item.text === 'string' ? item.text : '';
+        if (text) {
+          emitCanonicalTurnEvent(controller, { type: 'text_segment', data: text });
+        }
+        break;
+      }
+      case 'dynamicToolCall': {
+        const toolId = typeof item.id === 'string' ? item.id : `tool:${resolvedTurnId || Date.now()}`;
+        const toolName = typeof item.tool === 'string' ? item.tool : 'tool';
+        const namespace = typeof item.namespace === 'string' ? item.namespace : '';
+        const fullName = namespace ? `${namespace}/${toolName}` : toolName;
+        const contentItems = Array.isArray(item.contentItems)
+          ? item.contentItems as Array<{ type?: string; text?: string }>
+          : [];
+        const resultText = contentItems.map((ci) => ci.text || '').join('\n').trim();
+        const success = item.success === true || item.success === null ? true : false;
+        const activity = buildToolActivity(
+          toolId,
+          success ? 'completed' : 'failed',
+          fullName,
+          {
+            turnId: resolvedTurnId,
+            source: 'tool_call',
+            inputPreview: stringifyPreview(item.arguments),
+            resultPreview: truncatePreview(resultText),
+          },
+        );
+        emitCanonicalTurnEvent(controller, { type: 'activity_event', data: activity });
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_use',
+          data: {
+            id: toolId,
+            name: fullName,
+            input: item.arguments,
+          },
+        });
+        emitCanonicalTurnEvent(controller, {
+          type: 'tool_result',
+          data: {
+            tool_use_id: toolId,
+            content: resultText || (success ? 'Done' : 'Failed'),
+            is_error: !success,
+          },
+        });
         break;
       }
     }
@@ -1223,7 +1547,10 @@ export class CodexProvider implements LLMProvider {
   ): void {
     if (!item) return;
     const itemType = normalizeItemType(item.type);
-    if (itemType === 'commandExecution') {
+    if (itemType === 'commandExecution' || itemType === 'local_shell_call') {
+      const action = typeof item.action === 'object' && item.action ? item.action as JsonRecord : {};
+      const commandArr = Array.isArray(action?.command) ? action.command : [];
+      const commandStr = commandArr.join(' ');
       emitCanonicalTurnEvent(controller, {
         type: 'activity_event',
         data: {
@@ -1231,9 +1558,41 @@ export class CodexProvider implements LLMProvider {
           id: typeof item.id === 'string' ? item.id : `command:${turnId || Date.now()}`,
           turnId: turnId || undefined,
           status: 'running',
-          command: typeof item.command === 'string' ? item.command : '',
-          cwd: typeof item.cwd === 'string' ? item.cwd : undefined,
+          command: commandStr || typeof item.command === 'string' ? item.command : '',
+          cwd: typeof item.cwd === 'string' ? item.cwd : (typeof action?.working_directory === 'string' ? action.working_directory : undefined),
         } satisfies ActivityEvent,
+      });
+      // Also emit tool_use for tool layer display
+      emitCanonicalTurnEvent(controller, {
+        type: 'tool_use',
+        data: {
+          id: typeof item.id === 'string' ? item.id : `bash:${turnId || Date.now()}`,
+          name: 'Bash',
+          input: {
+            command: commandStr || typeof item.command === 'string' ? item.command : '',
+            cwd: typeof item.cwd === 'string' ? item.cwd : (typeof action?.working_directory === 'string' ? action.working_directory : undefined),
+          },
+        },
+      });
+      return;
+    }
+    if (itemType === 'dynamicToolCall') {
+      const toolId = typeof item.id === 'string' ? item.id : `tool:${turnId || Date.now()}`;
+      const toolName = typeof item.tool === 'string' ? item.tool : 'tool';
+      const namespace = typeof item.namespace === 'string' ? item.namespace : '';
+      const fullName = namespace ? `${namespace}/${toolName}` : toolName;
+      emitCanonicalTurnEvent(controller, {
+        type: 'activity_event',
+        data: buildToolActivity(
+          toolId,
+          'running',
+          fullName,
+          {
+            turnId: turnId || undefined,
+            source: 'tool_call',
+            inputPreview: stringifyPreview(item.arguments),
+          },
+        ),
       });
       return;
     }
@@ -1251,18 +1610,22 @@ export class CodexProvider implements LLMProvider {
       });
       return;
     }
-    if (itemType === 'mcpToolCall') {
+    if (itemType === 'mcpToolCall' || itemType === 'function_call' || itemType === 'custom_tool_call') {
       const toolId = firstString(item.id) || `tool:${turnId || Date.now()}`;
+      const toolName = typeof item.name === 'string' ? item.name : (typeof item.tool === 'string' ? item.tool : 'tool');
+      const namespace = typeof item.namespace === 'string' ? item.namespace : '';
+      const server = typeof item.server === 'string' ? item.server : '';
+      const fullName = namespace ? `${namespace}/${toolName}` : server ? `${server}/${toolName}` : toolName;
       emitCanonicalTurnEvent(controller, {
         type: 'activity_event',
         data: buildToolActivity(
           toolId,
           'running',
-          `${firstString(item.server)}/${firstString(item.tool)}`.replace(/^\/+/, ''),
+          fullName,
           {
             turnId: turnId || undefined,
             source: 'tool_call',
-            inputPreview: stringifyPreview(item.arguments),
+            inputPreview: stringifyPreview(item.arguments || item.input),
           },
         ),
       });

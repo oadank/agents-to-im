@@ -17,6 +17,14 @@ import path from 'node:path';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
+// 实时日志：绕过 NSSM stdout 缓冲
+function rtLog(msg: string): void {
+  const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'unknown'}.log`;
+  try {
+    fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`, 'utf-8');
+  } catch {}
+}
+
 /**
  * 在 Windows 上，NSSM 服务环境的 PATH/ComSpec/SystemRoot 可能不完整，
  * 导致 CreateProcess 找不到 node.exe 或 cmd.exe。
@@ -177,18 +185,37 @@ export class MiMoProvider implements LLMProvider {
   }
 
   async prepare(): Promise<void> {
+    // Windows NSSM环境下 --version 会挂死（mimo.exe可能有网络/配置初始化），直接跳过版本检查
+    // 手动测试确认 mimo.exe acp 可用
+    if (process.platform === 'win32') {
+      rtLog(`[mimo-provider] prepare: Windows environment, skipping --version check`);
+      return;
+    }
     return new Promise<void>((resolve, reject) => {
       const { command, args } = resolveMimoExecutable();
+      rtLog(`[mimo-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
       const child = spawn(command, [...args, '--version'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: buildSpawnEnv(),
+        windowsHide: true,
       });
+      let stdoutBuf = '';
+      let stderrBuf = '';
+      child.stdout?.on('data', (chunk) => { stdoutBuf += chunk.toString(); });
+      child.stderr?.on('data', (chunk) => { stderrBuf += chunk.toString(); });
       child.on('close', (code) => {
-        code === 0 ? resolve() : reject(new Error('mimo CLI not available'));
+        rtLog(`[mimo-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
+        code === 0 ? resolve() : reject(new Error(`mimo CLI not available (code=${code})`));
       });
       child.on('error', (error) => {
+        rtLog(`[mimo-provider] prepare: spawn ERROR: ${error.message}`);
         reject(new Error(`Failed to spawn mimo: ${error.message}`));
       });
+      setTimeout(() => {
+        rtLog(`[mimo-provider] prepare: TIMEOUT (10s), killing process`);
+        child.kill();
+        reject(new Error('mimo prepare timeout (10s)'));
+      }, 10000);
     });
   }
 
@@ -229,7 +256,7 @@ export class MiMoProvider implements LLMProvider {
       ? (process.env.USERPROFILE || 'C:\\Users\\oadan')
       : rawCwd;
 
-    console.log(`[mimo-provider] ACP spawn: bin=mimo cwd=${cwd}`);
+    rtLog(`[mimo-provider] ACP spawn: bin=mimo cwd=${cwd}`);
     const configCwd = process.env.CTI_MIMO_ACP_CWD || cwd;
     // session/new 必须传绝对路径，否则 mimo 的信任列表检查可能不匹配
     const sessionNewCwd = process.platform === 'win32' ? cwd : configCwd;
@@ -237,15 +264,31 @@ export class MiMoProvider implements LLMProvider {
     const saved = this.loadSavedSession(cacheKey);
 
     const { command, args } = resolveMimoExecutable();
+    rtLog(`[mimo-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
     const child = spawn(command, [...args, 'acp', '--hostname', '127.0.0.1', '--cwd', configCwd], {
       cwd, stdio: ['pipe', 'pipe', 'pipe'],
       env: buildSpawnEnv(),
+    });
+    rtLog(`[mimo-provider] ACP spawned successfully: pid=${child.pid}`);
+
+    // 诊断日志：原始字节流监控
+    child.stdout.on('data', (chunk: Buffer) => {
+      rtLog(`[mimo-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString('utf-8')}"`);
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      rtLog(`[mimo-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString('utf-8')}"`);
+    });
+    child.on('error', (err) => {
+      rtLog(`[mimo-provider] SPAWN ERROR: ${err}`);
+    });
+    child.on('close', (code, signal) => {
+      rtLog(`[mimo-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
     });
 
     // 必须读 stderr，否则管道满了进程卡死
     child.stderr!.on('data', (chunk: Buffer) => {
       const text = chunk.toString().trim();
-      if (text) console.error(`[mimo-provider] ACP stderr: ${text.slice(0, 500)}`);
+      if (text) rtLog(`[mimo-provider] ACP stderr: ${text.slice(0, 500)}`);
     });
 
     emitCanonicalTurnEvent(controller, {

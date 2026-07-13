@@ -17,6 +17,14 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 
+// 实时日志：绕过 NSSM stdout 缓冲
+function rtLog(msg: string): void {
+  const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'unknown'}.log`;
+  try {
+    fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`, 'utf-8');
+  } catch {}
+}
+
 type JsonRpcId = number | string;
 
 interface JsonRpcRequest {
@@ -249,45 +257,71 @@ export class HermesAppServerClient {
   private async bootstrap(): Promise<void> {
     // 启动 hermes acp
     const args = [...this.acpArgs];
+    rtLog(`[hermes-app-server] bootstrap: spawning "${this.executable}" args=${JSON.stringify(args)}`);
     const proc = spawn(this.executable, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
         HOME: os.homedir(),
         HERMES_HOME: resolveHermesHome(),
+        USERPROFILE: os.homedir(),
+        APPDATA: process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
       },
+      windowsHide: true,
     });
     this.proc = proc;
 
     proc.once('error', (error) => {
+      rtLog(`[hermes-app-server] spawn ERROR: ${error.message}`);
       this.failAllPending(error instanceof Error ? error : new Error(String(error)));
     });
     proc.once('exit', (code, signal) => {
       const suffix = signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`;
+      rtLog(`[hermes-app-server] process EXIT: ${suffix}`);
       this.failAllPending(new Error(`[hermes-app-server] Process exited with ${suffix}`));
       this.proc = null;
       this.startPromise = null;
     });
 
-    const rl = readline.createInterface({ input: proc.stdout });
-    rl.on('line', (line) => {
-      this.handleLine(line);
+    // 捕获原始 stdout 输出到日志（排查 buffering 问题）
+    let stderrLog = '';
+    proc.stdout.on('data', (chunk) => {
+      rtLog(`[hermes-app-server] stdout: received ${chunk.length} bytes`);
     });
-
     proc.stderr.on('data', (chunk) => {
       const text = chunk.toString().trim();
+      stderrLog += text;
       if (text) {
+        rtLog(`[hermes-app-server] stderr: ${text}`);
         console.warn(`[hermes-app-server][stderr] ${text}`);
       }
     });
 
-    // 握手：initialize
+    // readline 按行解析 ACP 协议
+    const rl = readline.createInterface({ input: proc.stdout });
+    rl.on('line', (line) => {
+      rtLog(`[hermes-app-server] stdout LINE: ${line.substring(0, 100)}`);
+      this.handleLine(line);
+    });
+
+    // 30秒超时：initialize 握手
+    rtLog(`[hermes-app-server] calling initialize...`);
+    let initDone = false;
+    const timeoutId = setTimeout(() => {
+      if (!initDone) {
+        rtLog(`[hermes-app-server] initialize TIMEOUT (30s), killing process`);
+        proc.kill();
+      }
+    }, 30000);
     await this.callInternal('initialize', buildInitializeParams());
+    initDone = true;
+    clearTimeout(timeoutId);
+    rtLog(`[hermes-app-server] initialize OK`);
 
     // 保存 Hermes 进程 PID
     if (proc.pid) {
       savePid(proc.pid);
-      console.log(`[hermes-app-server] Started with PID ${proc.pid}`);
+      rtLog(`[hermes-app-server] Started with PID ${proc.pid}`);
     }
   }
 

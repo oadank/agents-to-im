@@ -549,17 +549,27 @@ export class JsonFileStore implements BridgeStore {
 
   // ── Session Locking ──
 
+  private rtLog(msg: string): void {
+    const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_locks_${process.env.CTI_BOT || 'unknown'}.log`;
+    try {
+      require('fs').appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`, 'utf-8');
+    } catch {}
+  }
+
   acquireSessionLock(sessionId: string, lockId: string, owner: string, ttlSecs: number): boolean {
     const existing = this.locks.get(sessionId);
     if (existing && existing.expiresAt > Date.now()) {
-      // Lock held by someone else
-      if (existing.lockId !== lockId) return false;
+      if (existing.lockId !== lockId) {
+        this.rtLog(`[LOCK] acquireSessionLock FAILED: sessionId=${sessionId.slice(0,12)}... held by ${existing.lockId}, owner=${existing.owner}, expiresAt=${new Date(existing.expiresAt).toISOString()}`);
+        return false;
+      }
     }
     this.locks.set(sessionId, {
       lockId,
       owner,
       expiresAt: Date.now() + ttlSecs * 1000,
     });
+    this.rtLog(`[LOCK] acquireSessionLock OK: sessionId=${sessionId.slice(0,12)}... lockId=${lockId} owner=${owner}`);
     return true;
   }
 
@@ -567,6 +577,7 @@ export class JsonFileStore implements BridgeStore {
     const lock = this.locks.get(sessionId);
     if (lock && lock.lockId === lockId) {
       lock.expiresAt = Date.now() + ttlSecs * 1000;
+      this.rtLog(`[LOCK] renewSessionLock: sessionId=${sessionId.slice(0,12)}... renewed +${ttlSecs}s`);
     }
   }
 
@@ -574,6 +585,9 @@ export class JsonFileStore implements BridgeStore {
     const lock = this.locks.get(sessionId);
     if (lock && lock.lockId === lockId) {
       this.locks.delete(sessionId);
+      this.rtLog(`[LOCK] releaseSessionLock: sessionId=${sessionId.slice(0,12)}... released`);
+    } else {
+      this.rtLog(`[LOCK] releaseSessionLock SKIPPED: sessionId=${sessionId.slice(0,12)}... lockId=${lockId} not current holder (current=${lock?.lockId})`);
     }
   }
 

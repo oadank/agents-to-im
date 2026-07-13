@@ -9,23 +9,45 @@ import type {
 } from '../types.js';
 import { buildRouteKey, parseImageResourceKey, parseTextContent, parseAudioFileKey } from '../utils.js';
 import { pendingInboundImageKey } from '../utils.js';
+import fs from 'node:fs';
+
+// 实时日志：绕过 NSSM stdout 缓冲，直接写硬盘
+const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'unknown'}.log`;
+function rtLog(msg: string): void {
+  const time = new Date().toISOString();
+  try {
+    fs.appendFileSync(DEBUG_LOG, `[${time}] ${msg}\n`, 'utf-8');
+  } catch {}
+}
 
 export async function handleIncomingEvent(
   ctx: AdapterContext,
   data: FeishuMessageEventData,
 ): Promise<void> {
   const messageId = data.message.message_id;
-  if (data.sender.sender_type === 'app') return;
-  if (!ctx.markSeenMessage(messageId)) return;
+  rtLog(`[STEP1] handleIncomingEvent entered, messageId=${messageId}, chatId=${data.message.chat_id}, senderType=${data.sender?.sender_type}`);
+  if (data.sender.sender_type === 'app') {
+    rtLog(`[STEP1] sender_type=app, returning`);
+    return;
+  }
+  const seen = ctx.markSeenMessage(messageId);
+  rtLog(`[STEP2] markSeenMessage result=${seen} for messageId=${messageId}`);
+  if (!seen) {
+    rtLog(`[STEP2] already seen, returning silently`);
+    return;
+  }
 
   const sender = extractSenderIdentity(data);
+  rtLog(`[STEP3] extractSenderIdentity result: ${sender ? `id=${sender.id}` : 'null'}`);
   if (!sender || !ctx.isAuthorized(sender.id, data.message.chat_id)) {
+    rtLog(`[STEP3] unauthorized or sender missing, dropping`);
     console.warn(
       `[feishu-adapter] Dropped inbound message ${messageId}: unauthorized or sender identity missing ` +
       `(chat=${data.message.chat_id})`,
     );
     return;
   }
+  rtLog(`[STEP3] authorized OK`);
 
   const threadId = data.message.thread_id || undefined;
   const routeKey = buildRouteKey(data.message.chat_id, threadId);
@@ -35,7 +57,9 @@ export async function handleIncomingEvent(
     `${threadId ? ` thread=${threadId}` : ''} type=${data.message.message_type} chatType=${data.message.chat_type}`,
   );
 
+  rtLog(`[STEP4] Calling enqueueChatTask, routeKey=${routeKey}, msgType=${data.message.message_type}`);
   await ctx.enqueueChatTask(routeKey, async () => {
+    rtLog(`[STEP5] enqueueChatTask callback EXECUTED for routeKey=${routeKey}`);
     ctx.prunePendingInboundImages();
     const inbound: InboundMessage = {
       messageId,
@@ -246,12 +270,16 @@ export async function handleIncomingEvent(
     }
 
     if (data.message.chat_type === 'p2p') {
+      rtLog(`[STEP6] Routing to handleDirectMessage, chatType=p2p, text="${inbound.text}"`);
       console.log(`[feishu-adapter] Routing to handleDirectMessage, text="${inbound.text}"`);
       await handleDirectMessage(ctx, sender, inbound);
+      rtLog(`[STEP7] handleDirectMessage RETURNED OK`);
       return;
     }
+    rtLog(`[STEP6] Routing to handleGroupMessage, chatType=${data.message.chat_type}, text="${inbound.text}"`);
     console.log(`[feishu-adapter] Routing to handleGroupMessage, text="${inbound.text}"`);
     await handleGroupMessage(ctx, sender, inbound);
+    rtLog(`[STEP7] handleGroupMessage RETURNED OK`);
   });
 }
 

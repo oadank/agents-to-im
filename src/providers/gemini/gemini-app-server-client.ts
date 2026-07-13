@@ -18,6 +18,14 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 
+// 实时日志：绕过 NSSM stdout 缓冲
+function rtLog(msg: string): void {
+  const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'unknown'}.log`;
+  try {
+    fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`, 'utf-8');
+  } catch {}
+}
+
 type JsonRpcId = number | string;
 
 interface JsonRpcRequest {
@@ -262,25 +270,55 @@ export class GeminiAppServerClient {
 
   private async bootstrap(): Promise<void> {
     // 启动 gemini --acp --yolo
-    const args = [...this.acpArgs];
-    const proc = spawn(this.executable, args, {
+    // Windows 上 .cmd/.bat 文件必须通过 shell 或直接用 node.exe 运行 JS
+    // 这里用 node.exe 直接运行 gemini.js，避免 shell:true 导致进程树断裂
+    let command = this.executable;
+    let spawnArgs = [...this.acpArgs];
+    let useShell = false;
+    if (process.platform === 'win32') {
+      // 优先直接 spawn node.exe + gemini.js
+      const npmGlobalRoot = path.join(os.homedir(), 'AppData', 'Roaming', 'npm');
+      const geminiJsPath = path.join(npmGlobalRoot, 'node_modules', '@google', 'gemini-cli', 'bundle', 'gemini.js');
+      if (fs.existsSync(geminiJsPath)) {
+        command = process.execPath; // node.exe 路径
+        spawnArgs = [geminiJsPath, ...this.acpArgs];
+        console.log(`[gemini-app-server] Windows: spawning node directly: ${command} ${spawnArgs.join(' ')}`);
+      } else if (/\.(cmd|bat)$/i.test(this.executable) || !path.isAbsolute(this.executable)) {
+        // 找不到 gemini.js，fallback 到 shell:true 运行 .cmd
+        useShell = true;
+        console.log(`[gemini-app-server] Windows: using shell mode for ${this.executable}`);
+      }
+    }
+    const proc = spawn(command, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: useShell,
+      windowsHide: true,
       env: {
         ...process.env,
         HOME: os.homedir(),
+        USERPROFILE: os.homedir(),
         GEMINI_HOME: resolveGeminiHome(),
         GEMINI_API_KEY: this.apiKey,
         GOOGLE_GEMINI_BASE_URL: this.baseUrl,
+        APPDATA: process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
         ...this.extraEnv,
       },
     });
+    rtLog(`[gemini-app-server] ACP spawn: command=${command} args=${JSON.stringify(spawnArgs)} pid=${proc.pid}`);
     this.proc = proc;
 
+    // 原始字节流监控（绕过 readline 缓冲）
+    proc.stdout.on('data', (chunk: Buffer) => {
+      rtLog(`[gemini-app-server] stdout RAW: ${chunk.length} bytes -> "${chunk.toString('utf-8').substring(0, 200)}"`);
+    });
+
     proc.once('error', (error) => {
+      rtLog(`[gemini-app-server] spawn ERROR: ${error.message}`);
       this.failAllPending(error instanceof Error ? error : new Error(String(error)));
     });
     proc.once('exit', (code, signal) => {
       const suffix = signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`;
+      rtLog(`[gemini-app-server] process EXIT: ${suffix}`);
       this.failAllPending(new Error(`[gemini-app-server] Process exited with ${suffix}`));
       this.proc = null;
       this.startPromise = null;
@@ -288,18 +326,32 @@ export class GeminiAppServerClient {
 
     const rl = readline.createInterface({ input: proc.stdout });
     rl.on('line', (line) => {
+      rtLog(`[gemini-app-server] stdout LINE: ${line.substring(0, 150)}`);
       this.handleLine(line);
     });
 
     proc.stderr.on('data', (chunk) => {
       const text = chunk.toString().trim();
       if (text && !text.includes('YOLO mode is enabled') && !text.includes('MCP issues detected')) {
+        rtLog(`[gemini-app-server] stderr: ${text.substring(0, 300)}`);
         console.warn(`[gemini-app-server][stderr] ${text}`);
       }
     });
 
+    // 30秒超时：initialize 握手
+    rtLog(`[gemini-app-server] calling initialize...`);
+    let initDone = false;
+    const initTimeout = setTimeout(() => {
+      if (!initDone) {
+        rtLog(`[gemini-app-server] initialize TIMEOUT (30s), killing process`);
+        proc.kill();
+      }
+    }, 30000);
     // 握手：initialize
     await this.callInternal('initialize', buildInitializeParams());
+    initDone = true;
+    clearTimeout(initTimeout);
+    rtLog(`[gemini-app-server] initialize OK`);
 
     // authenticate with gateway method
     try {
@@ -342,6 +394,24 @@ export class GeminiAppServerClient {
 
     // Notification or server request
     if (typeof parsed.method !== 'string') {
+      return;
+    }
+
+    // 自动批准权限请求（YOLO 模式）
+    if (parsed.method === 'session/request_permission' && 'id' in parsed) {
+      rtLog(`[gemini-app-server] AUTO-APPROVE session/request_permission id=${parsed.id}`);
+      try {
+        // 找到第一个 option 的 proceed_always 或第一个 option
+        const params = (parsed as { params?: { options?: Array<{ optionId?: string }> } }).params;
+        const firstOption = params?.options?.[0]?.optionId || 'proceed_always';
+        this.writePayload({
+          jsonrpc: '2.0',
+          id: parsed.id,
+          result: { optionId: firstOption },
+        } as JsonRpcResponse);
+      } catch (e) {
+        rtLog(`[gemini-app-server] auto-approve failed: ${e}`);
+      }
       return;
     }
 

@@ -176,19 +176,38 @@ export class GeminiProvider implements LLMProvider {
         prompt: promptInput,
       });
 
-      // 处理流式 notifications
+      // 处理流式 notifications（result 返回后，队列里可能还有攒着的 notifications）
+      const MAX_DRAIN_WAIT_MS = 3000;
+      const drainStart = Date.now();
       while (true) {
         if (params.abortController?.signal.aborted) break;
 
-        const message = await this.readNext(queue, () => {
-          if (wakeQueue) return;
-          wakeQueue = () => {};
-        }, () => {
-          if (queue.length > 0) return;
-          return new Promise<void>((resolve) => {
-            wakeQueue = resolve;
+        let message: GeminiServerMessage | null;
+        try {
+          message = await this.readNext(queue, () => {
+            if (wakeQueue) return;
+            wakeQueue = () => {};
+          }, () => {
+            // 队列空且 result 已回：用定时器确保在剩余时间内退出
+            const elapsed = Date.now() - drainStart;
+            if (elapsed >= MAX_DRAIN_WAIT_MS || queue.length > 0) {
+              if (queue.length === 0) return Promise.reject(new Error('drain-done'));
+              return; // 队列有数据，返回 undefined 让 readNext 重新检查
+            }
+            // 创建带超时的等待：剩余时间后自动 reject
+            const remainingMs = MAX_DRAIN_WAIT_MS - elapsed;
+            return new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(() => reject(new Error('drain-done')), remainingMs);
+              wakeQueue = () => {
+                clearTimeout(timer);
+                resolve();
+              };
+            });
           });
-        });
+        } catch (e) {
+          if ((e as Error)?.message === 'drain-done') break;
+          throw e;
+        }
         if (!message) continue;
         if (message.kind === 'request') continue; // 暂不支持 request
 

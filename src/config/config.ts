@@ -133,8 +133,8 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
   if (singleBot) {
     const name = singleBot.trim().toLowerCase();
     const prefix = `CTI_BOT_${name.toUpperCase()}_`;
-    const appId = env.get(`${prefix}APP_ID`);
-    const appSecret = env.get(`${prefix}APP_SECRET`);
+    const appId = env.get(`${prefix}APP_ID`) || process.env[`${prefix}APP_ID`];
+    const appSecret = env.get(`${prefix}APP_SECRET`) || process.env[`${prefix}APP_SECRET`];
     if (!appId || !appSecret) {
       console.warn(`[config] Single bot '${name}' missing APP_ID or APP_SECRET`);
       return [];
@@ -177,8 +177,8 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
 
   for (const name of botNames) {
     const prefix = `CTI_BOT_${name.toUpperCase()}_`;
-    const appId = env.get(`${prefix}APP_ID`);
-    const appSecret = env.get(`${prefix}APP_SECRET`);
+    const appId = env.get(`${prefix}APP_ID`) || process.env[`${prefix}APP_ID`];
+    const appSecret = env.get(`${prefix}APP_SECRET`) || process.env[`${prefix}APP_SECRET`];
     if (!appId || !appSecret) {
       console.warn(`[config] Bot '${name}' missing APP_ID or APP_SECRET, skipping`);
       continue;

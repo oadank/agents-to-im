@@ -375,14 +375,7 @@ async function consumeStream(
   let planBody = '';
   let bufferedLeadingSegment = '';
 
-  // 全局流超时：90秒内必须完成，否则强制退出释放锁
-  const GLOBAL_TIMEOUT_MS = 90000;
-  let timeoutFired = false;
-  const globalTimer = setTimeout(() => {
-    timeoutFired = true;
-    console.warn(`[conversation-engine] Global stream timeout (${GLOBAL_TIMEOUT_MS}ms) fired for session ${sessionId}, aborting`);
-    try { reader.cancel('global-timeout'); } catch { /* best effort */ }
-  }, GLOBAL_TIMEOUT_MS);
+
 
   const mergeBufferedLeadingSegment = (text: string): string => {
     const normalized = text.trim();
@@ -821,7 +814,6 @@ async function consumeStream(
     const responseText = responseSegments.join('\n\n').trim();
 
     clearTimeout(stuckTimer);
-    clearTimeout(globalTimer);
     return {
       responseText,
       responseSegments,
@@ -834,11 +826,6 @@ async function consumeStream(
     };
   } catch (e) {
     clearTimeout(stuckTimer);
-    clearTimeout(globalTimer);
-    if (timeoutFired) {
-      errorMessage = errorMessage || 'Stream global timeout (90s)';
-      hasError = true;
-    }
     // Best-effort save on stream error
     await flushTextBoundary(true);
     const renderedPlan = renderPlanMarkdown(planExplanation, planSteps, planBody);

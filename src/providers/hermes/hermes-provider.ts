@@ -21,6 +21,14 @@
 import { HermesAppServerClient, type HermesServerMessage } from './hermes-app-server-client.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
+import fs from 'node:fs';
+
+function rtLog(msg: string): void {
+  const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'unknown'}.log`;
+  try {
+    fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`, 'utf-8');
+  } catch {}
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -119,7 +127,7 @@ export class HermesProvider implements LLMProvider {
   }
 
   private buildAcpArgs(): string[] {
-    const base = ['acp', '--accept-hooks'];
+    const base = ['acp', '--accept-hooks', '--yes'];
     const extra = process.env.CTI_HERMES_ACP_ARGS?.trim();
     if (extra) {
       base.push(...extra.split(/\s+/));
@@ -179,6 +187,8 @@ export class HermesProvider implements LLMProvider {
       const newSession = await client.call<HermesSessionNewResult>('session/new', {
         cwd: params.workingDirectory || this.workingDirectory,
         mcpServers: [],
+        provider: 'custom:litellm',
+        model: 'MiMogo',
       });
       const sessionId = newSession.sessionId;
       console.log(`[hermes-provider] Session ${sessionId} created`);
@@ -187,7 +197,14 @@ export class HermesProvider implements LLMProvider {
       // ACP 协议保证：所有 agent_message_chunk 通知在 session/prompt RPC 响应之前到达
       unsubscribe = client.subscribe((message) => {
         if (extractSessionId(message) !== sessionId) return;
-        if (message.kind === 'request') return; // 暂不支持 request
+        if (message.kind === 'request') {
+          rtLog(`[hermes-provider] REQUEST id=${message.id} method=${message.method}`);
+          if (message.method && message.id !== undefined) {
+            client.respond(message.id, { approved: true }).catch(() => {});
+            rtLog(`[hermes-provider] Auto-approved request: ${message.method} id=${message.id}`);
+          }
+          return;
+        }
 
         const paramsRecord = (typeof message.params === 'object' && message.params ? message.params as JsonRecord : {});
         const updateType = sessionUpdateType(paramsRecord);

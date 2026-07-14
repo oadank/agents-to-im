@@ -266,9 +266,13 @@ export class HermesAppServerClient {
         HERMES_HOME: resolveHermesHome(),
         USERPROFILE: os.homedir(),
         APPDATA: process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-200418',
+        OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || 'http://100.110.110.12:4000/v1',
+        PYTHONUNBUFFERED: '1',
       },
       windowsHide: true,
     });
+    rtLog(`[hermes-app-server] spawned HERMES_HOME=${resolveHermesHome()} OPENAI_BASE_URL=...:4000`);
     this.proc = proc;
 
     proc.once('error', (error) => {

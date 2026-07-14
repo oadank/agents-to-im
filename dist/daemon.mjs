@@ -9995,7 +9995,7 @@ var require_form_data = __commonJS({
     var http2 = __require("http");
     var https = __require("https");
     var parseUrl = __require("url").parse;
-    var fs20 = __require("fs");
+    var fs21 = __require("fs");
     var Stream = __require("stream").Stream;
     var crypto4 = __require("crypto");
     var mime = require_mime_types();
@@ -10062,7 +10062,7 @@ var require_form_data = __commonJS({
         if (value2.end != void 0 && value2.end != Infinity && value2.start != void 0) {
           callback(null, value2.end + 1 - (value2.start ? value2.start : 0));
         } else {
-          fs20.stat(value2.path, function(err, stat) {
+          fs21.stat(value2.path, function(err, stat) {
             if (err) {
               callback(err);
               return;
@@ -10493,7 +10493,7 @@ var require_ms = __commonJS({
 // node_modules/debug/src/common.js
 var require_common = __commonJS({
   "node_modules/debug/src/common.js"(exports2, module2) {
-    function setup(env2) {
+    function setup(env) {
       createDebug.debug = createDebug;
       createDebug.default = createDebug;
       createDebug.coerce = coerce;
@@ -10502,8 +10502,8 @@ var require_common = __commonJS({
       createDebug.enabled = enabled;
       createDebug.humanize = require_ms();
       createDebug.destroy = destroy;
-      Object.keys(env2).forEach((key) => {
-        createDebug[key] = env2[key];
+      Object.keys(env).forEach((key) => {
+        createDebug[key] = env[key];
       });
       createDebug.names = [];
       createDebug.skips = [];
@@ -14413,15 +14413,15 @@ var require_axios = __commonJS({
         return false;
       }
     };
-    var factory = (env2) => {
-      env2 = utils$1.merge.call(
+    var factory = (env) => {
+      env = utils$1.merge.call(
         {
           skipUndefined: true
         },
         globalFetchAPI,
-        env2
+        env
       );
-      const { fetch: envFetch, Request: Request2, Response } = env2;
+      const { fetch: envFetch, Request: Request2, Response } = env;
       const isFetchSupported = envFetch ? isFunction(envFetch) : typeof fetch === "function";
       const isRequestSupported = isFunction(Request2);
       const isResponseSupported = isFunction(Response);
@@ -14606,14 +14606,14 @@ var require_axios = __commonJS({
     };
     var seedCache = /* @__PURE__ */ new Map();
     var getFetch = (config) => {
-      let env2 = config && config.env || {};
-      const { fetch: fetch2, Request: Request2, Response } = env2;
+      let env = config && config.env || {};
+      const { fetch: fetch2, Request: Request2, Response } = env;
       const seeds = [Request2, Response, fetch2];
       let len = seeds.length, i = len, seed, target, map = seedCache;
       while (i--) {
         seed = seeds[i];
         target = map.get(seed);
-        target === void 0 && map.set(seed, target = i ? /* @__PURE__ */ new Map() : factory(env2));
+        target === void 0 && map.set(seed, target = i ? /* @__PURE__ */ new Map() : factory(env));
         map = target;
       }
       return target;
@@ -23542,7 +23542,7 @@ var require_lib2 = __commonJS({
     var qs = require_lib();
     var identity = require_lodash();
     var pickBy = require_lodash2();
-    var fs20 = __require("fs");
+    var fs21 = __require("fs");
     var merge = require_lodash3();
     var qs$1 = __require("querystring");
     var WebSocket2 = require_ws();
@@ -23553,7 +23553,7 @@ var require_lib2 = __commonJS({
     var crypto__default = /* @__PURE__ */ _interopDefaultLegacy(crypto4);
     var identity__default = /* @__PURE__ */ _interopDefaultLegacy(identity);
     var pickBy__default = /* @__PURE__ */ _interopDefaultLegacy(pickBy);
-    var fs__default = /* @__PURE__ */ _interopDefaultLegacy(fs20);
+    var fs__default = /* @__PURE__ */ _interopDefaultLegacy(fs21);
     var merge__default = /* @__PURE__ */ _interopDefaultLegacy(merge);
     var qs__default = /* @__PURE__ */ _interopDefaultLegacy(qs$1);
     var WebSocket__default = /* @__PURE__ */ _interopDefaultLegacy(WebSocket2);
@@ -103116,7 +103116,7 @@ var require_lib2 = __commonJS({
 // node_modules/xmlhttprequest-ssl/lib/XMLHttpRequest.js
 var require_XMLHttpRequest = __commonJS({
   "node_modules/xmlhttprequest-ssl/lib/XMLHttpRequest.js"(exports2, module2) {
-    var fs20 = __require("fs");
+    var fs21 = __require("fs");
     var Url = __require("url");
     var spawn7 = __require("child_process").spawn;
     module2.exports = XMLHttpRequest3;
@@ -103274,7 +103274,7 @@ var require_XMLHttpRequest = __commonJS({
             throw new Error("XMLHttpRequest: Only GET method is supported");
           }
           if (settings.async) {
-            fs20.readFile(unescape(url2.pathname), function(error, data2) {
+            fs21.readFile(unescape(url2.pathname), function(error, data2) {
               if (error) {
                 self2.handleError(error, error.errno || -1);
               } else {
@@ -103286,7 +103286,7 @@ var require_XMLHttpRequest = __commonJS({
             });
           } else {
             try {
-              this.response = fs20.readFileSync(unescape(url2.pathname));
+              this.response = fs21.readFileSync(unescape(url2.pathname));
               this.responseText = this.response.toString("utf8");
               this.status = 200;
               setState(self2.DONE);
@@ -103412,15 +103412,15 @@ var require_XMLHttpRequest = __commonJS({
         } else {
           var contentFile = ".node-xmlhttprequest-content-" + process.pid;
           var syncFile = ".node-xmlhttprequest-sync-" + process.pid;
-          fs20.writeFileSync(syncFile, "", "utf8");
+          fs21.writeFileSync(syncFile, "", "utf8");
           var execString = "var http = require('http'), https = require('https'), fs = require('fs');var doRequest = http" + (ssl ? "s" : "") + ".request;var options = " + JSON.stringify(options) + ";var responseText = '';var responseData = Buffer.alloc(0);var req = doRequest(options, function(response) {response.on('data', function(chunk) {  var data = Buffer.from(chunk);  responseText += data.toString('utf8');  responseData = Buffer.concat([responseData, data]);});response.on('end', function() {fs.writeFileSync('" + contentFile + "', JSON.stringify({err: null, data: {statusCode: response.statusCode, headers: response.headers, text: responseText, data: responseData.toString('base64')}}), 'utf8');fs.unlinkSync('" + syncFile + "');});response.on('error', function(error) {fs.writeFileSync('" + contentFile + "', 'NODE-XMLHTTPREQUEST-ERROR:' + JSON.stringify(error), 'utf8');fs.unlinkSync('" + syncFile + "');});}).on('error', function(error) {fs.writeFileSync('" + contentFile + "', 'NODE-XMLHTTPREQUEST-ERROR:' + JSON.stringify(error), 'utf8');fs.unlinkSync('" + syncFile + "');});" + (data ? "req.write('" + JSON.stringify(data).slice(1, -1).replace(/'/g, "\\'") + "');" : "") + "req.end();";
           var syncProc = spawn7(process.argv[0], ["-e", execString]);
           var statusText;
-          while (fs20.existsSync(syncFile)) {
+          while (fs21.existsSync(syncFile)) {
           }
-          self2.responseText = fs20.readFileSync(contentFile, "utf8");
+          self2.responseText = fs21.readFileSync(contentFile, "utf8");
           syncProc.stdin.end();
-          fs20.unlinkSync(contentFile);
+          fs21.unlinkSync(contentFile);
           if (self2.responseText.match(/^NODE-XMLHTTPREQUEST-ERROR:/)) {
             var errorObj = JSON.parse(self2.responseText.replace(/^NODE-XMLHTTPREQUEST-ERROR:/, ""));
             self2.handleError(errorObj, 503);
@@ -103594,7 +103594,7 @@ var require_cjs = __commonJS({
 });
 
 // src/main.ts
-import fs19 from "node:fs";
+import fs20 from "node:fs";
 import path19 from "node:path";
 import os10 from "node:os";
 import crypto3 from "node:crypto";
@@ -103877,21 +103877,21 @@ function readConfigEnv() {
   return result;
 }
 function readGeminiConfig() {
-  const env2 = readConfigEnv();
-  const model = env2.CTI_BOT_GEMINI_MODEL_GROUP || "gemini-model";
-  const provider = env2.CTI_BOT_GEMINI_MODEL_PROVIDER || "LiteLLM";
+  const env = readConfigEnv();
+  const model = env.CTI_BOT_GEMINI_MODEL_GROUP || "gemini-model";
+  const provider = env.CTI_BOT_GEMINI_MODEL_PROVIDER || "LiteLLM";
   return { model, provider };
 }
 function readMimoConfig() {
-  const env2 = readConfigEnv();
-  const model = env2.CTI_BOT_MIMO_MODEL_GROUP || "MiMogo";
-  const provider = env2.CTI_BOT_MIMO_MODEL_PROVIDER || "LiteLLM";
+  const env = readConfigEnv();
+  const model = env.CTI_BOT_MIMO_MODEL_GROUP || "MiMogo";
+  const provider = env.CTI_BOT_MIMO_MODEL_PROVIDER || "LiteLLM";
   return { model, provider };
 }
 function readHermesConfig() {
-  const env2 = readConfigEnv();
-  const model = env2.CTI_BOT_HERMES_MODEL_GROUP || "codex-model";
-  const provider = env2.CTI_BOT_HERMES_MODEL_PROVIDER || "LiteLLM";
+  const env = readConfigEnv();
+  const model = env.CTI_BOT_HERMES_MODEL_GROUP || "codex-model";
+  const provider = env.CTI_BOT_HERMES_MODEL_PROVIDER || "LiteLLM";
   return { model, provider };
 }
 function getRuntimeConfig2(runtime) {
@@ -104155,6 +104155,16 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
   let planSteps = [];
   let planBody = "";
   let bufferedLeadingSegment = "";
+  const GLOBAL_TIMEOUT_MS = 9e4;
+  let timeoutFired = false;
+  const globalTimer = setTimeout(() => {
+    timeoutFired = true;
+    console.warn(`[conversation-engine] Global stream timeout (${GLOBAL_TIMEOUT_MS}ms) fired for session ${sessionId}, aborting`);
+    try {
+      reader.cancel("global-timeout");
+    } catch {
+    }
+  }, GLOBAL_TIMEOUT_MS);
   const mergeBufferedLeadingSegment = (text) => {
     const normalized = text.trim();
     if (!bufferedLeadingSegment) return normalized;
@@ -104547,6 +104557,8 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
       }
     }
     const responseText = responseSegments.join("\n\n").trim();
+    clearTimeout(stuckTimer);
+    clearTimeout(globalTimer);
     return {
       responseText,
       responseSegments,
@@ -104559,6 +104571,11 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
     };
   } catch (e) {
     clearTimeout(stuckTimer);
+    clearTimeout(globalTimer);
+    if (timeoutFired) {
+      errorMessage = errorMessage || "Stream global timeout (90s)";
+      hasError = true;
+    }
     await flushTextBoundary(true);
     const renderedPlan = renderPlanMarkdown(planExplanation, planSteps, planBody);
     if (runtime === "codex" && collaborationModeOverride === "plan" && renderedPlan) {
@@ -107625,44 +107642,44 @@ function parseBoolean(value2) {
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   return void 0;
 }
-function loadFeishuConfig(env2) {
+function loadFeishuConfig(env) {
   return {
     id: DEFAULT_FEISHU_PROFILE_ID,
-    appId: env2.get("CTI_FEISHU_APP_ID") || void 0,
-    appSecret: env2.get("CTI_FEISHU_APP_SECRET") || void 0,
-    domain: env2.get("CTI_FEISHU_DOMAIN") === "lark" ? "lark" : void 0,
-    allowedUsers: splitCsv(env2.get("CTI_FEISHU_ALLOWED_USERS") || void 0),
-    showToolCallCards: parseBoolean(env2.get("CTI_FEISHU_SHOW_TOOL_CALL_CARDS")) ?? false,
-    oauthRedirectUri: env2.get("CTI_FEISHU_OAUTH_REDIRECT_URI") || void 0,
-    enableUserMode: parseBoolean(env2.get("CTI_FEISHU_ENABLE_USER_MODE")) ?? false,
-    showAgentDivider: parseBoolean(env2.get("CTI_FEISHU_SHOW_AGENT_DIVIDER")) ?? true,
-    agentName: env2.get("CTI_AGENT_NAME") || void 0,
-    modelGroup: env2.get("CTI_MODEL_GROUP") || void 0,
-    modelProvider: env2.get("CTI_MODEL_PROVIDER") || void 0
+    appId: env.get("CTI_FEISHU_APP_ID") || void 0,
+    appSecret: env.get("CTI_FEISHU_APP_SECRET") || void 0,
+    domain: env.get("CTI_FEISHU_DOMAIN") === "lark" ? "lark" : void 0,
+    allowedUsers: splitCsv(env.get("CTI_FEISHU_ALLOWED_USERS") || void 0),
+    showToolCallCards: parseBoolean(env.get("CTI_FEISHU_SHOW_TOOL_CALL_CARDS")) ?? false,
+    oauthRedirectUri: env.get("CTI_FEISHU_OAUTH_REDIRECT_URI") || void 0,
+    enableUserMode: parseBoolean(env.get("CTI_FEISHU_ENABLE_USER_MODE")) ?? false,
+    showAgentDivider: parseBoolean(env.get("CTI_FEISHU_SHOW_AGENT_DIVIDER")) ?? true,
+    agentName: env.get("CTI_AGENT_NAME") || void 0,
+    modelGroup: env.get("CTI_MODEL_GROUP") || void 0,
+    modelProvider: env.get("CTI_MODEL_PROVIDER") || void 0
   };
 }
-function loadCompactConfig(env2) {
+function loadCompactConfig(env) {
   return {
-    model: env2.get("CTI_COMPACT_MODEL") || process.env.CTI_COMPACT_MODEL || "codex-model",
-    apiKey: env2.get("CTI_COMPACT_API_KEY") || process.env.CTI_COMPACT_API_KEY || "",
-    baseUrl: env2.get("CTI_COMPACT_BASE_URL") || process.env.CTI_COMPACT_BASE_URL || "https://api.anthropic.com",
-    maxTokens: parseInt(env2.get("CTI_COMPACT_MAX_TOKENS") || process.env.CTI_COMPACT_MAX_TOKENS || "3000"),
-    temperature: parseFloat(env2.get("CTI_COMPACT_TEMPERATURE") || process.env.CTI_COMPACT_TEMPERATURE || "0.2"),
-    clearSdkSession: (env2.get("CTI_COMPACT_CLEAR_SDK_SESSION") || process.env.CTI_COMPACT_CLEAR_SDK_SESSION || "true") !== "false"
+    model: env.get("CTI_COMPACT_MODEL") || process.env.CTI_COMPACT_MODEL || "codex-model",
+    apiKey: env.get("CTI_COMPACT_API_KEY") || process.env.CTI_COMPACT_API_KEY || "",
+    baseUrl: env.get("CTI_COMPACT_BASE_URL") || process.env.CTI_COMPACT_BASE_URL || "https://api.anthropic.com",
+    maxTokens: parseInt(env.get("CTI_COMPACT_MAX_TOKENS") || process.env.CTI_COMPACT_MAX_TOKENS || "3000"),
+    temperature: parseFloat(env.get("CTI_COMPACT_TEMPERATURE") || process.env.CTI_COMPACT_TEMPERATURE || "0.2"),
+    clearSdkSession: (env.get("CTI_COMPACT_CLEAR_SDK_SESSION") || process.env.CTI_COMPACT_CLEAR_SDK_SESSION || "true") !== "false"
   };
 }
-function parseBotConfigs(env2) {
+function parseBotConfigs(env) {
   const singleBot = process.env.CTI_BOT;
   if (singleBot) {
     const name = singleBot.trim().toLowerCase();
     const prefix = `CTI_BOT_${name.toUpperCase()}_`;
-    const appId = env2.get(`${prefix}APP_ID`);
-    const appSecret = env2.get(`${prefix}APP_SECRET`);
+    const appId = env.get(`${prefix}APP_ID`) || process.env[`${prefix}APP_ID`];
+    const appSecret = env.get(`${prefix}APP_SECRET`) || process.env[`${prefix}APP_SECRET`];
     if (!appId || !appSecret) {
       console.warn(`[config] Single bot '${name}' missing APP_ID or APP_SECRET`);
       return [];
     }
-    const runtimeStr = env2.get(`${prefix}RUNTIME`) || "claude";
+    const runtimeStr = env.get(`${prefix}RUNTIME`) || "claude";
     const runtime = runtimeStr === "codex" ? "codex" : runtimeStr === "openhuman" ? "openhuman" : runtimeStr === "zcode" ? "zcode" : runtimeStr === "mimo" ? "mimo" : runtimeStr === "gemini" ? "gemini" : runtimeStr === "hermes" ? "hermes" : "claude";
     console.log(`[config] Single bot mode: ${name}(${runtime})`);
     return [{
@@ -107670,69 +107687,69 @@ function parseBotConfigs(env2) {
       appId,
       appSecret,
       runtime,
-      agentName: env2.get(`${prefix}AGENT_NAME`) || `feishu-${name}`,
-      modelGroup: env2.get(`${prefix}MODEL_GROUP`) || void 0,
-      modelProvider: env2.get(`${prefix}MODEL_PROVIDER`) || void 0,
-      domain: env2.get(`${prefix}DOMAIN`) === "lark" ? "lark" : void 0,
-      allowedUsers: splitCsv(env2.get(`${prefix}ALLOWED_USERS`) || env2.get("CTI_FEISHU_ALLOWED_USERS")),
-      showToolCallCards: parseBoolean(env2.get(`${prefix}SHOW_TOOL_CALL_CARDS`)) ?? false,
-      showAgentDivider: parseBoolean(env2.get(`${prefix}SHOW_AGENT_DIVIDER`)) ?? true,
-      oauthRedirectUri: env2.get(`${prefix}OAUTH_REDIRECT_URI`) || void 0,
-      enableUserMode: parseBoolean(env2.get(`${prefix}ENABLE_USER_MODE`)) ?? false
+      agentName: env.get(`${prefix}AGENT_NAME`) || `feishu-${name}`,
+      modelGroup: env.get(`${prefix}MODEL_GROUP`) || void 0,
+      modelProvider: env.get(`${prefix}MODEL_PROVIDER`) || void 0,
+      domain: env.get(`${prefix}DOMAIN`) === "lark" ? "lark" : void 0,
+      allowedUsers: splitCsv(env.get(`${prefix}ALLOWED_USERS`) || env.get("CTI_FEISHU_ALLOWED_USERS")),
+      showToolCallCards: parseBoolean(env.get(`${prefix}SHOW_TOOL_CALL_CARDS`)) ?? false,
+      showAgentDivider: parseBoolean(env.get(`${prefix}SHOW_AGENT_DIVIDER`)) ?? true,
+      oauthRedirectUri: env.get(`${prefix}OAUTH_REDIRECT_URI`) || void 0,
+      enableUserMode: parseBoolean(env.get(`${prefix}ENABLE_USER_MODE`)) ?? false
     }];
   }
-  const botsStr = env2.get("CTI_BOTS");
+  const botsStr = env.get("CTI_BOTS");
   if (!botsStr) return [];
   const botNames = botsStr.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   const bots = [];
   for (const name of botNames) {
     const prefix = `CTI_BOT_${name.toUpperCase()}_`;
-    const appId = env2.get(`${prefix}APP_ID`);
-    const appSecret = env2.get(`${prefix}APP_SECRET`);
+    const appId = env.get(`${prefix}APP_ID`) || process.env[`${prefix}APP_ID`];
+    const appSecret = env.get(`${prefix}APP_SECRET`) || process.env[`${prefix}APP_SECRET`];
     if (!appId || !appSecret) {
       console.warn(`[config] Bot '${name}' missing APP_ID or APP_SECRET, skipping`);
       continue;
     }
-    const runtimeStr = env2.get(`${prefix}RUNTIME`) || "claude";
+    const runtimeStr = env.get(`${prefix}RUNTIME`) || "claude";
     const runtime = runtimeStr === "codex" ? "codex" : runtimeStr === "openhuman" ? "openhuman" : runtimeStr === "zcode" ? "zcode" : runtimeStr === "mimo" ? "mimo" : runtimeStr === "gemini" ? "gemini" : runtimeStr === "hermes" ? "hermes" : "claude";
     bots.push({
       name,
       appId,
       appSecret,
       runtime,
-      agentName: env2.get(`${prefix}AGENT_NAME`) || `feishu-${name}`,
-      modelGroup: env2.get(`${prefix}MODEL_GROUP`) || void 0,
-      modelProvider: env2.get(`${prefix}MODEL_PROVIDER`) || void 0,
-      domain: env2.get(`${prefix}DOMAIN`) === "lark" ? "lark" : void 0,
-      allowedUsers: splitCsv(env2.get(`${prefix}ALLOWED_USERS`) || env2.get("CTI_FEISHU_ALLOWED_USERS")),
-      showToolCallCards: parseBoolean(env2.get(`${prefix}SHOW_TOOL_CALL_CARDS`)) ?? false,
-      showAgentDivider: parseBoolean(env2.get(`${prefix}SHOW_AGENT_DIVIDER`)) ?? true,
-      oauthRedirectUri: env2.get(`${prefix}OAUTH_REDIRECT_URI`) || void 0,
-      enableUserMode: parseBoolean(env2.get(`${prefix}ENABLE_USER_MODE`)) ?? false
+      agentName: env.get(`${prefix}AGENT_NAME`) || `feishu-${name}`,
+      modelGroup: env.get(`${prefix}MODEL_GROUP`) || void 0,
+      modelProvider: env.get(`${prefix}MODEL_PROVIDER`) || void 0,
+      domain: env.get(`${prefix}DOMAIN`) === "lark" ? "lark" : void 0,
+      allowedUsers: splitCsv(env.get(`${prefix}ALLOWED_USERS`) || env.get("CTI_FEISHU_ALLOWED_USERS")),
+      showToolCallCards: parseBoolean(env.get(`${prefix}SHOW_TOOL_CALL_CARDS`)) ?? false,
+      showAgentDivider: parseBoolean(env.get(`${prefix}SHOW_AGENT_DIVIDER`)) ?? true,
+      oauthRedirectUri: env.get(`${prefix}OAUTH_REDIRECT_URI`) || void 0,
+      enableUserMode: parseBoolean(env.get(`${prefix}ENABLE_USER_MODE`)) ?? false
     });
   }
   return bots;
 }
 function loadConfig() {
-  let env2 = /* @__PURE__ */ new Map();
+  let env = /* @__PURE__ */ new Map();
   try {
     const content = fs5.readFileSync(CONFIG_PATH, "utf-8");
-    env2 = parseEnvFile(content);
+    env = parseEnvFile(content);
   } catch {
   }
-  const runtimeStr = env2.get("CTI_DEFAULT_RUNTIME") || "claude";
+  const runtimeStr = env.get("CTI_DEFAULT_RUNTIME") || "claude";
   const defaultRuntime = runtimeStr === "codex" ? "codex" : runtimeStr === "openhuman" ? "openhuman" : runtimeStr === "zcode" ? "zcode" : runtimeStr === "mimo" ? "mimo" : runtimeStr === "gemini" ? "gemini" : runtimeStr === "hermes" ? "hermes" : "claude";
-  const bots = parseBotConfigs(env2);
+  const bots = parseBotConfigs(env);
   if (bots.length > 0) {
     console.log(`[config] Loaded ${bots.length} bot(s): ${bots.map((b) => `${b.name}(${b.runtime})`).join(", ")}`);
   }
   return {
-    defaultWorkDir: env2.get("CTI_DEFAULT_WORKDIR") || process.cwd(),
+    defaultWorkDir: env.get("CTI_DEFAULT_WORKDIR") || process.cwd(),
     defaultRuntime,
-    feishu: loadFeishuConfig(env2),
+    feishu: loadFeishuConfig(env),
     bots: bots.length > 0 ? bots : void 0,
-    claudeCliExecutable: env2.get("CTI_CLAUDE_CODE_EXECUTABLE") || void 0,
-    compact: loadCompactConfig(env2)
+    claudeCliExecutable: env.get("CTI_CLAUDE_CODE_EXECUTABLE") || void 0,
+    compact: loadCompactConfig(env)
   };
 }
 function configToSettings(config) {
@@ -107792,10 +107809,10 @@ async function callCompactApi(prompt, compactConfig) {
   let model = compactConfig.model || "codex-model";
   if (!apiKey) {
     try {
-      const fs20 = await import("node:fs");
+      const fs21 = await import("node:fs");
       const providersPath = "/root/.claude/cc-haha/providers.json";
-      if (fs20.existsSync(providersPath)) {
-        const providersContent = fs20.readFileSync(providersPath, "utf-8");
+      if (fs21.existsSync(providersPath)) {
+        const providersContent = fs21.readFileSync(providersPath, "utf-8");
         const providersData = JSON.parse(providersContent);
         const activeProvider = providersData.providers.find(
           (p) => p.id === providersData.activeId
@@ -109990,24 +110007,48 @@ function extractActionSenderIdentity(_ctx, event) {
 }
 
 // src/feishu/handlers/inbound-handler.ts
+import fs8 from "node:fs";
+var DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog(msg) {
+  const time = (/* @__PURE__ */ new Date()).toISOString();
+  try {
+    fs8.appendFileSync(DEBUG_LOG, `[${time}] ${msg}
+`, "utf-8");
+  } catch {
+  }
+}
 async function handleIncomingEvent(ctx, data) {
   const messageId = data.message.message_id;
-  if (data.sender.sender_type === "app") return;
-  if (!ctx.markSeenMessage(messageId)) return;
+  rtLog(`[STEP1] handleIncomingEvent entered, messageId=${messageId}, chatId=${data.message.chat_id}, senderType=${data.sender?.sender_type}`);
+  if (data.sender.sender_type === "app") {
+    rtLog(`[STEP1] sender_type=app, returning`);
+    return;
+  }
+  const seen = ctx.markSeenMessage(messageId);
+  rtLog(`[STEP2] markSeenMessage result=${seen} for messageId=${messageId}`);
+  if (!seen) {
+    rtLog(`[STEP2] already seen, returning silently`);
+    return;
+  }
   const sender = extractSenderIdentity(data);
+  rtLog(`[STEP3] extractSenderIdentity result: ${sender ? `id=${sender.id}` : "null"}`);
   if (!sender || !ctx.isAuthorized(sender.id, data.message.chat_id)) {
+    rtLog(`[STEP3] unauthorized or sender missing, dropping`);
     console.warn(
       `[feishu-adapter] Dropped inbound message ${messageId}: unauthorized or sender identity missing (chat=${data.message.chat_id})`
     );
     return;
   }
+  rtLog(`[STEP3] authorized OK`);
   const threadId = data.message.thread_id || void 0;
   const routeKey = buildRouteKey(data.message.chat_id, threadId);
   ctx.setLastIncomingMessageId(routeKey, messageId);
   console.log(
     `[feishu-adapter] Inbound message ${messageId} chat=${data.message.chat_id}${threadId ? ` thread=${threadId}` : ""} type=${data.message.message_type} chatType=${data.message.chat_type}`
   );
+  rtLog(`[STEP4] Calling enqueueChatTask, routeKey=${routeKey}, msgType=${data.message.message_type}`);
   await ctx.enqueueChatTask(routeKey, async () => {
+    rtLog(`[STEP5] enqueueChatTask callback EXECUTED for routeKey=${routeKey}`);
     ctx.prunePendingInboundImages();
     const inbound = {
       messageId,
@@ -110192,12 +110233,16 @@ async function handleIncomingEvent(ctx, data) {
       });
     }
     if (data.message.chat_type === "p2p") {
+      rtLog(`[STEP6] Routing to handleDirectMessage, chatType=p2p, text="${inbound.text}"`);
       console.log(`[feishu-adapter] Routing to handleDirectMessage, text="${inbound.text}"`);
       await handleDirectMessage(ctx, sender, inbound);
+      rtLog(`[STEP7] handleDirectMessage RETURNED OK`);
       return;
     }
+    rtLog(`[STEP6] Routing to handleGroupMessage, chatType=${data.message.chat_type}, text="${inbound.text}"`);
     console.log(`[feishu-adapter] Routing to handleGroupMessage, text="${inbound.text}"`);
     await handleGroupMessage(ctx, sender, inbound);
+    rtLog(`[STEP7] handleGroupMessage RETURNED OK`);
   });
 }
 async function handleDirectMessage(ctx, sender, inbound) {
@@ -111373,7 +111418,7 @@ async function handleStructuredInputCardAction(ctx, event, callbackData) {
 // src/feishu/lark-client.ts
 var lark = __toESM(require_lib2(), 1);
 import { randomUUID as randomUUID3 } from "node:crypto";
-import fs8 from "node:fs";
+import fs9 from "node:fs";
 import path10 from "node:path";
 var USER_TOKEN_PATH = path10.join(CTI_HOME2, "user-token.json");
 var LarkClient = class {
@@ -111416,7 +111461,7 @@ var LarkClient = class {
   }
   loadUserToken() {
     try {
-      const data = JSON.parse(fs8.readFileSync(USER_TOKEN_PATH, "utf-8"));
+      const data = JSON.parse(fs9.readFileSync(USER_TOKEN_PATH, "utf-8"));
       this.userAccessToken = data.accessToken || null;
       this.userRefreshToken = data.refreshToken || null;
       this.userTokenExpiresAt = data.expiresAt || 0;
@@ -111426,8 +111471,8 @@ var LarkClient = class {
   saveUserToken() {
     try {
       const dir = path10.dirname(USER_TOKEN_PATH);
-      fs8.mkdirSync(dir, { recursive: true });
-      fs8.writeFileSync(USER_TOKEN_PATH, JSON.stringify({
+      fs9.mkdirSync(dir, { recursive: true });
+      fs9.writeFileSync(USER_TOKEN_PATH, JSON.stringify({
         accessToken: this.userAccessToken,
         refreshToken: this.userRefreshToken,
         expiresAt: this.userTokenExpiresAt
@@ -111541,7 +111586,7 @@ var LarkClient = class {
     if (!this.client) {
       throw new Error("Feishu client not initialized");
     }
-    const image = fs8.readFileSync(filePath);
+    const image = fs9.readFileSync(filePath);
     const response = await this.client.im.image.create({
       data: {
         image_type: "message",
@@ -112705,9 +112750,9 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
     }
     const tmpDir = "/tmp/feishu-audio";
     const tmpFile = `${tmpDir}/${messageId}.opus`;
-    const fs20 = await import("node:fs/promises");
+    const fs21 = await import("node:fs/promises");
     const nodeFs = await import("node:fs");
-    await fs20.mkdir(tmpDir, { recursive: true });
+    await fs21.mkdir(tmpDir, { recursive: true });
     const response = await client.im.messageResource.get({
       params: { type: "file" },
       // 音频文件用 file 类型
@@ -112722,7 +112767,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
     const buffer = Buffer.concat(chunks);
-    await fs20.writeFile(tmpFile, buffer);
+    await fs21.writeFile(tmpFile, buffer);
     const { execSync: execSync2 } = await import("node:child_process");
     const transcribeScript = "/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh";
     try {
@@ -112731,11 +112776,11 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
         timeout: 6e4,
         env: { ...process.env, LD_LIBRARY_PATH: "/sherpa-onnx/lib:" + (process.env.LD_LIBRARY_PATH || "") }
       }).trim();
-      await fs20.unlink(tmpFile).catch(() => {
+      await fs21.unlink(tmpFile).catch(() => {
       });
       return { text };
     } catch (error) {
-      await fs20.unlink(tmpFile).catch(() => {
+      await fs21.unlink(tmpFile).catch(() => {
       });
       throw error;
     }
@@ -113469,14 +113514,14 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
 
 // src/providers/codex/codex-provider.ts
 import { exec } from "node:child_process";
-import fs10 from "node:fs/promises";
+import fs11 from "node:fs/promises";
 import fsSync from "node:fs";
 import os6 from "node:os";
 import path12 from "node:path";
 
 // src/providers/codex/app-server-client.ts
 import { spawn as spawn2 } from "node:child_process";
-import fs9 from "node:fs";
+import fs10 from "node:fs";
 import os5 from "node:os";
 import path11 from "node:path";
 import readline from "node:readline";
@@ -113539,7 +113584,7 @@ function isProcessRunning(pid) {
 function readSavedPid() {
   const pidFile = resolvePidFile();
   try {
-    const content = fs9.readFileSync(pidFile, "utf8").trim();
+    const content = fs10.readFileSync(pidFile, "utf8").trim();
     const pid = parseInt(content, 10);
     if (pid > 0) return pid;
   } catch {
@@ -113550,8 +113595,8 @@ function savePid(pid) {
   const pidFile = resolvePidFile();
   const pidDir = path11.dirname(pidFile);
   try {
-    fs9.mkdirSync(pidDir, { recursive: true });
-    fs9.writeFileSync(pidFile, String(pid));
+    fs10.mkdirSync(pidDir, { recursive: true });
+    fs10.writeFileSync(pidFile, String(pid));
   } catch (error) {
     console.warn("[codex-app-server] Failed to save PID file:", error);
   }
@@ -114634,18 +114679,18 @@ var CodexProvider = class {
           }
         } else if (tool === "Read") {
           const filePath = String(toolArgs.path || toolArgs.file || "");
-          resultText = await fs10.readFile(filePath, "utf8");
+          resultText = await fs11.readFile(filePath, "utf8");
           success = true;
         } else if (tool === "Edit" || tool === "Write") {
           const filePath = String(toolArgs.path || toolArgs.file || "");
           const content = String(toolArgs.content || toolArgs.text || "");
-          await fs10.writeFile(filePath, content, "utf8");
+          await fs11.writeFile(filePath, content, "utf8");
           resultText = "Done";
           success = true;
         } else if (tool === "Glob") {
           const pattern = String(toolArgs.pattern || "");
           const searchPath = toolArgs.path ? String(toolArgs.path) : void 0;
-          const files = await fs10.readdir(searchPath || ".");
+          const files = await fs11.readdir(searchPath || ".");
           resultText = files.join("\n") || "(no files)";
           success = true;
         } else if (tool === "Grep") {
@@ -115189,11 +115234,11 @@ var CodexProvider = class {
 };
 
 // src/providers/claude/sdk-provider.ts
-import fs12 from "node:fs";
+import fs13 from "node:fs";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
 // src/providers/claude/cli-support.ts
-import fs11 from "node:fs";
+import fs12 from "node:fs";
 import { execSync } from "node:child_process";
 var ENV_WHITELIST = /* @__PURE__ */ new Set([
   "PATH",
@@ -115259,12 +115304,12 @@ function buildCliExecCommand(cliPath, args) {
   }
   return `"${cliPath}"${quotedArgs ? ` ${quotedArgs}` : ""}`;
 }
-function getCliVersion(cliPath, env2) {
+function getCliVersion(cliPath, env) {
   try {
     return execSync(buildCliExecCommand(cliPath, ["--version"]), {
       encoding: "utf-8",
       timeout: 1e4,
-      env: env2 || buildSubprocessEnv(),
+      env: env || buildSubprocessEnv(),
       stdio: ["pipe", "pipe", "pipe"]
     }).trim();
   } catch {
@@ -115272,13 +115317,13 @@ function getCliVersion(cliPath, env2) {
   }
 }
 var REQUIRED_CLI_FLAGS = ["output-format", "input-format", "permission-mode", "setting-sources"];
-function checkRequiredFlags(cliPath, env2) {
+function checkRequiredFlags(cliPath, env) {
   let helpText;
   try {
     helpText = execSync(buildCliExecCommand(cliPath, ["--help"]), {
       encoding: "utf-8",
       timeout: 1e4,
-      env: env2 || buildSubprocessEnv(),
+      env: env || buildSubprocessEnv(),
       stdio: ["pipe", "pipe", "pipe"]
     });
   } catch {
@@ -115286,14 +115331,14 @@ function checkRequiredFlags(cliPath, env2) {
   }
   return REQUIRED_CLI_FLAGS.filter((flag) => !helpText.includes(flag));
 }
-function checkCliCompatibility(cliPath, env2) {
-  const version = getCliVersion(cliPath, env2);
+function checkCliCompatibility(cliPath, env) {
+  const version = getCliVersion(cliPath, env);
   if (!version) return void 0;
   const major = parseCliMajorVersion(version);
   if (major === void 0 || major < MIN_CLI_MAJOR) {
     return { compatible: false, version, major };
   }
-  const missing = checkRequiredFlags(cliPath, env2);
+  const missing = checkRequiredFlags(cliPath, env);
   return {
     compatible: missing.length === 0,
     version,
@@ -115325,13 +115370,13 @@ function preflightCheck(cliPath) {
 }
 function isExecutable(p) {
   try {
-    fs11.accessSync(p, fs11.constants.X_OK);
+    fs12.accessSync(p, fs12.constants.X_OK);
     return true;
   } catch {
     return false;
   }
 }
-function resolveWindowsNpmClaudeCliShim(cliPath, pathExists = fs11.existsSync) {
+function resolveWindowsNpmClaudeCliShim(cliPath, pathExists = fs12.existsSync) {
   const normalized = cliPath.replace(/\\/g, "/");
   if (!/\/npm\/claude(\.cmd)?$/i.test(normalized)) {
     return cliPath;
@@ -115352,7 +115397,7 @@ function normalizeConfiguredClaudeCliPath(cliPath, platform = process.platform) 
   if (isWindowsStylePath(trimmed)) return void 0;
   return trimmed;
 }
-function parseWindowsWhereClaudeOutput(output, pathExists = fs11.existsSync) {
+function parseWindowsWhereClaudeOutput(output, pathExists = fs12.existsSync) {
   return output.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((candidate) => resolveWindowsNpmClaudeCliShim(candidate, pathExists));
 }
 function findAllInPath() {
@@ -115430,19 +115475,19 @@ function loadMemoryContent() {
   try {
     const claudeHome = process.env.CLAUDE_HOME || process.env.HOME + "/.claude";
     const settingsPath = claudeHome + "/settings.json";
-    if (!fs12.existsSync(settingsPath)) return "";
-    const settings = JSON.parse(fs12.readFileSync(settingsPath, "utf-8"));
+    if (!fs13.existsSync(settingsPath)) return "";
+    const settings = JSON.parse(fs13.readFileSync(settingsPath, "utf-8"));
     const memDir = settings.autoMemoryDirectory;
-    if (!memDir || !fs12.existsSync(memDir)) return "";
+    if (!memDir || !fs13.existsSync(memDir)) return "";
     const parts2 = [];
     const memFile = memDir + "/MEMORY.md";
-    if (fs12.existsSync(memFile)) {
-      parts2.push(fs12.readFileSync(memFile, "utf-8"));
+    if (fs13.existsSync(memFile)) {
+      parts2.push(fs13.readFileSync(memFile, "utf-8"));
     }
     for (const name of ["user_profile.md", "user_identity.md", "feedback_behavior_rules.md", "feedback_no-docker.md", "project_2026-05-30-debian13-migration.md"]) {
       const fp = memDir + "/" + name;
-      if (fs12.existsSync(fp)) {
-        parts2.push("\n=== " + name + " ===\n" + fs12.readFileSync(fp, "utf-8"));
+      if (fs13.existsSync(fp)) {
+        parts2.push("\n=== " + name + " ===\n" + fs13.readFileSync(fp, "utf-8"));
       }
     }
     return parts2.join("\n---\n");
@@ -120074,14 +120119,14 @@ function createOpenHumanProvider(config) {
 
 // src/providers/zcode/zcode-provider.ts
 import { spawn as spawn3 } from "node:child_process";
-import fs13 from "node:fs";
+import fs14 from "node:fs";
 import path13 from "node:path";
 function loadMcpServers() {
   const ctiHome = process.env.CTI_HOME || "";
   const configPath = path13.join(ctiHome, "mcpServers.json");
   try {
-    if (!fs13.existsSync(configPath)) return [];
-    const raw = JSON.parse(fs13.readFileSync(configPath, "utf-8"));
+    if (!fs14.existsSync(configPath)) return [];
+    const raw = JSON.parse(fs14.readFileSync(configPath, "utf-8"));
     return Object.entries(raw).map(([name, cfg]) => ({
       name,
       command: cfg.command,
@@ -120097,11 +120142,11 @@ function findSandboxDir(agent) {
   const base = "/opt/.zcode/v2/acp-config";
   const agentDir = path13.join(base, agent);
   try {
-    const entries = fs13.readdirSync(agentDir).filter((e) => {
+    const entries = fs14.readdirSync(agentDir).filter((e) => {
       const dir = path13.join(agentDir, e);
-      if (!fs13.statSync(dir).isDirectory()) return false;
-      if (agent === "gemini") return fs13.existsSync(path13.join(dir, ".gemini", "settings.json"));
-      if (agent === "opencode") return fs13.existsSync(path13.join(dir, "opencode.json"));
+      if (!fs14.statSync(dir).isDirectory()) return false;
+      if (agent === "gemini") return fs14.existsSync(path13.join(dir, ".gemini", "settings.json"));
+      if (agent === "opencode") return fs14.existsSync(path13.join(dir, "opencode.json"));
       return true;
     }).sort().reverse();
     return entries.length > 0 ? path13.join(agentDir, entries[0]) : null;
@@ -120202,17 +120247,17 @@ var ZCodeProvider = class _ZCodeProvider {
       const sandbox = findSandboxDir(agent);
       if (sandbox) cwd = sandbox;
     }
-    const env2 = { ...process.env };
+    const env = { ...process.env };
     if (agent === "gemini") {
-      env2.GOOGLE_GEMINI_BASE_URL = "http://127.0.0.1:8901";
-      env2.GEMINI_API_KEY = "proxy-passthrough";
+      env.GOOGLE_GEMINI_BASE_URL = "http://127.0.0.1:8901";
+      env.GEMINI_API_KEY = "proxy-passthrough";
     }
     const args = agentCli.args(prompt);
     console.log(`[zcode-provider] ACP spawn: agent=${agent} bin=${agentCli.bin} cwd=${cwd}`);
     const saved = this.loadSavedSession(cacheKey);
     const child = spawn3(agentCli.bin, args, {
       cwd,
-      env: env2,
+      env,
       stdio: ["pipe", "pipe", "pipe"]
     });
     emitCanonicalTurnEvent(controller, {
@@ -120240,7 +120285,7 @@ var ZCodeProvider = class _ZCodeProvider {
           sessionId: sid,
           agent,
           cwd,
-          env: env2,
+          env,
           lineBuf: "",
           lastUsed: Date.now(),
           currentSettle: null,
@@ -120568,8 +120613,8 @@ ${prompt}`;
   loadSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (!fs13.existsSync(filePath)) return null;
-      const data = JSON.parse(fs13.readFileSync(filePath, "utf8"));
+      if (!fs14.existsSync(filePath)) return null;
+      const data = JSON.parse(fs14.readFileSync(filePath, "utf8"));
       if (data?.sessionId && data?.cwd) {
         console.log(`[zcode-provider] Session loaded from disk: ${data.sessionId} (was saved ${data.savedAt || "?"})`);
         return { sessionId: data.sessionId, cwd: data.cwd };
@@ -120582,10 +120627,10 @@ ${prompt}`;
   /** 保存 sessionId 到磁盘 */
   saveSession(cacheKey, sessionId, cwd) {
     try {
-      fs13.mkdirSync(_ZCodeProvider.SESSION_DIR, { recursive: true });
+      fs14.mkdirSync(_ZCodeProvider.SESSION_DIR, { recursive: true });
       const filePath = this.sessionFilePath(cacheKey);
       const data = { sessionId, cwd, savedAt: (/* @__PURE__ */ new Date()).toISOString(), agent: cacheKey.split(":").pop() };
-      fs13.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      fs14.writeFileSync(filePath, JSON.stringify(data, null, 2));
       console.log(`[zcode-provider] Session saved to disk: ${sessionId} \u2192 ${filePath}`);
     } catch (e) {
       console.log(`[zcode-provider] Session save failed: ${e}`);
@@ -120595,7 +120640,7 @@ ${prompt}`;
   removeSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (fs13.existsSync(filePath)) fs13.unlinkSync(filePath);
+      if (fs14.existsSync(filePath)) fs14.unlinkSync(filePath);
     } catch {
     }
   }
@@ -120675,9 +120720,17 @@ function createZCodeProvider(config) {
 
 // src/providers/mimo/mimo-provider.ts
 import { spawn as spawn4 } from "node:child_process";
-import fs14 from "node:fs";
+import fs15 from "node:fs";
 import os7 from "node:os";
 import path14 from "node:path";
+function rtLog2(msg) {
+  const DEBUG_LOG2 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+  try {
+    fs15.appendFileSync(DEBUG_LOG2, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`, "utf-8");
+  } catch {
+  }
+}
 function buildSpawnEnv() {
   if (process.platform !== "win32") return { ...process.env };
   return {
@@ -120700,7 +120753,7 @@ function resolveMimoExecutable() {
       "C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\@mimo-ai\\cli\\node_modules\\@mimo-ai\\mimocode-windows-x64-baseline\\bin\\mimo.exe"
     ];
     for (const exe of candidates) {
-      if (fs14.existsSync(exe)) {
+      if (fs15.existsSync(exe)) {
         return { command: exe, args: [] };
       }
     }
@@ -120713,15 +120766,15 @@ function loadMemoryContent2(agentName) {
   const agent = agentName || "mimo";
   try {
     const agentMemDir = `${memBase}/${agent}`;
-    if (fs14.existsSync(agentMemDir)) {
+    if (fs15.existsSync(agentMemDir)) {
       const memFile = agentMemDir + "/MEMORY.md";
-      if (fs14.existsSync(memFile)) {
-        parts2.push(fs14.readFileSync(memFile, "utf-8"));
+      if (fs15.existsSync(memFile)) {
+        parts2.push(fs15.readFileSync(memFile, "utf-8"));
       }
-      const files = fs14.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
+      const files = fs15.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
       for (const file of files) {
         const fp = agentMemDir + "/" + file;
-        const content = fs14.readFileSync(fp, "utf-8").trim();
+        const content = fs15.readFileSync(fp, "utf-8").trim();
         if (content) parts2.push(`
 === ${file} ===
 ${content}`);
@@ -120731,8 +120784,8 @@ ${content}`);
   }
   try {
     const sharedMemFile = `${memBase}/shared/MEMORY.md`;
-    if (fs14.existsSync(sharedMemFile)) {
-      const content = fs14.readFileSync(sharedMemFile, "utf-8").trim();
+    if (fs15.existsSync(sharedMemFile)) {
+      const content = fs15.readFileSync(sharedMemFile, "utf-8").trim();
       if (content) parts2.push(`
 === Shared Memory ===
 ${content}`);
@@ -120770,25 +120823,54 @@ var MiMoProvider = class _MiMoProvider {
     }
   }
   async prepare() {
+    if (process.platform === "win32") {
+      rtLog2(`[mimo-provider] prepare: Windows environment, skipping --version check`);
+      return;
+    }
     return new Promise((resolve2, reject) => {
       const { command, args } = resolveMimoExecutable();
+      rtLog2(`[mimo-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
       const child = spawn4(command, [...args, "--version"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: buildSpawnEnv()
+        env: buildSpawnEnv(),
+        windowsHide: true
+      });
+      let stdoutBuf = "";
+      let stderrBuf = "";
+      child.stdout?.on("data", (chunk) => {
+        stdoutBuf += chunk.toString();
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderrBuf += chunk.toString();
       });
       child.on("close", (code) => {
-        code === 0 ? resolve2() : reject(new Error("mimo CLI not available"));
+        rtLog2(`[mimo-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
+        code === 0 ? resolve2() : reject(new Error(`mimo CLI not available (code=${code})`));
       });
       child.on("error", (error) => {
+        rtLog2(`[mimo-provider] prepare: spawn ERROR: ${error.message}`);
         reject(new Error(`Failed to spawn mimo: ${error.message}`));
       });
+      setTimeout(() => {
+        rtLog2(`[mimo-provider] prepare: TIMEOUT (10s), killing process`);
+        child.kill();
+        reject(new Error("mimo prepare timeout (10s)"));
+      }, 1e4);
     });
   }
   streamChat(params2) {
     const self2 = this;
     return new ReadableStream({
-      start(controller) {
-        void self2.runAcp(controller, params2);
+      async start(controller) {
+        try {
+          await self2.runAcp(controller, params2);
+        } catch (e) {
+          console.error("[mimo-provider] streamChat error:", e);
+          rtLog2(`[mimo-provider] streamChat CAUGHT ERROR: ${e}`);
+          emitCanonicalTurnEvent(controller, { type: "error", data: String(e) });
+          emitCanonicalTurnEvent(controller, { type: "done", data: "" });
+          controller.close();
+        }
       }
     });
   }
@@ -120810,20 +120892,35 @@ var MiMoProvider = class _MiMoProvider {
       return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params2.conversationHistory);
     }
     const rawCwd = params2.workingDirectory || process.cwd();
-    const cwd = process.platform === "win32" && !fs14.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
-    console.log(`[mimo-provider] ACP spawn: bin=mimo cwd=${cwd}`);
+    const cwd = process.platform === "win32" && !fs15.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
+    rtLog2(`[mimo-provider] ACP spawn: bin=mimo cwd=${cwd}`);
     const configCwd = process.env.CTI_MIMO_ACP_CWD || cwd;
     const sessionNewCwd = process.platform === "win32" ? cwd : configCwd;
     const saved = this.loadSavedSession(cacheKey);
     const { command, args } = resolveMimoExecutable();
+    rtLog2(`[mimo-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
+    const env = buildSpawnEnv();
     const child = spawn4(command, [...args, "acp", "--hostname", "127.0.0.1", "--cwd", configCwd], {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: buildSpawnEnv()
+      env
+    });
+    rtLog2(`[mimo-provider] ACP spawned successfully: pid=${child.pid}`);
+    child.stdout.on("data", (chunk) => {
+      rtLog2(`[mimo-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+    });
+    child.stderr.on("data", (chunk) => {
+      rtLog2(`[mimo-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+    });
+    child.on("error", (err) => {
+      rtLog2(`[mimo-provider] SPAWN ERROR: ${err}`);
+    });
+    child.on("close", (code, signal) => {
+      rtLog2(`[mimo-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
-      if (text) console.error(`[mimo-provider] ACP stderr: ${text.slice(0, 500)}`);
+      if (text) rtLog2(`[mimo-provider] ACP stderr: ${text.slice(0, 500)}`);
     });
     emitCanonicalTurnEvent(controller, {
       type: "status",
@@ -120839,8 +120936,12 @@ var MiMoProvider = class _MiMoProvider {
       let resolved = false;
       let resumeAttempted = false;
       const done = (c) => {
-        if (resolved) return;
+        if (resolved) {
+          console.warn(`[mimo-provider] done \u88AB\u4E8C\u6B21\u89E6\u53D1\uFF01\u5F53\u524D\u503C sessionId=${c?.sessionId} alive=${c?.alive}`);
+          return;
+        }
         resolved = true;
+        console.log(`[mimo-provider] done \u89E6\u53D1\uFF0Cresolve \u503C sessionId=${c?.sessionId} alive=${c?.alive}`);
         resolve2(c);
       };
       const createCacheEntry = (sid) => {
@@ -120975,6 +121076,7 @@ var MiMoProvider = class _MiMoProvider {
         }
       }, 15e3);
     });
+    rtLog2(`[mimo-provider] runAcp cached = ${cached}`);
     if (!cached) {
       const err = spawnError2 || "Failed to initialize ACP session";
       console.error(`[mimo-provider] ACP init failed:`, err);
@@ -121172,6 +121274,7 @@ var MiMoProvider = class _MiMoProvider {
   }
   /** 发送 prompt 并等待响应 */
   sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, conversationHistory) {
+    rtLog2(`[mimo-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
     return new Promise((resolve2) => {
       const promptId = cached.nextId++;
       cached.currentPromptId = promptId;
@@ -121285,8 +121388,8 @@ ${fullPrompt}`;
   loadSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (!fs14.existsSync(filePath)) return null;
-      const data = JSON.parse(fs14.readFileSync(filePath, "utf8"));
+      if (!fs15.existsSync(filePath)) return null;
+      const data = JSON.parse(fs15.readFileSync(filePath, "utf8"));
       if (data?.sessionId && data?.cwd) {
         console.log(`[mimo-provider] Session loaded from disk: ${data.sessionId}`);
         return { sessionId: data.sessionId, cwd: data.cwd };
@@ -121298,10 +121401,10 @@ ${fullPrompt}`;
   }
   saveSession(cacheKey, sessionId, cwd) {
     try {
-      fs14.mkdirSync(_MiMoProvider.SESSION_DIR, { recursive: true });
+      fs15.mkdirSync(_MiMoProvider.SESSION_DIR, { recursive: true });
       const filePath = this.sessionFilePath(cacheKey);
       const data = { sessionId, cwd, savedAt: (/* @__PURE__ */ new Date()).toISOString() };
-      fs14.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      fs15.writeFileSync(filePath, JSON.stringify(data, null, 2));
       console.log(`[mimo-provider] Session saved: ${sessionId}`);
     } catch (e) {
       console.log(`[mimo-provider] Session save failed: ${e}`);
@@ -121310,7 +121413,7 @@ ${fullPrompt}`;
   removeSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (fs14.existsSync(filePath)) fs14.unlinkSync(filePath);
+      if (fs15.existsSync(filePath)) fs15.unlinkSync(filePath);
     } catch {
     }
   }
@@ -121343,10 +121446,18 @@ ${fullPrompt}`;
 
 // src/providers/gemini/gemini-app-server-client.ts
 import { spawn as spawn5 } from "node:child_process";
-import fs15 from "node:fs";
+import fs16 from "node:fs";
 import os8 from "node:os";
 import path15 from "node:path";
 import readline2 from "node:readline";
+function rtLog3(msg) {
+  const DEBUG_LOG2 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+  try {
+    fs16.appendFileSync(DEBUG_LOG2, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`, "utf-8");
+  } catch {
+  }
+}
 function buildInitializeParams2() {
   return {
     protocolVersion: 1,
@@ -121379,7 +121490,7 @@ function isProcessRunning2(pid) {
 function readSavedPid2() {
   const pidFile = resolvePidFile2();
   try {
-    const content = fs15.readFileSync(pidFile, "utf8").trim();
+    const content = fs16.readFileSync(pidFile, "utf8").trim();
     const pid = parseInt(content, 10);
     if (pid > 0) return pid;
   } catch {
@@ -121390,8 +121501,8 @@ function savePid2(pid) {
   const pidFile = resolvePidFile2();
   const pidDir = path15.dirname(pidFile);
   try {
-    fs15.mkdirSync(pidDir, { recursive: true });
-    fs15.writeFileSync(pidFile, String(pid));
+    fs16.mkdirSync(pidDir, { recursive: true });
+    fs16.writeFileSync(pidFile, String(pid));
   } catch (error) {
     console.warn("[gemini-app-server] Failed to save PID file:", error);
   }
@@ -121508,40 +121619,76 @@ var GeminiAppServerClient = class {
     proc.kill();
   }
   async bootstrap() {
-    const args = [...this.acpArgs];
-    const proc = spawn5(this.executable, args, {
+    let command = this.executable;
+    let spawnArgs = [...this.acpArgs];
+    let useShell = false;
+    if (process.platform === "win32") {
+      const npmGlobalRoot = path15.join(os8.homedir(), "AppData", "Roaming", "npm");
+      const geminiJsPath = path15.join(npmGlobalRoot, "node_modules", "@google", "gemini-cli", "bundle", "gemini.js");
+      if (fs16.existsSync(geminiJsPath)) {
+        command = process.execPath;
+        spawnArgs = [geminiJsPath, ...this.acpArgs];
+        console.log(`[gemini-app-server] Windows: spawning node directly: ${command} ${spawnArgs.join(" ")}`);
+      } else if (/\.(cmd|bat)$/i.test(this.executable) || !path15.isAbsolute(this.executable)) {
+        useShell = true;
+        console.log(`[gemini-app-server] Windows: using shell mode for ${this.executable}`);
+      }
+    }
+    const proc = spawn5(command, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
-      shell: true,
+      shell: useShell,
+      windowsHide: true,
       env: {
         ...process.env,
         HOME: os8.homedir(),
+        USERPROFILE: os8.homedir(),
         GEMINI_HOME: resolveGeminiHome(),
         GEMINI_API_KEY: this.apiKey,
         GOOGLE_GEMINI_BASE_URL: this.baseUrl,
+        APPDATA: process.env.APPDATA || path15.join(os8.homedir(), "AppData", "Roaming"),
         ...this.extraEnv
       }
     });
+    rtLog3(`[gemini-app-server] ACP spawn: command=${command} args=${JSON.stringify(spawnArgs)} pid=${proc.pid}`);
     this.proc = proc;
+    proc.stdout.on("data", (chunk) => {
+      rtLog3(`[gemini-app-server] stdout RAW: ${chunk.length} bytes -> "${chunk.toString("utf-8").substring(0, 200)}"`);
+    });
     proc.once("error", (error) => {
+      rtLog3(`[gemini-app-server] spawn ERROR: ${error.message}`);
       this.failAllPending(error instanceof Error ? error : new Error(String(error)));
     });
     proc.once("exit", (code, signal) => {
       const suffix = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
+      rtLog3(`[gemini-app-server] process EXIT: ${suffix}`);
       this.failAllPending(new Error(`[gemini-app-server] Process exited with ${suffix}`));
       this.proc = null;
       this.startPromise = null;
     });
     const rl = readline2.createInterface({ input: proc.stdout });
     rl.on("line", (line) => {
+      rtLog3(`[gemini-app-server] stdout LINE: ${line.substring(0, 150)}`);
       this.handleLine(line);
     });
     proc.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
       if (text && !text.includes("YOLO mode is enabled") && !text.includes("MCP issues detected")) {
+        rtLog3(`[gemini-app-server] stderr: ${text.substring(0, 300)}`);
         console.warn(`[gemini-app-server][stderr] ${text}`);
       }
     });
+    rtLog3(`[gemini-app-server] calling initialize...`);
+    let initDone = false;
+    const initTimeout = setTimeout(() => {
+      if (!initDone) {
+        rtLog3(`[gemini-app-server] initialize TIMEOUT (30s), killing process`);
+        proc.kill();
+      }
+    }, 3e4);
     await this.callInternal("initialize", buildInitializeParams2());
+    initDone = true;
+    clearTimeout(initTimeout);
+    rtLog3(`[gemini-app-server] initialize OK`);
     try {
       await this.callInternal("authenticate", { methodId: "gateway" });
     } catch (error) {
@@ -121573,6 +121720,21 @@ var GeminiAppServerClient = class {
       return;
     }
     if (typeof parsed.method !== "string") {
+      return;
+    }
+    if (parsed.method === "session/request_permission" && "id" in parsed) {
+      rtLog3(`[gemini-app-server] AUTO-APPROVE session/request_permission id=${parsed.id}`);
+      try {
+        const params2 = parsed.params;
+        const firstOption = params2?.options?.[0]?.optionId || "proceed_always";
+        this.writePayload({
+          jsonrpc: "2.0",
+          id: parsed.id,
+          result: { optionId: firstOption }
+        });
+      } catch (e) {
+        rtLog3(`[gemini-app-server] auto-approve failed: ${e}`);
+      }
       return;
     }
     const envelope = "id" in parsed ? {
@@ -121688,18 +121850,35 @@ var GeminiProvider = class {
         sessionId,
         prompt: promptInput
       });
+      const MAX_DRAIN_WAIT_MS = 3e3;
+      const drainStart = Date.now();
       while (true) {
         if (params2.abortController?.signal.aborted) break;
-        const message = await this.readNext(queue, () => {
-          if (wakeQueue) return;
-          wakeQueue = () => {
-          };
-        }, () => {
-          if (queue.length > 0) return;
-          return new Promise((resolve2) => {
-            wakeQueue = resolve2;
+        let message;
+        try {
+          message = await this.readNext(queue, () => {
+            if (wakeQueue) return;
+            wakeQueue = () => {
+            };
+          }, () => {
+            const elapsed = Date.now() - drainStart;
+            if (elapsed >= MAX_DRAIN_WAIT_MS || queue.length > 0) {
+              if (queue.length === 0) return Promise.reject(new Error("drain-done"));
+              return;
+            }
+            const remainingMs = MAX_DRAIN_WAIT_MS - elapsed;
+            return new Promise((resolve2, reject) => {
+              const timer = setTimeout(() => reject(new Error("drain-done")), remainingMs);
+              wakeQueue = () => {
+                clearTimeout(timer);
+                resolve2();
+              };
+            });
           });
-        });
+        } catch (e) {
+          if (e?.message === "drain-done") break;
+          throw e;
+        }
         if (!message) continue;
         if (message.kind === "request") continue;
         const paramsRecord = typeof message.params === "object" && message.params ? message.params : {};
@@ -121791,10 +121970,18 @@ function createGeminiProvider(config) {
 
 // src/providers/hermes/hermes-app-server-client.ts
 import { spawn as spawn6 } from "node:child_process";
-import fs16 from "node:fs";
+import fs17 from "node:fs";
 import os9 from "node:os";
 import path16 from "node:path";
 import readline3 from "node:readline";
+function rtLog4(msg) {
+  const DEBUG_LOG2 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+  try {
+    fs17.appendFileSync(DEBUG_LOG2, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`, "utf-8");
+  } catch {
+  }
+}
 var CLIENT_INFO2 = {
   name: "agents-to-im",
   title: "Hermes ACP Client",
@@ -121830,7 +122017,7 @@ function isProcessRunning3(pid) {
 function readSavedPid3() {
   const pidFile = resolvePidFile3();
   try {
-    const content = fs16.readFileSync(pidFile, "utf8").trim();
+    const content = fs17.readFileSync(pidFile, "utf8").trim();
     const pid = parseInt(content, 10);
     if (pid > 0) return pid;
   } catch {
@@ -121841,8 +122028,8 @@ function savePid3(pid) {
   const pidFile = resolvePidFile3();
   const pidDir = path16.dirname(pidFile);
   try {
-    fs16.mkdirSync(pidDir, { recursive: true });
-    fs16.writeFileSync(pidFile, String(pid));
+    fs17.mkdirSync(pidDir, { recursive: true });
+    fs17.writeFileSync(pidFile, String(pid));
   } catch (error) {
     console.warn("[hermes-app-server] Failed to save PID file:", error);
   }
@@ -121952,38 +122139,62 @@ var HermesAppServerClient = class {
   }
   async bootstrap() {
     const args = [...this.acpArgs];
+    rtLog4(`[hermes-app-server] bootstrap: spawning "${this.executable}" args=${JSON.stringify(args)}`);
     const proc = spawn6(this.executable, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
         HOME: os9.homedir(),
-        HERMES_HOME: resolveHermesHome()
-      }
+        HERMES_HOME: resolveHermesHome(),
+        USERPROFILE: os9.homedir(),
+        APPDATA: process.env.APPDATA || path16.join(os9.homedir(), "AppData", "Roaming")
+      },
+      windowsHide: true
     });
     this.proc = proc;
     proc.once("error", (error) => {
+      rtLog4(`[hermes-app-server] spawn ERROR: ${error.message}`);
       this.failAllPending(error instanceof Error ? error : new Error(String(error)));
     });
     proc.once("exit", (code, signal) => {
       const suffix = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
+      rtLog4(`[hermes-app-server] process EXIT: ${suffix}`);
       this.failAllPending(new Error(`[hermes-app-server] Process exited with ${suffix}`));
       this.proc = null;
       this.startPromise = null;
     });
-    const rl = readline3.createInterface({ input: proc.stdout });
-    rl.on("line", (line) => {
-      this.handleLine(line);
+    let stderrLog = "";
+    proc.stdout.on("data", (chunk) => {
+      rtLog4(`[hermes-app-server] stdout: received ${chunk.length} bytes`);
     });
     proc.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
+      stderrLog += text;
       if (text) {
+        rtLog4(`[hermes-app-server] stderr: ${text}`);
         console.warn(`[hermes-app-server][stderr] ${text}`);
       }
     });
+    const rl = readline3.createInterface({ input: proc.stdout });
+    rl.on("line", (line) => {
+      rtLog4(`[hermes-app-server] stdout LINE: ${line.substring(0, 100)}`);
+      this.handleLine(line);
+    });
+    rtLog4(`[hermes-app-server] calling initialize...`);
+    let initDone = false;
+    const timeoutId = setTimeout(() => {
+      if (!initDone) {
+        rtLog4(`[hermes-app-server] initialize TIMEOUT (30s), killing process`);
+        proc.kill();
+      }
+    }, 3e4);
     await this.callInternal("initialize", buildInitializeParams3());
+    initDone = true;
+    clearTimeout(timeoutId);
+    rtLog4(`[hermes-app-server] initialize OK`);
     if (proc.pid) {
       savePid3(proc.pid);
-      console.log(`[hermes-app-server] Started with PID ${proc.pid}`);
+      rtLog4(`[hermes-app-server] Started with PID ${proc.pid}`);
     }
   }
   handleLine(line) {
@@ -122679,23 +122890,23 @@ var MultiplexLLMProvider = class {
 };
 
 // src/infra/store.ts
-import fs17 from "node:fs";
+import fs18 from "node:fs";
 import path17 from "node:path";
 import crypto2 from "node:crypto";
 var BOT_NAME = process.env.CTI_BOT || "";
 var DATA_DIR = path17.join(CTI_HOME2, "data", BOT_NAME || ".");
 var MESSAGES_DIR = path17.join(DATA_DIR, "messages");
 function ensureDir(dir) {
-  fs17.mkdirSync(dir, { recursive: true });
+  fs18.mkdirSync(dir, { recursive: true });
 }
 function atomicWrite(filePath, data) {
   const tmp = filePath + ".tmp";
-  fs17.writeFileSync(tmp, data, "utf-8");
-  fs17.renameSync(tmp, filePath);
+  fs18.writeFileSync(tmp, data, "utf-8");
+  fs18.renameSync(tmp, filePath);
 }
 function readJson(filePath, fallback) {
   try {
-    const raw = fs17.readFileSync(filePath, "utf-8");
+    const raw = fs18.readFileSync(filePath, "utf-8");
     return JSON.parse(raw);
   } catch {
     return fallback;
@@ -123089,28 +123300,44 @@ var JsonFileStore = class {
     return { messages: [...msgs] };
   }
   // ── Session Locking ──
+  rtLog(msg) {
+    const DEBUG_LOG2 = `C:\\D\\opt\\agents-to-im\\debug_realtime_locks_${process.env.CTI_BOT || "unknown"}.log`;
+    try {
+      __require("fs").appendFileSync(DEBUG_LOG2, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`, "utf-8");
+    } catch {
+    }
+  }
   acquireSessionLock(sessionId, lockId, owner, ttlSecs) {
     const existing = this.locks.get(sessionId);
     if (existing && existing.expiresAt > Date.now()) {
-      if (existing.lockId !== lockId) return false;
+      if (existing.lockId !== lockId) {
+        this.rtLog(`[LOCK] acquireSessionLock FAILED: sessionId=${sessionId.slice(0, 12)}... held by ${existing.lockId}, owner=${existing.owner}, expiresAt=${new Date(existing.expiresAt).toISOString()}`);
+        return false;
+      }
     }
     this.locks.set(sessionId, {
       lockId,
       owner,
       expiresAt: Date.now() + ttlSecs * 1e3
     });
+    this.rtLog(`[LOCK] acquireSessionLock OK: sessionId=${sessionId.slice(0, 12)}... lockId=${lockId} owner=${owner}`);
     return true;
   }
   renewSessionLock(sessionId, lockId, ttlSecs) {
     const lock = this.locks.get(sessionId);
     if (lock && lock.lockId === lockId) {
       lock.expiresAt = Date.now() + ttlSecs * 1e3;
+      this.rtLog(`[LOCK] renewSessionLock: sessionId=${sessionId.slice(0, 12)}... renewed +${ttlSecs}s`);
     }
   }
   releaseSessionLock(sessionId, lockId) {
     const lock = this.locks.get(sessionId);
     if (lock && lock.lockId === lockId) {
       this.locks.delete(sessionId);
+      this.rtLog(`[LOCK] releaseSessionLock: sessionId=${sessionId.slice(0, 12)}... released`);
+    } else {
+      this.rtLog(`[LOCK] releaseSessionLock SKIPPED: sessionId=${sessionId.slice(0, 12)}... lockId=${lockId} not current holder (current=${lock?.lockId})`);
     }
   }
   setSessionRuntimeStatus(_sessionId, _status) {
@@ -123472,7 +123699,7 @@ var JsonFileStore = class {
 };
 
 // src/config/logger.ts
-import fs18 from "node:fs";
+import fs19 from "node:fs";
 import path18 from "node:path";
 var MASK_PATTERNS = [
   /(?:token|secret|password|api_key)["']?\s*[:=]\s*["']?([^\s"',]+)/gi,
@@ -123496,7 +123723,7 @@ var MAX_LOG_SIZE = 10 * 1024 * 1024;
 var MAX_ROTATED = 3;
 var logStream = null;
 function openLogStream() {
-  return fs18.createWriteStream(LOG_PATH, { flags: "a" });
+  return fs19.createWriteStream(LOG_PATH, { flags: "a" });
 }
 function formatLogTimestamp(date) {
   const pad = (value2, width = 2) => String(value2).padStart(width, "0");
@@ -123516,7 +123743,7 @@ function formatLogTimestamp(date) {
 }
 function rotateIfNeeded() {
   try {
-    const stat = fs18.statSync(LOG_PATH);
+    const stat = fs19.statSync(LOG_PATH);
     if (stat.size < MAX_LOG_SIZE) return;
   } catch {
     return;
@@ -123526,17 +123753,17 @@ function rotateIfNeeded() {
     logStream = null;
   }
   const path32 = `${LOG_PATH}.${MAX_ROTATED}`;
-  if (fs18.existsSync(path32)) fs18.unlinkSync(path32);
+  if (fs19.existsSync(path32)) fs19.unlinkSync(path32);
   for (let i = MAX_ROTATED - 1; i >= 1; i--) {
     const src = `${LOG_PATH}.${i}`;
     const dst = `${LOG_PATH}.${i + 1}`;
-    if (fs18.existsSync(src)) fs18.renameSync(src, dst);
+    if (fs19.existsSync(src)) fs19.renameSync(src, dst);
   }
-  fs18.renameSync(LOG_PATH, `${LOG_PATH}.1`);
+  fs19.renameSync(LOG_PATH, `${LOG_PATH}.1`);
   logStream = openLogStream();
 }
 function setupLogger() {
-  fs18.mkdirSync(LOG_DIR, { recursive: true });
+  fs19.mkdirSync(LOG_DIR, { recursive: true });
   logStream = openLogStream();
   const write = (level, args) => {
     const timestamp = formatLogTimestamp(/* @__PURE__ */ new Date());
@@ -123851,16 +124078,16 @@ var BOT_NAME2 = process.env.CTI_BOT || "";
 var STATUS_FILE = path19.join(RUNTIME_DIR, BOT_NAME2 ? "status-" + BOT_NAME2 + ".json" : "status.json");
 var PID_FILE = path19.join(RUNTIME_DIR, BOT_NAME2 ? "bridge-" + BOT_NAME2 + ".pid" : "bridge.pid");
 function writeStatus(info) {
-  fs19.mkdirSync(RUNTIME_DIR, { recursive: true });
+  fs20.mkdirSync(RUNTIME_DIR, { recursive: true });
   let existing = {};
   try {
-    existing = JSON.parse(fs19.readFileSync(STATUS_FILE, "utf-8"));
+    existing = JSON.parse(fs20.readFileSync(STATUS_FILE, "utf-8"));
   } catch {
   }
   const merged = { ...existing, ...info };
   const tmp = STATUS_FILE + ".tmp";
-  fs19.writeFileSync(tmp, JSON.stringify(merged, null, 2), "utf-8");
-  fs19.renameSync(tmp, STATUS_FILE);
+  fs20.writeFileSync(tmp, JSON.stringify(merged, null, 2), "utf-8");
+  fs20.renameSync(tmp, STATUS_FILE);
 }
 function generateMcpConfigs() {
   const mcpServers = {};
@@ -123878,8 +124105,8 @@ function generateMcpConfigs() {
       claudeMcp.mcpServers[name] = { type: "http", url: cfg.url };
     }
     const mcpPath = path19.join(os10.homedir(), ".claude", "mcp.json");
-    fs19.mkdirSync(path19.dirname(mcpPath), { recursive: true });
-    fs19.writeFileSync(mcpPath, JSON.stringify(claudeMcp, null, 2));
+    fs20.mkdirSync(path19.dirname(mcpPath), { recursive: true });
+    fs20.writeFileSync(mcpPath, JSON.stringify(claudeMcp, null, 2));
   } catch (err) {
     console.warn("[agents-to-im] Failed to write Claude MCP config:", err);
   }
@@ -123890,16 +124117,16 @@ function generateMcpConfigs() {
   for (const configPath of mimocodePaths) {
     try {
       let config = {};
-      if (fs19.existsSync(configPath)) {
-        config = JSON.parse(fs19.readFileSync(configPath, "utf-8"));
+      if (fs20.existsSync(configPath)) {
+        config = JSON.parse(fs20.readFileSync(configPath, "utf-8"));
       }
       const mcp = {};
       for (const [name, cfg] of Object.entries(mcpServers)) {
         mcp[name] = { type: "remote", url: cfg.url };
       }
       config.mcp = mcp;
-      fs19.mkdirSync(path19.dirname(configPath), { recursive: true });
-      fs19.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      fs20.mkdirSync(path19.dirname(configPath), { recursive: true });
+      fs20.writeFileSync(configPath, JSON.stringify(config, null, 2));
       console.log(`[agents-to-im] Updated MCP config: ${configPath}`);
     } catch (err) {
       console.warn(`[agents-to-im] Failed to write MCP config to ${configPath}:`, err);
@@ -123908,15 +124135,15 @@ function generateMcpConfigs() {
   try {
     const geminiSettingsPath = "/root/.gemini/settings.json";
     let settings = {};
-    if (fs19.existsSync(geminiSettingsPath)) {
-      settings = JSON.parse(fs19.readFileSync(geminiSettingsPath, "utf-8"));
+    if (fs20.existsSync(geminiSettingsPath)) {
+      settings = JSON.parse(fs20.readFileSync(geminiSettingsPath, "utf-8"));
     }
     const mcpServersConfig = {};
     for (const [name, cfg] of Object.entries(mcpServers)) {
       mcpServersConfig[name] = { type: "http", url: cfg.url };
     }
     settings.mcpServers = mcpServersConfig;
-    fs19.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2));
+    fs20.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2));
     console.log(`[agents-to-im] Updated Gemini CLI MCP config: ${geminiSettingsPath}`);
   } catch (err) {
     console.warn("[agents-to-im] Failed to write Gemini CLI MCP config:", err);
@@ -124003,8 +124230,8 @@ async function main() {
     permissions: gateway,
     lifecycle: {
       onBridgeStart: () => {
-        fs19.mkdirSync(RUNTIME_DIR, { recursive: true });
-        fs19.writeFileSync(PID_FILE, String(process.pid), "utf-8");
+        fs20.mkdirSync(RUNTIME_DIR, { recursive: true });
+        fs20.writeFileSync(PID_FILE, String(process.pid), "utf-8");
         writeStatus({
           running: true,
           pid: process.pid,

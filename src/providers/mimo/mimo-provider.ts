@@ -222,8 +222,16 @@ export class MiMoProvider implements LLMProvider {
   streamChat(params: StreamChatParams): ReadableStream<string> {
     const self = this;
     return new ReadableStream<string>({
-      start(controller) {
-        void self.runAcp(controller, params);
+      async start(controller) {
+        try {
+          await self.runAcp(controller, params);
+        } catch (e) {
+          console.error('[mimo-provider] streamChat error:', e);
+          rtLog(`[mimo-provider] streamChat CAUGHT ERROR: ${e}`);
+          emitCanonicalTurnEvent(controller, { type: 'error', data: String(e) });
+          emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
+          controller.close();
+        }
       },
     });
   }
@@ -265,9 +273,10 @@ export class MiMoProvider implements LLMProvider {
 
     const { command, args } = resolveMimoExecutable();
     rtLog(`[mimo-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
+    const env = buildSpawnEnv();
     const child = spawn(command, [...args, 'acp', '--hostname', '127.0.0.1', '--cwd', configCwd], {
       cwd, stdio: ['pipe', 'pipe', 'pipe'],
-      env: buildSpawnEnv(),
+      env,
     });
     rtLog(`[mimo-provider] ACP spawned successfully: pid=${child.pid}`);
 
@@ -310,8 +319,12 @@ export class MiMoProvider implements LLMProvider {
       let resumeAttempted = false;
 
       const done = (c: CachedAcpSession | null) => {
-        if (resolved) return;
+        if (resolved) {
+          console.warn(`[mimo-provider] done 被二次触发！当前值 sessionId=${c?.sessionId} alive=${c?.alive}`);
+          return;
+        }
         resolved = true;
+        console.log(`[mimo-provider] done 触发，resolve 值 sessionId=${c?.sessionId} alive=${c?.alive}`);
         resolve(c);
       };
 
@@ -435,6 +448,7 @@ export class MiMoProvider implements LLMProvider {
       setTimeout(() => { if (!sessionDone) { child.kill('SIGTERM'); done(null); } }, 15_000);
     });
 
+    rtLog(`[mimo-provider] runAcp cached = ${cached}`);
     if (!cached) {
       const err = spawnError || 'Failed to initialize ACP session';
       console.error(`[mimo-provider] ACP init failed:`, err);
@@ -657,6 +671,7 @@ export class MiMoProvider implements LLMProvider {
     abortController: AbortController | undefined,
     conversationHistory?: StreamChatParams['conversationHistory'],
   ): Promise<void> {
+    rtLog(`[mimo-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
     return new Promise<void>((resolve) => {
       const promptId = cached.nextId++;
       cached.currentPromptId = promptId;

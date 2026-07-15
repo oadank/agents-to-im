@@ -20,6 +20,19 @@ import {
   PENDING_PERMISSIONS_TIMEOUT_MS,
 } from '../providers/claude/permission-gateway.js';
 
+/**
+ * Check if auto-approve is enabled for a specific runtime.
+ * Supports: CTI_AUTO_APPROVE=true (all), CTI_AUTO_APPROVE_CODEX=true, etc.
+ */
+function isAutoApproveEnabled(runtime?: string): boolean {
+  if (process.env.CTI_AUTO_APPROVE === 'true' || process.env.CTI_AUTO_APPROVE === '1') return true;
+  if (runtime) {
+    const key = `CTI_AUTO_APPROVE_${runtime.toUpperCase()}`;
+    if (process.env[key] === 'true' || process.env[key] === '1') return true;
+  }
+  return false;
+}
+
 function summarizeToolInput(toolName: string, toolInput: Record<string, unknown>): string[] {
   if (toolName === 'Bash') {
     const command = typeof toolInput.command === 'string' ? toolInput.command.trim() : '';
@@ -75,6 +88,17 @@ function resolvePermissionTimeoutMs(sessionId?: string): number {
 }
 
 /**
+ * Tracks in-flight permission requests so we can notify the user on timeout.
+ * Key: permissionRequestId, value: context needed to send notifications.
+ */
+const pendingPermissionContexts = new Map<string, {
+  adapter: BaseChannelAdapter;
+  address: ChannelAddress;
+  timer: NodeJS.Timeout;
+  sessionId?: string;
+}>();
+
+/**
  * Dedup recent permission forwards to prevent duplicate cards.
  * Key: permissionRequestId, value: timestamp. Entries expire after 30s.
  */
@@ -95,9 +119,10 @@ export async function forwardPermissionRequest(
 ): Promise<void> {
   const { store, permissions } = getBridgeContext();
 
-  // 检查自动批准配置
-  if (process.env.CTI_AUTO_APPROVE === 'true' || process.env.CTI_AUTO_APPROVE === '1') {
-    console.log(`[permission-broker] Auto-approving request: ${permissionRequestId} tool=${toolName} (CTI_AUTO_APPROVE enabled)`);
+  // 检查自动批准配置（支持 per-runtime: CTI_AUTO_APPROVE=true 或 CTI_AUTO_APPROVE_CODEX=true）
+  const runtime = sessionId ? getBridgeContext().store.getSessionExt(sessionId)?.runtime : undefined;
+  if (isAutoApproveEnabled(runtime)) {
+    console.log(`[permission-broker] Auto-approving request: ${permissionRequestId} tool=${toolName} runtime=${runtime || 'unknown'} (auto-approve enabled)`);
     permissions.resolvePendingPermission(permissionRequestId, {
       behavior: "allow",
       scope: "session"
@@ -170,6 +195,17 @@ export async function forwardPermissionRequest(
         suggestions: suggestions ? JSON.stringify(suggestions) : '',
       });
     } catch { /* best effort */ }
+
+    // Start timeout watchdog: if PendingApprovals times out, we notify the user
+    const timeoutMs = resolvePermissionTimeoutMs(sessionId);
+    const watchdogTimer = setTimeout(() => {
+      const ctx = pendingPermissionContexts.get(permissionRequestId);
+      if (ctx) {
+        pendingPermissionContexts.delete(permissionRequestId);
+        handlePermissionTimeout(ctx.adapter, ctx.address, permissionRequestId);
+      }
+    }, timeoutMs);
+    pendingPermissionContexts.set(permissionRequestId, { adapter, address, timer: watchdogTimer, sessionId });
   }
 }
 
@@ -259,7 +295,6 @@ export function handlePermissionCallback(
   }
 
   let resolved: boolean;
-
   switch (action) {
     case 'allow':
       resolved = permissions.resolvePendingPermission(permissionRequestId, {
@@ -297,5 +332,50 @@ export function handlePermissionCallback(
       return false;
   }
 
+  // Cancel the timeout watchdog since the user resolved it manually
+  const watchdog = pendingPermissionContexts.get(permissionRequestId);
+  if (watchdog) {
+    clearTimeout(watchdog.timer);
+    pendingPermissionContexts.delete(permissionRequestId);
+  }
+
   return resolved;
+}
+
+/**
+ * Called when a permission request times out.
+ * Sends a notification message so the user knows the agent is stuck.
+ */
+export function handlePermissionTimeout(
+  adapter: BaseChannelAdapter,
+  address: ChannelAddress,
+  permissionRequestId: string,
+): void {
+  const { store } = getBridgeContext();
+  const link = store.getPermissionLink(permissionRequestId);
+  if (!link) {
+    console.warn(`[permission-broker] Timeout for unknown permission ${permissionRequestId}`);
+    return;
+  }
+
+  // Don't double-notify if already resolved by user click
+  if (link.resolved) {
+    console.log(`[permission-broker] Timeout for ${permissionRequestId} but already resolved, skipping`);
+    return;
+  }
+
+  console.log(`[permission-broker] Permission ${permissionRequestId} timed out — notifying user`);
+
+  // Send a notification message so the user knows
+  deliver(adapter, {
+    address,
+    text: '⚠️ **操作授权已超时**\n\n该授权请求已超时自动拒绝。\n\n如需继续操作，请重新发起对话。',
+    parseMode: 'Markdown',
+    cardHeader: {
+      title: '授权超时',
+      template: 'red',
+    },
+  }).catch((err: unknown) => {
+    console.warn(`[permission-broker] Failed to send timeout notification:`, err);
+  });
 }

@@ -76,6 +76,8 @@ export function buildHandledPermissionCard(action: string): Record<string, unkno
       return buildStatusCard('授权已处理', '已处理：本会话允许。\n\n后续同会话内匹配的请求将自动放行。', 'green');
     case 'deny':
       return buildStatusCard('授权已处理', '已处理：拒绝。\n\n该授权请求已关闭。', 'red');
+    case 'timeout':
+      return buildStatusCard('授权超时', '该授权请求已超时自动拒绝。\n\n如需继续操作，请重新发起。', 'red');
     default:
       return buildStatusCard('授权已处理', '该授权请求已处理。', 'grey');
   }

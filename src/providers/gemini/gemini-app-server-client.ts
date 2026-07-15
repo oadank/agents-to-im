@@ -161,6 +161,10 @@ export class GeminiAppServerClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly extraEnv: Record<string, string>;
+  // 退避机制：防止高频重启风暴
+  private retryCount = 0;
+  private lastExitTime = 0;
+  private readonly maxRetryDelay = 60000; // 最大等待 60 秒
 
   constructor(options: GeminiAppServerOptions = {}) {
     this.executable = options.executable || 'gemini';
@@ -269,6 +273,22 @@ export class GeminiAppServerClient {
   }
 
   private async bootstrap(): Promise<void> {
+    // 退避机制：防止高频重启风暴
+    const now = Date.now();
+    if (this.lastExitTime > 0 && this.retryCount > 0) {
+      const delay = Math.min(
+        1000 * Math.pow(2, this.retryCount) + Math.random() * 1000,
+        this.maxRetryDelay
+      );
+      const elapsed = now - this.lastExitTime;
+      if (elapsed < delay) {
+        const waitMs = delay - elapsed;
+        console.log(`[gemini-app-server] Backoff: waiting ${Math.round(waitMs / 1000)}s before restart (retry #${this.retryCount})`);
+        rtLog(`[gemini-app-server] Backoff: waiting ${waitMs}ms (retry #${this.retryCount})`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+      }
+    }
+
     // 启动 gemini --acp --yolo
     // Windows 上 .cmd/.bat 文件必须通过 shell 或直接用 node.exe 运行 JS
     // 这里用 node.exe 直接运行 gemini.js，避免 shell:true 导致进程树断裂
@@ -297,6 +317,10 @@ export class GeminiAppServerClient {
         ...process.env,
         HOME: os.homedir(),
         USERPROFILE: os.homedir(),
+        // 强制使用 WinPTY，绕过 ConPTY 的 AttachConsole 失败问题
+        FORCE_WINPTY: '1',
+        // 防止输出缓冲区堵塞
+        PYTHONUNBUFFERED: '1',
         GEMINI_HOME: resolveGeminiHome(),
         GEMINI_API_KEY: this.apiKey,
         GOOGLE_GEMINI_BASE_URL: this.baseUrl,
@@ -322,6 +346,9 @@ export class GeminiAppServerClient {
       this.failAllPending(new Error(`[gemini-app-server] Process exited with ${suffix}`));
       this.proc = null;
       this.startPromise = null;
+      // 更新退避状态
+      this.lastExitTime = Date.now();
+      this.retryCount++;
     });
 
     const rl = readline.createInterface({ input: proc.stdout });
@@ -352,6 +379,9 @@ export class GeminiAppServerClient {
     initDone = true;
     clearTimeout(initTimeout);
     rtLog(`[gemini-app-server] initialize OK`);
+    // 成功启动，重置退避计数器
+    this.retryCount = 0;
+    this.lastExitTime = 0;
 
     // authenticate with gateway method
     try {

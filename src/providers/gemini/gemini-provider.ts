@@ -84,13 +84,23 @@ export class GeminiProvider implements LLMProvider {
   private readonly cliPath: string;
   private readonly acpArgs: string[];
   private readonly workingDirectory: string;
+  // 累积缓冲区：用于处理跨 chunk 的 <think> 标签
+  private thinkingBuffer = '';
 
   constructor(config?: GeminiConfig) {
     this.apiKey = config?.apiKey || process.env.CTI_GEMINI_API_KEY || process.env.LITELLM_API_KEY || 'sk-200418';
     this.baseUrl = config?.baseUrl || process.env.CTI_GEMINI_BASE_URL || 'http://127.0.0.1:4000';
     this.cliPath = config?.cliPath || process.env.CTI_GEMINI_CLI_PATH || 'gemini';
-    this.acpArgs = config?.acpArgs || ['--acp', '--yolo'];
-    this.workingDirectory = config?.workingDirectory || process.env.CTI_GEMINI_WORKING_DIR || '/opt';
+    // 添加 --include-directories 让 gemini-cli 可以访问更多目录
+    const includeDirs = process.platform === 'win32'
+      ? '--include-directories=C:\\,C:\\Users,C:\\D'
+      : '--include-directories=/,/root,/opt,/tmp';
+    this.acpArgs = config?.acpArgs || ['--acp', '--yolo', includeDirs];
+    // Windows 上使用 Windows 路径，默认为用户目录
+    const defaultWorkDir = process.platform === 'win32'
+      ? (process.env.CTI_GEMINI_WORKING_DIR || 'C:\\Users\\oadan')
+      : (process.env.CTI_GEMINI_WORKING_DIR || '/opt');
+    this.workingDirectory = config?.workingDirectory || defaultWorkDir;
   }
 
   private async ensureClient(): Promise<GeminiAppServerClient> {
@@ -142,6 +152,8 @@ export class GeminiProvider implements LLMProvider {
     controller: ReadableStreamDefaultController<string>,
     params: StreamChatParams,
   ): Promise<void> {
+    // 清空思考缓冲区
+    this.thinkingBuffer = '';
     const client = await this.ensureClient();
     let unsubscribe: (() => void) | null = null;
     const queue: GeminiServerMessage[] = [];
@@ -215,18 +227,87 @@ export class GeminiProvider implements LLMProvider {
         const updateType = sessionUpdateType(paramsRecord);
         const update = paramsRecord.update as JsonRecord | undefined;
         const content = update?.content as JsonRecord | undefined;
+        console.log(`[gemini-provider] updateType=${updateType}`);
 
         switch (updateType) {
           case 'agent_message_chunk':
             if (content && typeof content.text === 'string') {
-              emitCanonicalTurnEvent(controller, { type: 'text', data: content.text });
+              const text = content.text;
+              console.log(`[gemini-provider] agent_message_chunk len=${text.length} buffer_len=${this.thinkingBuffer.length}`);
+              // 累积到缓冲区
+              this.thinkingBuffer += text;
+
+              // 尝试提取完整的 <think> 标签
+              const thinkingMatch = this.thinkingBuffer.match(/<think>([\s\S]*?)<\/think>/);
+              if (thinkingMatch) {
+                // 有完整 <think> 标签：提取思考内容，发送为 reasoning_activity
+                const thinkingText = thinkingMatch[1].trim();
+                const bodyText = this.thinkingBuffer.replace(/<think>[\s\S]*?<\/think>/, '').trim();
+                if (thinkingText) {
+                  emitCanonicalTurnEvent(controller, {
+                    type: 'activity_event',
+                    data: {
+                      kind: 'reasoning_activity',
+                      turnId: sessionId,
+                      status: 'completed',
+                      text: thinkingText,
+                    },
+                  });
+                }
+                // 清空缓冲区，只保留 <think> 标签之后的文本
+                this.thinkingBuffer = bodyText;
+                // 发送 <think> 标签之后的普通文本
+                if (bodyText) {
+                  emitCanonicalTurnEvent(controller, { type: 'text', data: bodyText });
+                }
+              } else if (this.thinkingBuffer.includes('<think>') && !this.thinkingBuffer.includes('</think>')) {
+                // 不完整的 <think> 标签（思考进行中）：提取思考内容发送，但不发送普通文本
+                const partialThinking = this.thinkingBuffer.replace(/<think>/g, '').trim();
+                if (partialThinking) {
+                  emitCanonicalTurnEvent(controller, {
+                    type: 'activity_event',
+                    data: {
+                      kind: 'reasoning_activity',
+                      turnId: sessionId,
+                      status: 'running',
+                      text: partialThinking,
+                    },
+                  });
+                }
+              } else if (!this.thinkingBuffer.includes('<think>')) {
+                // 没有 <think> 标签，清空缓冲区并发送普通文本
+                this.thinkingBuffer = '';
+                emitCanonicalTurnEvent(controller, { type: 'text', data: text });
+              }
+              // 如果有不完整的 <think> 标签，等待更多内容，不发送任何东西
             }
             break;
           case 'agent_thought_chunk':
             if (content && typeof content.text === 'string') {
+              console.log(`[gemini-provider] agent_thought_chunk len=${content.text.length}`);
               emitCanonicalTurnEvent(controller, { type: 'status', data: { reasoning: content.text } });
             }
             break;
+          case 'tool_call':
+          case 'tool_call_update': {
+            const toolInfo = update?.input ? `${update.title || 'tool'} ${JSON.stringify(update.input).slice(0, 100)}` : (update?.title || '工具');
+            const toolStatus = (update?.status as string) || 'running';
+            const toolCallId = String(update?.toolCallId || update?.callId || `gemini-tool:${update?.title || 'tool'}:${Date.now()}`);
+            const toolName = String(update?.title || 'tool');
+            console.log(`[gemini-provider] ACP tool_call: ${toolInfo} status=${toolStatus} id=${toolCallId}`);
+            emitCanonicalTurnEvent(controller, {
+              type: 'activity_event',
+              data: {
+                kind: 'tool_activity',
+                toolUseId: toolCallId,
+                toolName,
+                status: toolStatus === 'failed' ? 'failed' : (toolStatus === 'completed' ? 'completed' : 'running'),
+                inputPreview: update?.input && typeof update.input === 'object' ? JSON.stringify(update.input).slice(0, 220) : '',
+                resultPreview: update?.output && typeof update.output === 'string' ? String(update.output).slice(0, 220) : '',
+              },
+            });
+            break;
+          }
           case 'available_commands_update':
             // 忽略命令列表
             break;

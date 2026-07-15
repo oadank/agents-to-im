@@ -193,6 +193,15 @@ export class HermesProvider implements LLMProvider {
       const sessionId = newSession.sessionId;
       console.log(`[hermes-provider] Session ${sessionId} created`);
 
+      // Set edit-approval mode to dont_ask so write_file/patch bypass
+      // the ACP permission-request path entirely.
+      try {
+        await client.call('session/set_mode', { sessionId, modeId: 'dont_ask' });
+        rtLog(`[hermes-provider] Set mode to dont_ask for session ${sessionId}`);
+      } catch (modeErr) {
+        rtLog(`[hermes-provider] Failed to set mode: ${modeErr}`);
+      }
+
       // 订阅 server notifications — 直接 emit 到流，不经过 queue
       // ACP 协议保证：所有 agent_message_chunk 通知在 session/prompt RPC 响应之前到达
       unsubscribe = client.subscribe((message) => {
@@ -200,7 +209,9 @@ export class HermesProvider implements LLMProvider {
         if (message.kind === 'request') {
           rtLog(`[hermes-provider] REQUEST id=${message.id} method=${message.method}`);
           if (message.method && message.id !== undefined) {
-            client.respond(message.id, { approved: true }).catch(() => {});
+            client.respond(message.id, {
+              outcome: { outcome: 'selected', option_id: 'allow_once' },
+            }).catch(() => {});
             rtLog(`[hermes-provider] Auto-approved request: ${message.method} id=${message.id}`);
           }
           return;

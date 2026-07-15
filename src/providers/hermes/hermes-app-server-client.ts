@@ -269,6 +269,9 @@ export class HermesAppServerClient {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-200418',
         OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || 'http://100.110.110.12:4000/v1',
         PYTHONUNBUFFERED: '1',
+        // Skip dangerous command approval prompts in ACP mode (no TTY available).
+        // _YOLO_MODE_FROZEN is read at import time from this env var.
+        HERMES_YOLO_MODE: '1',
       },
       windowsHide: true,
     });

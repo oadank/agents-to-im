@@ -766,7 +766,7 @@ export class MiMoProvider implements LLMProvider {
         },
       }) + '\n');
 
-      const timeoutMs = parseInt(process.env.CTI_MIMO_TIMEOUT_MS || '1800000', 10);
+      const timeoutMs = parseInt(process.env.CTI_MIMO_TIMEOUT_MS || '300000', 10); // default 5 min (was 30 min)
       setTimeout(() => {
         if (cached.currentSettle) {
           cached.currentSettle(`ACP prompt timeout after ${timeoutMs / 1000}s`);

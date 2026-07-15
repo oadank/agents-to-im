@@ -208,24 +208,56 @@ export async function processMessage(
   const lockId = crypto.randomBytes(8).toString('hex');
   const lockAcquired = store.acquireSessionLock(sessionId, lockId, `bridge-${binding.channelType}`, 600);
   if (!lockAcquired) {
-    return {
-      responseText: '',
-      responseSegments: [],
-      contentBlocks: [],
-      tokenUsage: null,
-      hasError: true,
-      errorMessage: 'Session is busy processing another request',
-      permissionRequests: [],
-      sdkSessionId: null,
-    };
+    // Attempt stale lock recovery: if the existing lock has expired, force-release it
+    const staleReleased = store.forceReleaseStaleLock(sessionId, 'stale-detect-on-acquire');
+    if (staleReleased) {
+      console.warn(`[conversation-engine] Recovered stale lock for session ${sessionId.slice(0, 12)}...`);
+      // Retry acquire after stale release
+      const retryAcquired = store.acquireSessionLock(sessionId, lockId, `bridge-${binding.channelType}`, 600);
+      if (!retryAcquired) {
+        return {
+          responseText: '',
+          responseSegments: [],
+          contentBlocks: [],
+          tokenUsage: null,
+          hasError: true,
+          errorMessage: 'Session is busy processing another request (lock contention after stale recovery)',
+          permissionRequests: [],
+          sdkSessionId: null,
+        };
+      }
+    } else {
+      return {
+        responseText: '',
+        responseSegments: [],
+        contentBlocks: [],
+        tokenUsage: null,
+        hasError: true,
+        errorMessage: 'Session is busy processing another request',
+        permissionRequests: [],
+        sdkSessionId: null,
+      };
+    }
   }
 
   store.setSessionRuntimeStatus(sessionId, 'running');
+
+  // Abort controller — shared between watchdog and stream consumption
+  const abortController = new AbortController();
 
   // Lock renewal interval
   const renewalInterval = setInterval(() => {
     try { store.renewSessionLock(sessionId, lockId, 600); } catch { /* best effort */ }
   }, 60_000);
+
+  // Watchdog: maximum processing time (10 minutes). If the provider hangs,
+  // abort and release the lock so subsequent messages are not blocked forever.
+  const WATCHDOG_TIMEOUT_MS = parseInt(process.env.CTI_WATCHDOG_TIMEOUT_MS || '600000', 10); // 10 min default
+  const watchdogTimer = setTimeout(() => {
+    console.error(`[conversation-engine] WATCHDOG: session ${sessionId.slice(0, 12)}... exceeded ${WATCHDOG_TIMEOUT_MS / 1000}s, aborting`);
+    try { abortController.abort(); } catch { /* best effort */ }
+    try { store.forceReleaseStaleLock(sessionId, 'watchdog-timeout'); } catch { /* best effort */ }
+  }, WATCHDOG_TIMEOUT_MS);
 
   try {
     // Resolve session early — needed for workingDirectory and provider resolution
@@ -290,7 +322,6 @@ export async function processMessage(
       return { role: m.role as 'user' | 'assistant', content: m.content };
     });
 
-    const abortController = new AbortController();
     if (abortSignal) {
       if (abortSignal.aborted) {
         abortController.abort();
@@ -336,6 +367,7 @@ export async function processMessage(
       options?.onModeChanged,
     );
   } finally {
+    clearTimeout(watchdogTimer);
     clearInterval(renewalInterval);
     store.releaseSessionLock(sessionId, lockId);
     store.setSessionRuntimeStatus(sessionId, 'idle');
@@ -459,7 +491,7 @@ async function consumeStream(
     }
   };
 
-  const STUCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+  const STUCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes (reduced from 10 to detect hangs faster)
   let lastActivityAt = Date.now();
   let stuckFired = false;
 

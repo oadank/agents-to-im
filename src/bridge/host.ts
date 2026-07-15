@@ -354,6 +354,8 @@ export interface BridgeStore {
   acquireSessionLock(sessionId: string, lockId: string, owner: string, ttlSecs: number): boolean;
   renewSessionLock(sessionId: string, lockId: string, ttlSecs: number): void;
   releaseSessionLock(sessionId: string, lockId: string): void;
+  isLockStale(sessionId: string): boolean;
+  forceReleaseStaleLock(sessionId: string, reason: string): boolean;
   setSessionRuntimeStatus(sessionId: string, status: string): void;
 
   // ── SDK session ──

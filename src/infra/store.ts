@@ -560,9 +560,16 @@ export class JsonFileStore implements BridgeStore {
     const existing = this.locks.get(sessionId);
     if (existing && existing.expiresAt > Date.now()) {
       if (existing.lockId !== lockId) {
-        this.rtLog(`[LOCK] acquireSessionLock FAILED: sessionId=${sessionId.slice(0,12)}... held by ${existing.lockId}, owner=${existing.owner}, expiresAt=${new Date(existing.expiresAt).toISOString()}`);
+        // Stale lock check: if the lock is held but the renewal has stopped,
+        // the holder is likely dead. Allow stealing after the original TTL.
+        const lockAgeMs = Date.now() - (existing.expiresAt - ttlSecs * 1000);
+        this.rtLog(`[LOCK] acquireSessionLock HELD: sessionId=${sessionId.slice(0,12)}... held by ${existing.lockId}, owner=${existing.owner}, lockAge=${Math.round(lockAgeMs / 1000)}s, ttl=${ttlSecs}s`);
         return false;
       }
+    }
+    // If the lock exists but is expired (stale), allow overwriting
+    if (existing && existing.expiresAt <= Date.now()) {
+      this.rtLog(`[LOCK] acquireSessionLock OVERRWITE STALE: sessionId=${sessionId.slice(0,12)}... previous holder=${existing.lockId} owner=${existing.owner}`);
     }
     this.locks.set(sessionId, {
       lockId,
@@ -589,6 +596,23 @@ export class JsonFileStore implements BridgeStore {
     } else {
       this.rtLog(`[LOCK] releaseSessionLock SKIPPED: sessionId=${sessionId.slice(0,12)}... lockId=${lockId} not current holder (current=${lock?.lockId})`);
     }
+  }
+
+  /** Check if a session lock has expired (stale). */
+  isLockStale(sessionId: string): boolean {
+    const lock = this.locks.get(sessionId);
+    if (!lock) return false;
+    return lock.expiresAt <= Date.now();
+  }
+
+  /** Force-release a stale or orphaned session lock regardless of holder. */
+  forceReleaseStaleLock(sessionId: string, reason: string): boolean {
+    const lock = this.locks.get(sessionId);
+    if (!lock) return false;
+    const isStale = lock.expiresAt <= Date.now();
+    this.rtLog(`[LOCK] forceReleaseStaleLock: sessionId=${sessionId.slice(0,12)}... reason=${reason} lockAge=${Math.round((Date.now() - (lock.expiresAt - 600000)) / 1000)}s`);
+    this.locks.delete(sessionId);
+    return isStale;
   }
 
   setSessionRuntimeStatus(_sessionId: string, _status: string): void {

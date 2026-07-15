@@ -183,15 +183,40 @@ export class HermesProvider implements LLMProvider {
     let unsubscribe: (() => void) | null = null;
 
     try {
-      // 创建会话
-      const newSession = await client.call<HermesSessionNewResult>('session/new', {
-        cwd: params.workingDirectory || this.workingDirectory,
-        mcpServers: [],
-        provider: 'custom:litellm',
-        model: 'MiMogo',
-      });
-      const sessionId = newSession.sessionId;
-      console.log(`[hermes-provider] Session ${sessionId} created`);
+      // 尝试 resume 已有会话
+      let sessionId: string;
+      const savedSessionId = params.sdkSessionId;
+      if (savedSessionId) {
+        try {
+          await client.call('session/resume', {
+            session_id: savedSessionId,
+            cwd: params.workingDirectory || this.workingDirectory,
+            mcpServers: [],
+          });
+          sessionId = savedSessionId;
+          console.log(`[hermes-provider] Session ${sessionId} resumed`);
+          rtLog(`[hermes-provider] Session ${sessionId} resumed`);
+        } catch {
+          rtLog(`[hermes-provider] Resume failed for ${savedSessionId}, creating new session`);
+          const newSession = await client.call<HermesSessionNewResult>('session/new', {
+            cwd: params.workingDirectory || this.workingDirectory,
+            mcpServers: [],
+            provider: 'custom:litellm',
+            model: 'MiMogo',
+          });
+          sessionId = newSession.sessionId;
+          console.log(`[hermes-provider] Session ${sessionId} created (resume failed)`);
+        }
+      } else {
+        const newSession = await client.call<HermesSessionNewResult>('session/new', {
+          cwd: params.workingDirectory || this.workingDirectory,
+          mcpServers: [],
+          provider: 'custom:litellm',
+          model: 'MiMogo',
+        });
+        sessionId = newSession.sessionId;
+        console.log(`[hermes-provider] Session ${sessionId} created`);
+      }
 
       // Set edit-approval mode to dont_ask so write_file/patch bypass
       // the ACP permission-request path entirely.

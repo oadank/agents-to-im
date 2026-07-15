@@ -2544,7 +2544,14 @@ async function handleMessage(
     // Exception: user abort (/stop) should preserve session for context resume.
     if (binding.id && !isCodexRuntime(binding.codepilotSessionId)) {
       try {
+        const prevSessionId = binding.sdkSessionId || '(none)';
         const update = computeSdkSessionUpdate(result.sdkSessionId, result.hasError, taskAbort.signal.aborted);
+        try {
+          fs.appendFileSync(
+            'C:/Users/oadan/.agents-to-im/logs/claude-session-debug.log',
+            `[${new Date().toISOString()}] sdkSessionUpdate: prev=${prevSessionId}, new=${result.sdkSessionId || '(none)'}, hasError=${result.hasError}, update=${update === null ? '(no change)' : `"${update}"`}\n`
+          );
+        } catch { /* best effort */ }
         if (update !== null) {
           store.updateChannelBinding(binding.id, { sdkSessionId: update });
         }

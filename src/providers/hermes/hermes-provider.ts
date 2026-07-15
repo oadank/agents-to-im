@@ -202,6 +202,9 @@ export class HermesProvider implements LLMProvider {
         rtLog(`[hermes-provider] Failed to set mode: ${modeErr}`);
       }
 
+      // 累积思考文本（Hermes 每次发短 chunk，需要拼接后发送完整内容）
+      let accumulatedThinking = '';
+
       // 订阅 server notifications — 直接 emit 到流，不经过 queue
       // ACP 协议保证：所有 agent_message_chunk 通知在 session/prompt RPC 响应之前到达
       unsubscribe = client.subscribe((message) => {
@@ -230,7 +233,8 @@ export class HermesProvider implements LLMProvider {
             break;
           case 'agent_thought_chunk':
             if (content && typeof content.text === 'string') {
-              emitCanonicalTurnEvent(controller, { type: 'status', data: { reasoning: content.text } });
+              accumulatedThinking += content.text;
+              emitCanonicalTurnEvent(controller, { type: 'status', data: { reasoning: accumulatedThinking } });
             }
             break;
           case 'tool_call': {

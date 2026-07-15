@@ -103877,6 +103877,19 @@ function readConfigEnv() {
   return result;
 }
 function readGeminiConfig() {
+  try {
+    const settingsPath = path2.join(os.homedir(), ".gemini", "settings.json");
+    if (fs2.existsSync(settingsPath)) {
+      const settings = JSON.parse(fs2.readFileSync(settingsPath, "utf-8"));
+      const model2 = settings.model?.name;
+      if (model2) {
+        const provider2 = process.env.CTI_BOT_GEMINI_MODEL_PROVIDER || "LiteLLM";
+        return { model: model2, provider: provider2 };
+      }
+    }
+  } catch (e) {
+    console.error("[runtime-configs] \u8BFB\u53D6 Gemini settings.json \u5931\u8D25:", e);
+  }
   const env = readConfigEnv();
   const model = env.CTI_BOT_GEMINI_MODEL_GROUP || "gemini-model";
   const provider = env.CTI_BOT_GEMINI_MODEL_PROVIDER || "LiteLLM";
@@ -103894,7 +103907,7 @@ function readHermesConfig() {
   const provider = env.CTI_BOT_HERMES_MODEL_PROVIDER || "LiteLLM";
   return { model, provider };
 }
-function getRuntimeConfig2(runtime) {
+function getRuntimeConfig(runtime) {
   if (runtime === "claude") {
     const { model, provider } = readClaudeConfig();
     console.log(`[runtime-configs] runtime=claude \u2192 model=${model} provider=${provider} (from config files)`);
@@ -104114,7 +104127,7 @@ async function processMessage(binding, text, onPermissionRequest, abortSignal, f
       const defaultId = store.getDefaultProviderId();
       if (defaultId) resolvedProvider = store.getProvider(defaultId);
     }
-    const effectiveModel = getRuntimeConfig2(runtime).model || session?.model || void 0;
+    const effectiveModel = getRuntimeConfig(runtime).model || session?.model || void 0;
     let permissionMode = options?.permissionModeOverride;
     if (!permissionMode) {
       permissionMode = runtime === "claude" ? binding.claudePermissionMode || resolveLegacyPermissionMode(binding, store) : resolveLegacyPermissionMode(binding, store);
@@ -104531,6 +104544,14 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
               const resultData = JSON.parse(event.data);
               if (resultData.usage) tokenUsage = resultData.usage;
               if (resultData.is_error) hasError = true;
+              try {
+                fs3.appendFileSync(
+                  process.env.CTI_HOME + "/logs/claude-session-debug.log",
+                  `[${(/* @__PURE__ */ new Date()).toISOString()}] result event: session_id=${resultData.session_id || "(none)"}, is_error=${resultData.is_error}
+`
+                );
+              } catch {
+              }
               if (resultData.session_id) {
                 capturedSdkSessionId = resultData.session_id;
                 if (runtime === "codex") {
@@ -104579,6 +104600,11 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
     }
     const responseText = responseSegments.join("\n\n").trim();
     clearTimeout(stuckTimer);
+    if (stuckFired && !hasError) {
+      hasError = true;
+      errorMessage = "\u26A0\uFE0F Task aborted: no output for 5 minutes. The model may be stuck or the API is unresponsive. Please try again.";
+      console.warn(`[conversation-engine] Stream stuck (session ${sessionId.slice(0, 12)}...) \u2014 reporting error to user`);
+    }
     return {
       responseText,
       responseSegments,
@@ -104609,13 +104635,15 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
       }
     }
     const isAbort = e instanceof DOMException && e.name === "AbortError" || e instanceof Error && e.name === "AbortError";
+    const finalHasError = stuckFired || !isAbort && !stuckFired;
+    const finalErrorMessage = stuckFired ? "\u26A0\uFE0F Task aborted: no output for 5 minutes. The model may be stuck or the API is unresponsive. Please try again." : isAbort ? "Task stopped by user" : e instanceof Error ? e.message : "Stream consumption error";
     return {
       responseText: responseSegments.join("\n\n").trim(),
       responseSegments,
       contentBlocks: [...contentBlocks],
       tokenUsage,
-      hasError: !stuckFired,
-      errorMessage: stuckFired ? "Task aborted: no output for 10 minutes" : isAbort ? "Task stopped by user" : e instanceof Error ? e.message : "Stream consumption error",
+      hasError: finalHasError,
+      errorMessage: finalErrorMessage,
       permissionRequests,
       sdkSessionId: capturedSdkSessionId
     };
@@ -104991,6 +105019,14 @@ var PendingStructuredInputs = class {
 };
 
 // src/bridge/permission-broker.ts
+function isAutoApproveEnabled(runtime) {
+  if (process.env.CTI_AUTO_APPROVE === "true" || process.env.CTI_AUTO_APPROVE === "1") return true;
+  if (runtime) {
+    const key = `CTI_AUTO_APPROVE_${runtime.toUpperCase()}`;
+    if (process.env[key] === "true" || process.env[key] === "1") return true;
+  }
+  return false;
+}
 function summarizeToolInput(toolName, toolInput) {
   if (toolName === "Bash") {
     const command = typeof toolInput.command === "string" ? toolInput.command.trim() : "";
@@ -105027,11 +105063,13 @@ function resolvePermissionTimeoutMs(sessionId) {
   const runtime = getBridgeContext().store.getSessionExt(sessionId)?.runtime;
   return runtime === "codex" ? PENDING_APPROVALS_TIMEOUT_MS : PENDING_PERMISSIONS_TIMEOUT_MS;
 }
+var pendingPermissionContexts = /* @__PURE__ */ new Map();
 var recentPermissionForwards = /* @__PURE__ */ new Map();
 async function forwardPermissionRequest(adapter, address, permissionRequestId, toolName, toolInput, sessionId, suggestions, replyToMessageId) {
   const { store, permissions } = getBridgeContext();
-  if (process.env.CTI_AUTO_APPROVE === "true" || process.env.CTI_AUTO_APPROVE === "1") {
-    console.log(`[permission-broker] Auto-approving request: ${permissionRequestId} tool=${toolName} (CTI_AUTO_APPROVE enabled)`);
+  const runtime = sessionId ? getBridgeContext().store.getSessionExt(sessionId)?.runtime : void 0;
+  if (isAutoApproveEnabled(runtime)) {
+    console.log(`[permission-broker] Auto-approving request: ${permissionRequestId} tool=${toolName} runtime=${runtime || "unknown"} (auto-approve enabled)`);
     permissions.resolvePendingPermission(permissionRequestId, {
       behavior: "allow",
       scope: "session"
@@ -105090,6 +105128,15 @@ async function forwardPermissionRequest(adapter, address, permissionRequestId, t
       });
     } catch {
     }
+    const timeoutMs = resolvePermissionTimeoutMs(sessionId);
+    const watchdogTimer = setTimeout(() => {
+      const ctx = pendingPermissionContexts.get(permissionRequestId);
+      if (ctx) {
+        pendingPermissionContexts.delete(permissionRequestId);
+        handlePermissionTimeout(ctx.adapter, ctx.address, permissionRequestId);
+      }
+    }, timeoutMs);
+    pendingPermissionContexts.set(permissionRequestId, { adapter, address, timer: watchdogTimer, sessionId });
   }
 }
 function handlePermissionCallback(callbackData, callbackChatId, callbackMessageId, callbackContext) {
@@ -105170,7 +105217,36 @@ function handlePermissionCallback(callbackData, callbackChatId, callbackMessageI
     default:
       return false;
   }
+  const watchdog = pendingPermissionContexts.get(permissionRequestId);
+  if (watchdog) {
+    clearTimeout(watchdog.timer);
+    pendingPermissionContexts.delete(permissionRequestId);
+  }
   return resolved;
+}
+function handlePermissionTimeout(adapter, address, permissionRequestId) {
+  const { store } = getBridgeContext();
+  const link = store.getPermissionLink(permissionRequestId);
+  if (!link) {
+    console.warn(`[permission-broker] Timeout for unknown permission ${permissionRequestId}`);
+    return;
+  }
+  if (link.resolved) {
+    console.log(`[permission-broker] Timeout for ${permissionRequestId} but already resolved, skipping`);
+    return;
+  }
+  console.log(`[permission-broker] Permission ${permissionRequestId} timed out \u2014 notifying user`);
+  deliver(adapter, {
+    address,
+    text: "\u26A0\uFE0F **\u64CD\u4F5C\u6388\u6743\u5DF2\u8D85\u65F6**\n\n\u8BE5\u6388\u6743\u8BF7\u6C42\u5DF2\u8D85\u65F6\u81EA\u52A8\u62D2\u7EDD\u3002\n\n\u5982\u9700\u7EE7\u7EED\u64CD\u4F5C\uFF0C\u8BF7\u91CD\u65B0\u53D1\u8D77\u5BF9\u8BDD\u3002",
+    parseMode: "Markdown",
+    cardHeader: {
+      title: "\u6388\u6743\u8D85\u65F6",
+      template: "red"
+    }
+  }).catch((err) => {
+    console.warn(`[permission-broker] Failed to send timeout notification:`, err);
+  });
 }
 
 // src/runtime/claude-plan-exit.ts
@@ -107423,7 +107499,16 @@ ${parts2[i]}`;
     }
     if (binding.id && !isCodexRuntime(binding.codepilotSessionId)) {
       try {
+        const prevSessionId = binding.sdkSessionId || "(none)";
         const update = computeSdkSessionUpdate(result.sdkSessionId, result.hasError, taskAbort.signal.aborted);
+        try {
+          fs4.appendFileSync(
+            "C:/Users/oadan/.agents-to-im/logs/claude-session-debug.log",
+            `[${(/* @__PURE__ */ new Date()).toISOString()}] sdkSessionUpdate: prev=${prevSessionId}, new=${result.sdkSessionId || "(none)"}, hasError=${result.hasError}, update=${update === null ? "(no change)" : `"${update}"`}
+`
+          );
+        } catch {
+        }
         if (update !== null) {
           store.updateChannelBinding(binding.id, { sdkSessionId: update });
         }
@@ -107903,12 +107988,19 @@ async function callCompactApi(prompt, compactConfig) {
     return { error: `\u8BF7\u6C42\u5931\u8D25: ${err.message}` };
   }
 }
-async function compactConversation(store, sessionId, compactConfig) {
+async function compactConversation(store, sessionId, compactConfig, runtime) {
   if (compactLocks.get(sessionId)) {
     return { success: false, originalCount: 0, error: "\u8BE5\u4F1A\u8BDD\u6B63\u5728\u538B\u7F29\u4E2D\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" };
   }
   compactLocks.set(sessionId, true);
   try {
+    if (runtime) {
+      const rc = getRuntimeConfig(runtime);
+      if (rc.model) {
+        compactConfig = { ...compactConfig, model: rc.model };
+        console.log(`[compact] runtime=${runtime} \u2192 \u4F7F\u7528\u5F53\u524D\u6A21\u578B: ${rc.model}`);
+      }
+    }
     const { messages } = store.getMessages(sessionId);
     if (messages.length < 4) {
       return { success: false, originalCount: messages.length, error: "\u6D88\u606F\u592A\u5C11\uFF0C\u65E0\u9700\u538B\u7F29" };
@@ -108964,6 +109056,8 @@ function buildHandledPermissionCard(action) {
       return buildStatusCard("\u6388\u6743\u5DF2\u5904\u7406", "\u5DF2\u5904\u7406\uFF1A\u672C\u4F1A\u8BDD\u5141\u8BB8\u3002\n\n\u540E\u7EED\u540C\u4F1A\u8BDD\u5185\u5339\u914D\u7684\u8BF7\u6C42\u5C06\u81EA\u52A8\u653E\u884C\u3002", "green");
     case "deny":
       return buildStatusCard("\u6388\u6743\u5DF2\u5904\u7406", "\u5DF2\u5904\u7406\uFF1A\u62D2\u7EDD\u3002\n\n\u8BE5\u6388\u6743\u8BF7\u6C42\u5DF2\u5173\u95ED\u3002", "red");
+    case "timeout":
+      return buildStatusCard("\u6388\u6743\u8D85\u65F6", "\u8BE5\u6388\u6743\u8BF7\u6C42\u5DF2\u8D85\u65F6\u81EA\u52A8\u62D2\u7EDD\u3002\n\n\u5982\u9700\u7EE7\u7EED\u64CD\u4F5C\uFF0C\u8BF7\u91CD\u65B0\u53D1\u8D77\u3002", "red");
     default:
       return buildStatusCard("\u6388\u6743\u5DF2\u5904\u7406", "\u8BE5\u6388\u6743\u8BF7\u6C42\u5DF2\u5904\u7406\u3002", "grey");
   }
@@ -110442,20 +110536,9 @@ ${history}
       return;
     }
     await ctx.sendAsPost(inbound.address, "\u23F3 \u6B63\u5728\u538B\u7F29\u4E0A\u4E0B\u6587\uFF0C\u8BF7\u7A0D\u5019\u2026", inbound.messageId, true);
-    const sessionExt = store2.getSessionExt(sessionId);
-    const runtime = sessionExt?.runtime || ctx.getDefaultRuntime();
-    const runtimeConfig = getRuntimeConfig(runtime);
-    const compactConfig = {
-      model: runtimeConfig.model,
-      apiKey: "",
-      // Will be filled by compactConversation from env/config
-      baseUrl: "",
-      // Will be filled by compactConversation from env/config
-      maxTokens: 3e3,
-      temperature: 0.2,
-      clearSdkSession: true
-    };
-    const result = await compactConversation(store2, sessionId, compactConfig);
+    const compactConfig = loadConfig().compact;
+    const runtime = store2.getSessionExt?.(sessionId)?.runtime || "claude";
+    const result = await compactConversation(store2, sessionId, compactConfig, runtime);
     if (result.success) {
       applyCompactResult(store2, sessionId, result);
       if (compactConfig.clearSdkSession) {
@@ -110552,18 +110635,9 @@ async function handleGroupMessage(ctx, _sender, inbound) {
       const sid2 = binding2.codepilotSessionId;
       if (sid2) {
         await ctx.sendAsPost(inbound.address, "\u23F3 \u6B63\u5728\u538B\u7F29\u4E0A\u4E0B\u6587\uFF0C\u8BF7\u7A0D\u5019\u2026", inbound.messageId);
-        const sessionExt2 = store2.getSessionExt(sid2);
-        const runtime2 = sessionExt2?.runtime || ctx.getDefaultRuntime();
-        const runtimeConfig2 = getRuntimeConfig(runtime2);
-        const compactConfig2 = {
-          model: runtimeConfig2.model,
-          apiKey: "",
-          baseUrl: "",
-          maxTokens: 3e3,
-          temperature: 0.2,
-          clearSdkSession: true
-        };
-        const result2 = await compactConversation(store2, sid2, compactConfig2);
+        const compactConfig2 = loadConfig().compact;
+        const runtime2 = store2.getSessionExt?.(sid2)?.runtime || "claude";
+        const result2 = await compactConversation(store2, sid2, compactConfig2, runtime2);
         if (result2.success) {
           applyCompactResult(store2, sid2, result2);
           if (compactConfig2.clearSdkSession) {
@@ -113462,7 +113536,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
       const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
       const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
       const runtime = sessionExt?.runtime || this.getDefaultRuntime();
-      const runtimeConfig = getRuntimeConfig2(runtime);
+      const runtimeConfig = getRuntimeConfig(runtime);
       const modelName = runtimeConfig.model || session?.model || "N/A";
       const providerName = runtimeConfig.provider || "N/A";
       return {
@@ -113482,7 +113556,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
       const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
       const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
       const runtime = sessionExt?.runtime || this.getDefaultRuntime();
-      const runtimeConfig = getRuntimeConfig2(runtime);
+      const runtimeConfig = getRuntimeConfig(runtime);
       const modelName = runtimeConfig.model || session?.model || "N/A";
       const providerName = runtimeConfig.provider || "N/A";
       dividerInfo = {
@@ -113512,7 +113586,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
       const session = binding?.codepilotSessionId ? store.getSession(binding.codepilotSessionId) : null;
       const sessionExt = binding?.codepilotSessionId ? store.getSessionExt(binding.codepilotSessionId) : null;
       const runtime = sessionExt?.runtime || this.getDefaultRuntime();
-      const runtimeConfig = getRuntimeConfig2(runtime);
+      const runtimeConfig = getRuntimeConfig(runtime);
       const modelName = runtimeConfig.model || session?.model || "N/A";
       const providerName = runtimeConfig.provider || "N/A";
       dividerInfo = {
@@ -124330,13 +124404,32 @@ function writeStatus(info) {
   fs21.writeFileSync(tmp, JSON.stringify(merged, null, 2), "utf-8");
   fs21.renameSync(tmp, STATUS_FILE);
 }
-function generateMcpConfigs() {
+function generateMcpConfigs(config) {
   const mcpServers = {};
-  if (process.env.CTI_MCP_AGENTMEMORY_URL) {
-    mcpServers.agentmemory = { url: process.env.CTI_MCP_AGENTMEMORY_URL };
-  }
-  if (process.env.CTI_MCP_WIKI_URL) {
-    mcpServers.wiki = { url: process.env.CTI_MCP_WIKI_URL };
+  const mcpUrls = [
+    process.env.CTI_MCP_AGENTMEMORY_URL,
+    process.env.CTI_MCP_WIKI_URL
+  ].filter(Boolean);
+  if (mcpUrls.length === 0) {
+    try {
+      const envPath = path19.join(CTI_HOME2, "config.env");
+      const envContent = fs21.readFileSync(envPath, "utf-8");
+      for (const line of envContent.split("\n")) {
+        const t = line.trim();
+        if (!t || t.startsWith("#")) continue;
+        const eq = t.indexOf("=");
+        if (eq === -1) continue;
+        const k = t.slice(0, eq).trim();
+        let v = t.slice(eq + 1).trim();
+        if (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1);
+        if (k === "CTI_MCP_AGENTMEMORY_URL" && v) mcpServers.agentmemory = { url: v };
+        if (k === "CTI_MCP_WIKI_URL" && v) mcpServers.wiki = { url: v };
+      }
+    } catch {
+    }
+  } else {
+    if (process.env.CTI_MCP_AGENTMEMORY_URL) mcpServers.agentmemory = { url: process.env.CTI_MCP_AGENTMEMORY_URL };
+    if (process.env.CTI_MCP_WIKI_URL) mcpServers.wiki = { url: process.env.CTI_MCP_WIKI_URL };
   }
   if (Object.keys(mcpServers).length === 0) return;
   console.log(`[agents-to-im] Syncing MCP config: ${Object.keys(mcpServers).join(", ")}`);
@@ -124357,24 +124450,24 @@ function generateMcpConfigs() {
   ];
   for (const configPath of mimocodePaths) {
     try {
-      let config = {};
+      let config2 = {};
       if (fs21.existsSync(configPath)) {
-        config = JSON.parse(fs21.readFileSync(configPath, "utf-8"));
+        config2 = JSON.parse(fs21.readFileSync(configPath, "utf-8"));
       }
       const mcp = {};
       for (const [name, cfg] of Object.entries(mcpServers)) {
         mcp[name] = { type: "remote", url: cfg.url };
       }
-      config.mcp = mcp;
+      config2.mcp = mcp;
       fs21.mkdirSync(path19.dirname(configPath), { recursive: true });
-      fs21.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      fs21.writeFileSync(configPath, JSON.stringify(config2, null, 2));
       console.log(`[agents-to-im] Updated MCP config: ${configPath}`);
     } catch (err) {
       console.warn(`[agents-to-im] Failed to write MCP config to ${configPath}:`, err);
     }
   }
   try {
-    const geminiSettingsPath = "/root/.gemini/settings.json";
+    const geminiSettingsPath = path19.join(os10.homedir(), ".gemini", "settings.json");
     let settings = {};
     if (fs21.existsSync(geminiSettingsPath)) {
       settings = JSON.parse(fs21.readFileSync(geminiSettingsPath, "utf-8"));
@@ -124384,8 +124477,12 @@ function generateMcpConfigs() {
       mcpServersConfig[name] = { type: "http", url: cfg.url };
     }
     settings.mcpServers = mcpServersConfig;
+    const geminiBot = config.bots?.find((b) => b.runtime === "gemini");
+    const geminiModelGroup = geminiBot?.modelGroup || "gemini-model";
+    settings.model = { name: geminiModelGroup };
+    fs21.mkdirSync(path19.dirname(geminiSettingsPath), { recursive: true });
     fs21.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2));
-    console.log(`[agents-to-im] Updated Gemini CLI MCP config: ${geminiSettingsPath}`);
+    console.log(`[agents-to-im] Updated Gemini CLI config (model=${geminiModelGroup}): ${geminiSettingsPath}`);
   } catch (err) {
     console.warn("[agents-to-im] Failed to write Gemini CLI MCP config:", err);
   }
@@ -124393,7 +124490,7 @@ function generateMcpConfigs() {
 async function main() {
   const config = loadConfig();
   setupLogger();
-  generateMcpConfigs();
+  generateMcpConfigs(config);
   const runId = crypto3.randomUUID();
   const startTime = Date.now();
   console.log(`[agents-to-im] Starting bridge (run_id: ${runId})`);
@@ -124553,8 +124650,9 @@ async function main() {
         const msgCount = store2.getMessages(binding.codepilotSessionId, { limit: 999 })?.messages?.length || 0;
         if (msgCount < MIN_MESSAGES_FOR_COMPACT) continue;
         const sid = binding.codepilotSessionId;
+        const runtime = store2.getSessionExt?.(sid)?.runtime || "claude";
         console.log(`[idle-compact] Compacting session ${sid} (idle ${Math.round((now2 - updatedAt) / 6e4)}min, ${msgCount} msgs)`);
-        const result = await compactConversation(store2, sid, config2.compact);
+        const result = await compactConversation(store2, sid, config2.compact, runtime);
         if (result.success) {
           applyCompactResult(store2, sid, result);
           if (config2.compact.clearSdkSession) {

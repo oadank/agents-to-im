@@ -775,6 +775,12 @@ async function consumeStream(
               const resultData = JSON.parse(event.data);
               if (resultData.usage) tokenUsage = resultData.usage;
               if (resultData.is_error) hasError = true;
+              try {
+                fs.appendFileSync(
+                  process.env.CTI_HOME + '/logs/claude-session-debug.log',
+                  `[${new Date().toISOString()}] result event: session_id=${resultData.session_id || '(none)'}, is_error=${resultData.is_error}\n`
+                );
+              } catch { /* skip */ }
               if (resultData.session_id) {
                 capturedSdkSessionId = resultData.session_id;
                 if (runtime === 'codex') {
@@ -846,6 +852,14 @@ async function consumeStream(
     const responseText = responseSegments.join('\n\n').trim();
 
     clearTimeout(stuckTimer);
+
+    // If stream was stuck (reader.cancel → done=true path), report error to user
+    if (stuckFired && !hasError) {
+      hasError = true;
+      errorMessage = '⚠️ Task aborted: no output for 5 minutes. The model may be stuck or the API is unresponsive. Please try again.';
+      console.warn(`[conversation-engine] Stream stuck (session ${sessionId.slice(0, 12)}...) — reporting error to user`);
+    }
+
     return {
       responseText,
       responseSegments,
@@ -886,15 +900,20 @@ async function consumeStream(
     const isAbort = e instanceof DOMException && e.name === 'AbortError'
       || e instanceof Error && e.name === 'AbortError';
 
+    // stuckFired → stream was idle too long, report as error to user
+    // isAbort (user-initiated) → not an error
+    const finalHasError = stuckFired || (!isAbort && !stuckFired);
+    const finalErrorMessage = stuckFired
+      ? '⚠️ Task aborted: no output for 5 minutes. The model may be stuck or the API is unresponsive. Please try again.'
+      : isAbort ? 'Task stopped by user' : (e instanceof Error ? e.message : 'Stream consumption error');
+
     return {
       responseText: responseSegments.join('\n\n').trim(),
       responseSegments,
       contentBlocks: [...contentBlocks],
       tokenUsage,
-      hasError: !stuckFired,
-      errorMessage: stuckFired
-        ? 'Task aborted: no output for 10 minutes'
-        : isAbort ? 'Task stopped by user' : (e instanceof Error ? e.message : 'Stream consumption error'),
+      hasError: finalHasError,
+      errorMessage: finalErrorMessage,
       permissionRequests,
       sdkSessionId: capturedSdkSessionId,
     };

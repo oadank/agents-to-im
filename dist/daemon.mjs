@@ -9995,7 +9995,7 @@ var require_form_data = __commonJS({
     var http2 = __require("http");
     var https = __require("https");
     var parseUrl = __require("url").parse;
-    var fs21 = __require("fs");
+    var fs22 = __require("fs");
     var Stream = __require("stream").Stream;
     var crypto4 = __require("crypto");
     var mime = require_mime_types();
@@ -10062,7 +10062,7 @@ var require_form_data = __commonJS({
         if (value2.end != void 0 && value2.end != Infinity && value2.start != void 0) {
           callback(null, value2.end + 1 - (value2.start ? value2.start : 0));
         } else {
-          fs21.stat(value2.path, function(err, stat) {
+          fs22.stat(value2.path, function(err, stat) {
             if (err) {
               callback(err);
               return;
@@ -23542,7 +23542,7 @@ var require_lib2 = __commonJS({
     var qs = require_lib();
     var identity = require_lodash();
     var pickBy = require_lodash2();
-    var fs21 = __require("fs");
+    var fs22 = __require("fs");
     var merge = require_lodash3();
     var qs$1 = __require("querystring");
     var WebSocket2 = require_ws();
@@ -23553,7 +23553,7 @@ var require_lib2 = __commonJS({
     var crypto__default = /* @__PURE__ */ _interopDefaultLegacy(crypto4);
     var identity__default = /* @__PURE__ */ _interopDefaultLegacy(identity);
     var pickBy__default = /* @__PURE__ */ _interopDefaultLegacy(pickBy);
-    var fs__default = /* @__PURE__ */ _interopDefaultLegacy(fs21);
+    var fs__default = /* @__PURE__ */ _interopDefaultLegacy(fs22);
     var merge__default = /* @__PURE__ */ _interopDefaultLegacy(merge);
     var qs__default = /* @__PURE__ */ _interopDefaultLegacy(qs$1);
     var WebSocket__default = /* @__PURE__ */ _interopDefaultLegacy(WebSocket2);
@@ -103116,7 +103116,7 @@ var require_lib2 = __commonJS({
 // node_modules/xmlhttprequest-ssl/lib/XMLHttpRequest.js
 var require_XMLHttpRequest = __commonJS({
   "node_modules/xmlhttprequest-ssl/lib/XMLHttpRequest.js"(exports2, module2) {
-    var fs21 = __require("fs");
+    var fs22 = __require("fs");
     var Url = __require("url");
     var spawn7 = __require("child_process").spawn;
     module2.exports = XMLHttpRequest3;
@@ -103274,7 +103274,7 @@ var require_XMLHttpRequest = __commonJS({
             throw new Error("XMLHttpRequest: Only GET method is supported");
           }
           if (settings.async) {
-            fs21.readFile(unescape(url2.pathname), function(error, data2) {
+            fs22.readFile(unescape(url2.pathname), function(error, data2) {
               if (error) {
                 self2.handleError(error, error.errno || -1);
               } else {
@@ -103286,7 +103286,7 @@ var require_XMLHttpRequest = __commonJS({
             });
           } else {
             try {
-              this.response = fs21.readFileSync(unescape(url2.pathname));
+              this.response = fs22.readFileSync(unescape(url2.pathname));
               this.responseText = this.response.toString("utf8");
               this.status = 200;
               setState(self2.DONE);
@@ -103412,15 +103412,15 @@ var require_XMLHttpRequest = __commonJS({
         } else {
           var contentFile = ".node-xmlhttprequest-content-" + process.pid;
           var syncFile = ".node-xmlhttprequest-sync-" + process.pid;
-          fs21.writeFileSync(syncFile, "", "utf8");
+          fs22.writeFileSync(syncFile, "", "utf8");
           var execString = "var http = require('http'), https = require('https'), fs = require('fs');var doRequest = http" + (ssl ? "s" : "") + ".request;var options = " + JSON.stringify(options) + ";var responseText = '';var responseData = Buffer.alloc(0);var req = doRequest(options, function(response) {response.on('data', function(chunk) {  var data = Buffer.from(chunk);  responseText += data.toString('utf8');  responseData = Buffer.concat([responseData, data]);});response.on('end', function() {fs.writeFileSync('" + contentFile + "', JSON.stringify({err: null, data: {statusCode: response.statusCode, headers: response.headers, text: responseText, data: responseData.toString('base64')}}), 'utf8');fs.unlinkSync('" + syncFile + "');});response.on('error', function(error) {fs.writeFileSync('" + contentFile + "', 'NODE-XMLHTTPREQUEST-ERROR:' + JSON.stringify(error), 'utf8');fs.unlinkSync('" + syncFile + "');});}).on('error', function(error) {fs.writeFileSync('" + contentFile + "', 'NODE-XMLHTTPREQUEST-ERROR:' + JSON.stringify(error), 'utf8');fs.unlinkSync('" + syncFile + "');});" + (data ? "req.write('" + JSON.stringify(data).slice(1, -1).replace(/'/g, "\\'") + "');" : "") + "req.end();";
           var syncProc = spawn7(process.argv[0], ["-e", execString]);
           var statusText;
-          while (fs21.existsSync(syncFile)) {
+          while (fs22.existsSync(syncFile)) {
           }
-          self2.responseText = fs21.readFileSync(contentFile, "utf8");
+          self2.responseText = fs22.readFileSync(contentFile, "utf8");
           syncProc.stdin.end();
-          fs21.unlinkSync(contentFile);
+          fs22.unlinkSync(contentFile);
           if (self2.responseText.match(/^NODE-XMLHTTPREQUEST-ERROR:/)) {
             var errorObj = JSON.parse(self2.responseText.replace(/^NODE-XMLHTTPREQUEST-ERROR:/, ""));
             self2.handleError(errorObj, 503);
@@ -103594,7 +103594,7 @@ var require_cjs = __commonJS({
 });
 
 // src/main.ts
-import fs20 from "node:fs";
+import fs21 from "node:fs";
 import path19 from "node:path";
 import os10 from "node:os";
 import crypto3 from "node:crypto";
@@ -104026,24 +104026,55 @@ async function processMessage(binding, text, onPermissionRequest, abortSignal, f
   const lockId = crypto.randomBytes(8).toString("hex");
   const lockAcquired = store.acquireSessionLock(sessionId, lockId, `bridge-${binding.channelType}`, 600);
   if (!lockAcquired) {
-    return {
-      responseText: "",
-      responseSegments: [],
-      contentBlocks: [],
-      tokenUsage: null,
-      hasError: true,
-      errorMessage: "Session is busy processing another request",
-      permissionRequests: [],
-      sdkSessionId: null
-    };
+    const staleReleased = store.forceReleaseStaleLock(sessionId, "stale-detect-on-acquire");
+    if (staleReleased) {
+      console.warn(`[conversation-engine] Recovered stale lock for session ${sessionId.slice(0, 12)}...`);
+      const retryAcquired = store.acquireSessionLock(sessionId, lockId, `bridge-${binding.channelType}`, 600);
+      if (!retryAcquired) {
+        return {
+          responseText: "",
+          responseSegments: [],
+          contentBlocks: [],
+          tokenUsage: null,
+          hasError: true,
+          errorMessage: "Session is busy processing another request (lock contention after stale recovery)",
+          permissionRequests: [],
+          sdkSessionId: null
+        };
+      }
+    } else {
+      return {
+        responseText: "",
+        responseSegments: [],
+        contentBlocks: [],
+        tokenUsage: null,
+        hasError: true,
+        errorMessage: "Session is busy processing another request",
+        permissionRequests: [],
+        sdkSessionId: null
+      };
+    }
   }
   store.setSessionRuntimeStatus(sessionId, "running");
+  const abortController = new AbortController();
   const renewalInterval = setInterval(() => {
     try {
       store.renewSessionLock(sessionId, lockId, 600);
     } catch {
     }
   }, 6e4);
+  const WATCHDOG_TIMEOUT_MS = parseInt(process.env.CTI_WATCHDOG_TIMEOUT_MS || "600000", 10);
+  const watchdogTimer = setTimeout(() => {
+    console.error(`[conversation-engine] WATCHDOG: session ${sessionId.slice(0, 12)}... exceeded ${WATCHDOG_TIMEOUT_MS / 1e3}s, aborting`);
+    try {
+      abortController.abort();
+    } catch {
+    }
+    try {
+      store.forceReleaseStaleLock(sessionId, "watchdog-timeout");
+    } catch {
+    }
+  }, WATCHDOG_TIMEOUT_MS);
   try {
     const session = store.getSession(sessionId);
     const runtime = store.getSessionExt(sessionId)?.runtime || "claude";
@@ -104092,7 +104123,6 @@ async function processMessage(binding, text, onPermissionRequest, abortSignal, f
     const historyMsgs = recentMsgs.slice(0, -1).map((m) => {
       return { role: m.role, content: m.content };
     });
-    const abortController = new AbortController();
     if (abortSignal) {
       if (abortSignal.aborted) {
         abortController.abort();
@@ -104134,6 +104164,7 @@ async function processMessage(binding, text, onPermissionRequest, abortSignal, f
       options?.onModeChanged
     );
   } finally {
+    clearTimeout(watchdogTimer);
     clearInterval(renewalInterval);
     store.releaseSessionLock(sessionId, lockId);
     store.setSessionRuntimeStatus(sessionId, "idle");
@@ -104155,16 +104186,6 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
   let planSteps = [];
   let planBody = "";
   let bufferedLeadingSegment = "";
-  const GLOBAL_TIMEOUT_MS = 9e4;
-  let timeoutFired = false;
-  const globalTimer = setTimeout(() => {
-    timeoutFired = true;
-    console.warn(`[conversation-engine] Global stream timeout (${GLOBAL_TIMEOUT_MS}ms) fired for session ${sessionId}, aborting`);
-    try {
-      reader.cancel("global-timeout");
-    } catch {
-    }
-  }, GLOBAL_TIMEOUT_MS);
   const mergeBufferedLeadingSegment = (text) => {
     const normalized = text.trim();
     if (!bufferedLeadingSegment) return normalized;
@@ -104234,7 +104255,7 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
       }
     }
   };
-  const STUCK_TIMEOUT_MS = 10 * 60 * 1e3;
+  const STUCK_TIMEOUT_MS = 5 * 60 * 1e3;
   let lastActivityAt = Date.now();
   let stuckFired = false;
   const REASONING_REPEAT_THRESHOLD = 5;
@@ -104558,7 +104579,6 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
     }
     const responseText = responseSegments.join("\n\n").trim();
     clearTimeout(stuckTimer);
-    clearTimeout(globalTimer);
     return {
       responseText,
       responseSegments,
@@ -104571,11 +104591,6 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
     };
   } catch (e) {
     clearTimeout(stuckTimer);
-    clearTimeout(globalTimer);
-    if (timeoutFired) {
-      errorMessage = errorMessage || "Stream global timeout (90s)";
-      hasError = true;
-    }
     await flushTextBoundary(true);
     const renderedPlan = renderPlanMarkdown(planExplanation, planSteps, planBody);
     if (runtime === "codex" && collaborationModeOverride === "plan" && renderedPlan) {
@@ -105831,8 +105846,10 @@ function flushPreview(adapter, state, config) {
 \u{1F4CB} ${plan}
 \`\`\``);
     if (includeTool && tools.length > 0) {
+      const hasRunning = tools.some((t) => !t.startsWith("\u2705") && !t.startsWith("\u274C"));
+      const toolTitle = hasRunning ? "\u{1F527} \u6267\u884C\u4E2D" : "\u{1F527} \u5DF2\u5B8C\u6210";
       parts2.push(`\`\`\`
-\u{1F527} \u6267\u884C\u4E2D
+${toolTitle}
 ${tools.join("\n")}
 \`\`\``);
     }
@@ -106017,7 +106034,26 @@ function getState() {
 function processWithSessionLock(sessionId, fn) {
   const state = getState();
   const prev = state.sessionLocks.get(sessionId) || Promise.resolve();
-  const current = prev.then(fn, fn);
+  const SAFETY_TIMEOUT_MS = 12 * 60 * 1e3;
+  let settled = false;
+  let chainRef = null;
+  const work = prev.then(fn, fn);
+  const safetyTimeout = new Promise((resolve2) => {
+    setTimeout(() => {
+      if (!settled) {
+        console.error(`[bridge-manager] SAFETY TIMEOUT: session ${sessionId.slice(0, 12)}... chain blocked for ${SAFETY_TIMEOUT_MS / 1e3}s, breaking chain`);
+        settled = true;
+        if (chainRef && state.sessionLocks.get(sessionId) === chainRef) {
+          state.sessionLocks.delete(sessionId);
+        }
+        resolve2();
+      }
+    }, SAFETY_TIMEOUT_MS);
+  });
+  const current = Promise.race([work, safetyTimeout]).then(() => {
+    settled = true;
+  });
+  chainRef = current;
   state.sessionLocks.set(sessionId, current);
   current.finally(() => {
     if (state.sessionLocks.get(sessionId) === current) {
@@ -106025,7 +106061,7 @@ function processWithSessionLock(sessionId, fn) {
     }
   }).catch(() => {
   });
-  return current;
+  return work;
 }
 async function start() {
   const state = getState();
@@ -106147,7 +106183,11 @@ function runAdapterLoop(adapter) {
             binding.codepilotSessionId,
             () => handleMessage(adapter, msg)
           ).catch((err) => {
-            console.error(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} error:`, err);
+            if (err instanceof Error) {
+              console.error(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} error:`, err.message, err.stack?.split("\n")[1]?.trim() || "");
+            } else if (err && typeof err === "object" && Object.keys(err).length > 0) {
+              console.error(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} error (non-Error):`, JSON.stringify(err).slice(0, 500));
+            }
           });
         }
       } catch (err) {
@@ -106440,6 +106480,7 @@ async function handleMessage(adapter, msg) {
   const activityVersionBySignature = /* @__PURE__ */ new Map();
   const activitySignatureById = /* @__PURE__ */ new Map();
   let hasVisibleProgressCard = false;
+  let previewClosed = false;
   const planAttemptIsCurrent = () => isPlanAttemptCurrent(effectivePlanWorkflowMeta);
   const compactActivityText = (value2) => (value2 || "").replace(/\s+/g, " ").trim();
   const activitySignatureToken = (signature) => {
@@ -106756,9 +106797,9 @@ async function handleMessage(adapter, msg) {
         if (previewState.placeholderPrimed && adapter.sendPreview) {
           const now2 = Date.now();
           const thinkingLen = (thinkingText || "").length;
-          const elapsed = now2 - previewState.lastReasoningFlushAt || 0;
           const grew = thinkingLen - (previewState.lastReasoningFlushedLen || 0);
-          if (!previewState.lastReasoningFlushAt || elapsed > 200 && grew > 20) {
+          const elapsed = now2 - previewState.lastReasoningFlushAt || 0;
+          if (grew > 0 && elapsed > 100) {
             previewState.lastReasoningFlushAt = now2;
             previewState.lastReasoningFlushedLen = thinkingLen;
             flushPreview(adapter, previewState, streamCfg);
@@ -106782,7 +106823,10 @@ async function handleMessage(adapter, msg) {
         }
       } else if (status === "completed" || status === "error") {
         const idx = previewState.toolHistory.findIndex((line) => line.startsWith(toolName));
-        if (idx >= 0) previewState.toolHistory.splice(idx, 1);
+        if (idx >= 0) {
+          const completedMark = status === "completed" ? "\u2705" : "\u274C";
+          previewState.toolHistory[idx] = `${completedMark} ${previewState.toolHistory[idx]}`;
+        }
         if (previewState.placeholderPrimed && adapter.sendPreview) {
           flushPreview(adapter, previewState, streamCfg);
         }
@@ -107809,10 +107853,10 @@ async function callCompactApi(prompt, compactConfig) {
   let model = compactConfig.model || "codex-model";
   if (!apiKey) {
     try {
-      const fs21 = await import("node:fs");
+      const fs22 = await import("node:fs");
       const providersPath = "/root/.claude/cc-haha/providers.json";
-      if (fs21.existsSync(providersPath)) {
-        const providersContent = fs21.readFileSync(providersPath, "utf-8");
+      if (fs22.existsSync(providersPath)) {
+        const providersContent = fs22.readFileSync(providersPath, "utf-8");
         const providersData = JSON.parse(providersContent);
         const activeProvider = providersData.providers.find(
           (p) => p.id === providersData.activeId
@@ -112750,9 +112794,9 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
     }
     const tmpDir = "/tmp/feishu-audio";
     const tmpFile = `${tmpDir}/${messageId}.opus`;
-    const fs21 = await import("node:fs/promises");
+    const fs22 = await import("node:fs/promises");
     const nodeFs = await import("node:fs");
-    await fs21.mkdir(tmpDir, { recursive: true });
+    await fs22.mkdir(tmpDir, { recursive: true });
     const response = await client.im.messageResource.get({
       params: { type: "file" },
       // 音频文件用 file 类型
@@ -112767,7 +112811,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
     const buffer = Buffer.concat(chunks);
-    await fs21.writeFile(tmpFile, buffer);
+    await fs22.writeFile(tmpFile, buffer);
     const { execSync: execSync2 } = await import("node:child_process");
     const transcribeScript = "/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh";
     try {
@@ -112776,11 +112820,11 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
         timeout: 6e4,
         env: { ...process.env, LD_LIBRARY_PATH: "/sherpa-onnx/lib:" + (process.env.LD_LIBRARY_PATH || "") }
       }).trim();
-      await fs21.unlink(tmpFile).catch(() => {
+      await fs22.unlink(tmpFile).catch(() => {
       });
       return { text };
     } catch (error) {
-      await fs21.unlink(tmpFile).catch(() => {
+      await fs22.unlink(tmpFile).catch(() => {
       });
       throw error;
     }
@@ -115305,14 +115349,20 @@ function buildCliExecCommand(cliPath, args) {
   return `"${cliPath}"${quotedArgs ? ` ${quotedArgs}` : ""}`;
 }
 function getCliVersion(cliPath, env) {
+  const cmd = buildCliExecCommand(cliPath, ["--version"]);
   try {
-    return execSync(buildCliExecCommand(cliPath, ["--version"]), {
+    const result = execSync(cmd, {
       encoding: "utf-8",
       timeout: 1e4,
       env: env || buildSubprocessEnv(),
       stdio: ["pipe", "pipe", "pipe"]
     }).trim();
-  } catch {
+    return result;
+  } catch (err) {
+    console.error(`[claude-cli] getCliVersion FAILED: cmd=${cmd}`);
+    console.error(`[claude-cli] getCliVersion error: ${err?.message || err}`);
+    if (err?.stderr) console.error(`[claude-cli] stderr: ${err.stderr}`);
+    if (err?.stdout) console.error(`[claude-cli] stdout: ${err.stdout}`);
     return void 0;
   }
 }
@@ -121372,7 +121422,7 @@ ${fullPrompt}`;
           prompt: [{ type: "text", text: fullPrompt }]
         }
       }) + "\n");
-      const timeoutMs = parseInt(process.env.CTI_MIMO_TIMEOUT_MS || "1800000", 10);
+      const timeoutMs = parseInt(process.env.CTI_MIMO_TIMEOUT_MS || "300000", 10);
       setTimeout(() => {
         if (cached.currentSettle) {
           cached.currentSettle(`ACP prompt timeout after ${timeoutMs / 1e3}s`);
@@ -121522,6 +121572,11 @@ var GeminiAppServerClient = class {
   apiKey;
   baseUrl;
   extraEnv;
+  // 退避机制：防止高频重启风暴
+  retryCount = 0;
+  lastExitTime = 0;
+  maxRetryDelay = 6e4;
+  // 最大等待 60 秒
   constructor(options = {}) {
     this.executable = options.executable || "gemini";
     this.acpArgs = options.acpArgs || ["--acp", "--yolo"];
@@ -121619,6 +121674,20 @@ var GeminiAppServerClient = class {
     proc.kill();
   }
   async bootstrap() {
+    const now2 = Date.now();
+    if (this.lastExitTime > 0 && this.retryCount > 0) {
+      const delay = Math.min(
+        1e3 * Math.pow(2, this.retryCount) + Math.random() * 1e3,
+        this.maxRetryDelay
+      );
+      const elapsed = now2 - this.lastExitTime;
+      if (elapsed < delay) {
+        const waitMs = delay - elapsed;
+        console.log(`[gemini-app-server] Backoff: waiting ${Math.round(waitMs / 1e3)}s before restart (retry #${this.retryCount})`);
+        rtLog3(`[gemini-app-server] Backoff: waiting ${waitMs}ms (retry #${this.retryCount})`);
+        await new Promise((resolve2) => setTimeout(resolve2, waitMs));
+      }
+    }
     let command = this.executable;
     let spawnArgs = [...this.acpArgs];
     let useShell = false;
@@ -121642,6 +121711,10 @@ var GeminiAppServerClient = class {
         ...process.env,
         HOME: os8.homedir(),
         USERPROFILE: os8.homedir(),
+        // 强制使用 WinPTY，绕过 ConPTY 的 AttachConsole 失败问题
+        FORCE_WINPTY: "1",
+        // 防止输出缓冲区堵塞
+        PYTHONUNBUFFERED: "1",
         GEMINI_HOME: resolveGeminiHome(),
         GEMINI_API_KEY: this.apiKey,
         GOOGLE_GEMINI_BASE_URL: this.baseUrl,
@@ -121664,6 +121737,8 @@ var GeminiAppServerClient = class {
       this.failAllPending(new Error(`[gemini-app-server] Process exited with ${suffix}`));
       this.proc = null;
       this.startPromise = null;
+      this.lastExitTime = Date.now();
+      this.retryCount++;
     });
     const rl = readline2.createInterface({ input: proc.stdout });
     rl.on("line", (line) => {
@@ -121689,6 +121764,8 @@ var GeminiAppServerClient = class {
     initDone = true;
     clearTimeout(initTimeout);
     rtLog3(`[gemini-app-server] initialize OK`);
+    this.retryCount = 0;
+    this.lastExitTime = 0;
     try {
       await this.callInternal("authenticate", { methodId: "gateway" });
     } catch (error) {
@@ -121777,12 +121854,16 @@ var GeminiProvider = class {
   cliPath;
   acpArgs;
   workingDirectory;
+  // 累积缓冲区：用于处理跨 chunk 的 <think> 标签
+  thinkingBuffer = "";
   constructor(config) {
     this.apiKey = config?.apiKey || process.env.CTI_GEMINI_API_KEY || process.env.LITELLM_API_KEY || "sk-200418";
     this.baseUrl = config?.baseUrl || process.env.CTI_GEMINI_BASE_URL || "http://127.0.0.1:4000";
     this.cliPath = config?.cliPath || process.env.CTI_GEMINI_CLI_PATH || "gemini";
-    this.acpArgs = config?.acpArgs || ["--acp", "--yolo"];
-    this.workingDirectory = config?.workingDirectory || process.env.CTI_GEMINI_WORKING_DIR || "/opt";
+    const includeDirs = process.platform === "win32" ? "--include-directories=C:\\,C:\\Users,C:\\D" : "--include-directories=/,/root,/opt,/tmp";
+    this.acpArgs = config?.acpArgs || ["--acp", "--yolo", includeDirs];
+    const defaultWorkDir = process.platform === "win32" ? process.env.CTI_GEMINI_WORKING_DIR || "C:\\Users\\oadan" : process.env.CTI_GEMINI_WORKING_DIR || "/opt";
+    this.workingDirectory = config?.workingDirectory || defaultWorkDir;
   }
   async ensureClient() {
     if (this.client) {
@@ -121824,6 +121905,7 @@ var GeminiProvider = class {
     });
   }
   async run(controller, params2) {
+    this.thinkingBuffer = "";
     const client = await this.ensureClient();
     let unsubscribe = null;
     const queue = [];
@@ -121885,17 +121967,77 @@ var GeminiProvider = class {
         const updateType = sessionUpdateType(paramsRecord);
         const update = paramsRecord.update;
         const content = update?.content;
+        console.log(`[gemini-provider] updateType=${updateType}`);
         switch (updateType) {
           case "agent_message_chunk":
             if (content && typeof content.text === "string") {
-              emitCanonicalTurnEvent(controller, { type: "text", data: content.text });
+              const text = content.text;
+              console.log(`[gemini-provider] agent_message_chunk len=${text.length} buffer_len=${this.thinkingBuffer.length}`);
+              this.thinkingBuffer += text;
+              const thinkingMatch = this.thinkingBuffer.match(/<think>([\s\S]*?)<\/think>/);
+              if (thinkingMatch) {
+                const thinkingText = thinkingMatch[1].trim();
+                const bodyText = this.thinkingBuffer.replace(/<think>[\s\S]*?<\/think>/, "").trim();
+                if (thinkingText) {
+                  emitCanonicalTurnEvent(controller, {
+                    type: "activity_event",
+                    data: {
+                      kind: "reasoning_activity",
+                      turnId: sessionId,
+                      status: "completed",
+                      text: thinkingText
+                    }
+                  });
+                }
+                this.thinkingBuffer = bodyText;
+                if (bodyText) {
+                  emitCanonicalTurnEvent(controller, { type: "text", data: bodyText });
+                }
+              } else if (this.thinkingBuffer.includes("<think>") && !this.thinkingBuffer.includes("</think>")) {
+                const partialThinking = this.thinkingBuffer.replace(/<think>/g, "").trim();
+                if (partialThinking) {
+                  emitCanonicalTurnEvent(controller, {
+                    type: "activity_event",
+                    data: {
+                      kind: "reasoning_activity",
+                      turnId: sessionId,
+                      status: "running",
+                      text: partialThinking
+                    }
+                  });
+                }
+              } else if (!this.thinkingBuffer.includes("<think>")) {
+                this.thinkingBuffer = "";
+                emitCanonicalTurnEvent(controller, { type: "text", data: text });
+              }
             }
             break;
           case "agent_thought_chunk":
             if (content && typeof content.text === "string") {
+              console.log(`[gemini-provider] agent_thought_chunk len=${content.text.length}`);
               emitCanonicalTurnEvent(controller, { type: "status", data: { reasoning: content.text } });
             }
             break;
+          case "tool_call":
+          case "tool_call_update": {
+            const toolInfo = update?.input ? `${update.title || "tool"} ${JSON.stringify(update.input).slice(0, 100)}` : update?.title || "\u5DE5\u5177";
+            const toolStatus = update?.status || "running";
+            const toolCallId = String(update?.toolCallId || update?.callId || `gemini-tool:${update?.title || "tool"}:${Date.now()}`);
+            const toolName = String(update?.title || "tool");
+            console.log(`[gemini-provider] ACP tool_call: ${toolInfo} status=${toolStatus} id=${toolCallId}`);
+            emitCanonicalTurnEvent(controller, {
+              type: "activity_event",
+              data: {
+                kind: "tool_activity",
+                toolUseId: toolCallId,
+                toolName,
+                status: toolStatus === "failed" ? "failed" : toolStatus === "completed" ? "completed" : "running",
+                inputPreview: update?.input && typeof update.input === "object" ? JSON.stringify(update.input).slice(0, 220) : "",
+                resultPreview: update?.output && typeof update.output === "string" ? String(update.output).slice(0, 220) : ""
+              }
+            });
+            break;
+          }
           case "available_commands_update":
             break;
           case "usage_update":
@@ -122147,10 +122289,17 @@ var HermesAppServerClient = class {
         HOME: os9.homedir(),
         HERMES_HOME: resolveHermesHome(),
         USERPROFILE: os9.homedir(),
-        APPDATA: process.env.APPDATA || path16.join(os9.homedir(), "AppData", "Roaming")
+        APPDATA: process.env.APPDATA || path16.join(os9.homedir(), "AppData", "Roaming"),
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY || "sk-200418",
+        OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || "http://100.110.110.12:4000/v1",
+        PYTHONUNBUFFERED: "1",
+        // Skip dangerous command approval prompts in ACP mode (no TTY available).
+        // _YOLO_MODE_FROZEN is read at import time from this env var.
+        HERMES_YOLO_MODE: "1"
       },
       windowsHide: true
     });
+    rtLog4(`[hermes-app-server] spawned HERMES_HOME=${resolveHermesHome()} OPENAI_BASE_URL=...:4000`);
     this.proc = proc;
     proc.once("error", (error) => {
       rtLog4(`[hermes-app-server] spawn ERROR: ${error.message}`);
@@ -122243,6 +122392,15 @@ var HermesAppServerClient = class {
 };
 
 // src/providers/hermes/hermes-provider.ts
+import fs18 from "node:fs";
+function rtLog5(msg) {
+  const DEBUG_LOG2 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+  try {
+    fs18.appendFileSync(DEBUG_LOG2, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`, "utf-8");
+  } catch {
+  }
+}
 function extractSessionId2(msg) {
   const params2 = typeof msg.params === "object" && msg.params ? msg.params : {};
   return typeof params2.sessionId === "string" ? params2.sessionId : "";
@@ -122264,7 +122422,7 @@ var HermesProvider = class {
     this.workingDirectory = config?.workingDirectory || process.env.CTI_HERMES_WORKING_DIR || "/opt";
   }
   buildAcpArgs() {
-    const base = ["acp", "--accept-hooks"];
+    const base = ["acp", "--accept-hooks", "--yes"];
     const extra = process.env.CTI_HERMES_ACP_ARGS?.trim();
     if (extra) {
       base.push(...extra.split(/\s+/));
@@ -122311,13 +122469,31 @@ var HermesProvider = class {
     try {
       const newSession = await client.call("session/new", {
         cwd: params2.workingDirectory || this.workingDirectory,
-        mcpServers: []
+        mcpServers: [],
+        provider: "custom:litellm",
+        model: "MiMogo"
       });
       const sessionId = newSession.sessionId;
       console.log(`[hermes-provider] Session ${sessionId} created`);
+      try {
+        await client.call("session/set_mode", { sessionId, modeId: "dont_ask" });
+        rtLog5(`[hermes-provider] Set mode to dont_ask for session ${sessionId}`);
+      } catch (modeErr) {
+        rtLog5(`[hermes-provider] Failed to set mode: ${modeErr}`);
+      }
       unsubscribe = client.subscribe((message) => {
         if (extractSessionId2(message) !== sessionId) return;
-        if (message.kind === "request") return;
+        if (message.kind === "request") {
+          rtLog5(`[hermes-provider] REQUEST id=${message.id} method=${message.method}`);
+          if (message.method && message.id !== void 0) {
+            client.respond(message.id, {
+              outcome: { outcome: "selected", option_id: "allow_once" }
+            }).catch(() => {
+            });
+            rtLog5(`[hermes-provider] Auto-approved request: ${message.method} id=${message.id}`);
+          }
+          return;
+        }
         const paramsRecord = typeof message.params === "object" && message.params ? message.params : {};
         const updateType = sessionUpdateType2(paramsRecord);
         const update = paramsRecord.update;
@@ -122333,6 +122509,52 @@ var HermesProvider = class {
               emitCanonicalTurnEvent(controller, { type: "status", data: { reasoning: content.text } });
             }
             break;
+          case "tool_call": {
+            const toolCallId = typeof update?.toolCallId === "string" ? update.toolCallId : "";
+            const toolTitle = typeof update?.title === "string" ? update.title : "";
+            const toolStatus = typeof update?.status === "string" ? update.status : "in_progress";
+            const toolKind = typeof update?.kind === "string" ? update.kind : "other";
+            const toolRawInput = update?.rawInput;
+            const toolRawOutput = update?.rawOutput;
+            const toolNameMatch = toolTitle.match(/^(\w+)/);
+            const toolName = toolNameMatch ? toolNameMatch[1] : toolKind;
+            const statusMap = {
+              "pending": "pending",
+              "in_progress": "running",
+              "completed": "completed",
+              "failed": "failed"
+            };
+            const activityStatus = statusMap[toolStatus] || "running";
+            let inputPreview;
+            if (toolRawInput && typeof toolRawInput === "object") {
+              const inputObj = toolRawInput;
+              if (toolName === "terminal" && typeof inputObj.command === "string") {
+                inputPreview = inputObj.command.slice(0, 100);
+              } else if (toolName === "read_file" && typeof inputObj.path === "string") {
+                inputPreview = inputObj.path;
+              } else if (toolName === "write_file" && typeof inputObj.path === "string") {
+                inputPreview = inputObj.path;
+              } else {
+                inputPreview = JSON.stringify(toolRawInput).slice(0, 100);
+              }
+            }
+            let resultPreview;
+            if (toolRawOutput && typeof toolRawOutput === "string") {
+              resultPreview = toolRawOutput.slice(0, 100);
+            }
+            emitCanonicalTurnEvent(controller, {
+              type: "activity_event",
+              data: {
+                kind: "tool_activity",
+                toolUseId: toolCallId,
+                toolName,
+                status: activityStatus,
+                inputPreview,
+                resultPreview
+              }
+            });
+            break;
+          }
           case "usage_update":
             if (typeof update?.size === "number") {
               const used = typeof update?.used === "number" ? update.used : 0;
@@ -122707,7 +122929,7 @@ var MultiplexLLMProvider = class {
     }
     const check = preflightCheck(cliPath);
     if (!check.ok) {
-      throw new Error(`Claude CLI preflight check failed: ${check.error}`);
+      console.warn(`[llm-provider] Claude CLI preflight check failed: ${check.error}, proceeding anyway`);
     }
     this.claudeCliPath = cliPath;
     this.claudeProvider = new SDKLLMProvider(
@@ -122890,23 +123112,23 @@ var MultiplexLLMProvider = class {
 };
 
 // src/infra/store.ts
-import fs18 from "node:fs";
+import fs19 from "node:fs";
 import path17 from "node:path";
 import crypto2 from "node:crypto";
 var BOT_NAME = process.env.CTI_BOT || "";
 var DATA_DIR = path17.join(CTI_HOME2, "data", BOT_NAME || ".");
 var MESSAGES_DIR = path17.join(DATA_DIR, "messages");
 function ensureDir(dir) {
-  fs18.mkdirSync(dir, { recursive: true });
+  fs19.mkdirSync(dir, { recursive: true });
 }
 function atomicWrite(filePath, data) {
   const tmp = filePath + ".tmp";
-  fs18.writeFileSync(tmp, data, "utf-8");
-  fs18.renameSync(tmp, filePath);
+  fs19.writeFileSync(tmp, data, "utf-8");
+  fs19.renameSync(tmp, filePath);
 }
 function readJson(filePath, fallback) {
   try {
-    const raw = fs18.readFileSync(filePath, "utf-8");
+    const raw = fs19.readFileSync(filePath, "utf-8");
     return JSON.parse(raw);
   } catch {
     return fallback;
@@ -123312,9 +123534,13 @@ var JsonFileStore = class {
     const existing = this.locks.get(sessionId);
     if (existing && existing.expiresAt > Date.now()) {
       if (existing.lockId !== lockId) {
-        this.rtLog(`[LOCK] acquireSessionLock FAILED: sessionId=${sessionId.slice(0, 12)}... held by ${existing.lockId}, owner=${existing.owner}, expiresAt=${new Date(existing.expiresAt).toISOString()}`);
+        const lockAgeMs = Date.now() - (existing.expiresAt - ttlSecs * 1e3);
+        this.rtLog(`[LOCK] acquireSessionLock HELD: sessionId=${sessionId.slice(0, 12)}... held by ${existing.lockId}, owner=${existing.owner}, lockAge=${Math.round(lockAgeMs / 1e3)}s, ttl=${ttlSecs}s`);
         return false;
       }
+    }
+    if (existing && existing.expiresAt <= Date.now()) {
+      this.rtLog(`[LOCK] acquireSessionLock OVERRWITE STALE: sessionId=${sessionId.slice(0, 12)}... previous holder=${existing.lockId} owner=${existing.owner}`);
     }
     this.locks.set(sessionId, {
       lockId,
@@ -123339,6 +123565,21 @@ var JsonFileStore = class {
     } else {
       this.rtLog(`[LOCK] releaseSessionLock SKIPPED: sessionId=${sessionId.slice(0, 12)}... lockId=${lockId} not current holder (current=${lock?.lockId})`);
     }
+  }
+  /** Check if a session lock has expired (stale). */
+  isLockStale(sessionId) {
+    const lock = this.locks.get(sessionId);
+    if (!lock) return false;
+    return lock.expiresAt <= Date.now();
+  }
+  /** Force-release a stale or orphaned session lock regardless of holder. */
+  forceReleaseStaleLock(sessionId, reason) {
+    const lock = this.locks.get(sessionId);
+    if (!lock) return false;
+    const isStale = lock.expiresAt <= Date.now();
+    this.rtLog(`[LOCK] forceReleaseStaleLock: sessionId=${sessionId.slice(0, 12)}... reason=${reason} lockAge=${Math.round((Date.now() - (lock.expiresAt - 6e5)) / 1e3)}s`);
+    this.locks.delete(sessionId);
+    return isStale;
   }
   setSessionRuntimeStatus(_sessionId, _status) {
   }
@@ -123699,7 +123940,7 @@ var JsonFileStore = class {
 };
 
 // src/config/logger.ts
-import fs19 from "node:fs";
+import fs20 from "node:fs";
 import path18 from "node:path";
 var MASK_PATTERNS = [
   /(?:token|secret|password|api_key)["']?\s*[:=]\s*["']?([^\s"',]+)/gi,
@@ -123723,7 +123964,7 @@ var MAX_LOG_SIZE = 10 * 1024 * 1024;
 var MAX_ROTATED = 3;
 var logStream = null;
 function openLogStream() {
-  return fs19.createWriteStream(LOG_PATH, { flags: "a" });
+  return fs20.createWriteStream(LOG_PATH, { flags: "a" });
 }
 function formatLogTimestamp(date) {
   const pad = (value2, width = 2) => String(value2).padStart(width, "0");
@@ -123743,7 +123984,7 @@ function formatLogTimestamp(date) {
 }
 function rotateIfNeeded() {
   try {
-    const stat = fs19.statSync(LOG_PATH);
+    const stat = fs20.statSync(LOG_PATH);
     if (stat.size < MAX_LOG_SIZE) return;
   } catch {
     return;
@@ -123753,17 +123994,17 @@ function rotateIfNeeded() {
     logStream = null;
   }
   const path32 = `${LOG_PATH}.${MAX_ROTATED}`;
-  if (fs19.existsSync(path32)) fs19.unlinkSync(path32);
+  if (fs20.existsSync(path32)) fs20.unlinkSync(path32);
   for (let i = MAX_ROTATED - 1; i >= 1; i--) {
     const src = `${LOG_PATH}.${i}`;
     const dst = `${LOG_PATH}.${i + 1}`;
-    if (fs19.existsSync(src)) fs19.renameSync(src, dst);
+    if (fs20.existsSync(src)) fs20.renameSync(src, dst);
   }
-  fs19.renameSync(LOG_PATH, `${LOG_PATH}.1`);
+  fs20.renameSync(LOG_PATH, `${LOG_PATH}.1`);
   logStream = openLogStream();
 }
 function setupLogger() {
-  fs19.mkdirSync(LOG_DIR, { recursive: true });
+  fs20.mkdirSync(LOG_DIR, { recursive: true });
   logStream = openLogStream();
   const write = (level, args) => {
     const timestamp = formatLogTimestamp(/* @__PURE__ */ new Date());
@@ -124078,16 +124319,16 @@ var BOT_NAME2 = process.env.CTI_BOT || "";
 var STATUS_FILE = path19.join(RUNTIME_DIR, BOT_NAME2 ? "status-" + BOT_NAME2 + ".json" : "status.json");
 var PID_FILE = path19.join(RUNTIME_DIR, BOT_NAME2 ? "bridge-" + BOT_NAME2 + ".pid" : "bridge.pid");
 function writeStatus(info) {
-  fs20.mkdirSync(RUNTIME_DIR, { recursive: true });
+  fs21.mkdirSync(RUNTIME_DIR, { recursive: true });
   let existing = {};
   try {
-    existing = JSON.parse(fs20.readFileSync(STATUS_FILE, "utf-8"));
+    existing = JSON.parse(fs21.readFileSync(STATUS_FILE, "utf-8"));
   } catch {
   }
   const merged = { ...existing, ...info };
   const tmp = STATUS_FILE + ".tmp";
-  fs20.writeFileSync(tmp, JSON.stringify(merged, null, 2), "utf-8");
-  fs20.renameSync(tmp, STATUS_FILE);
+  fs21.writeFileSync(tmp, JSON.stringify(merged, null, 2), "utf-8");
+  fs21.renameSync(tmp, STATUS_FILE);
 }
 function generateMcpConfigs() {
   const mcpServers = {};
@@ -124105,8 +124346,8 @@ function generateMcpConfigs() {
       claudeMcp.mcpServers[name] = { type: "http", url: cfg.url };
     }
     const mcpPath = path19.join(os10.homedir(), ".claude", "mcp.json");
-    fs20.mkdirSync(path19.dirname(mcpPath), { recursive: true });
-    fs20.writeFileSync(mcpPath, JSON.stringify(claudeMcp, null, 2));
+    fs21.mkdirSync(path19.dirname(mcpPath), { recursive: true });
+    fs21.writeFileSync(mcpPath, JSON.stringify(claudeMcp, null, 2));
   } catch (err) {
     console.warn("[agents-to-im] Failed to write Claude MCP config:", err);
   }
@@ -124117,16 +124358,16 @@ function generateMcpConfigs() {
   for (const configPath of mimocodePaths) {
     try {
       let config = {};
-      if (fs20.existsSync(configPath)) {
-        config = JSON.parse(fs20.readFileSync(configPath, "utf-8"));
+      if (fs21.existsSync(configPath)) {
+        config = JSON.parse(fs21.readFileSync(configPath, "utf-8"));
       }
       const mcp = {};
       for (const [name, cfg] of Object.entries(mcpServers)) {
         mcp[name] = { type: "remote", url: cfg.url };
       }
       config.mcp = mcp;
-      fs20.mkdirSync(path19.dirname(configPath), { recursive: true });
-      fs20.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      fs21.mkdirSync(path19.dirname(configPath), { recursive: true });
+      fs21.writeFileSync(configPath, JSON.stringify(config, null, 2));
       console.log(`[agents-to-im] Updated MCP config: ${configPath}`);
     } catch (err) {
       console.warn(`[agents-to-im] Failed to write MCP config to ${configPath}:`, err);
@@ -124135,15 +124376,15 @@ function generateMcpConfigs() {
   try {
     const geminiSettingsPath = "/root/.gemini/settings.json";
     let settings = {};
-    if (fs20.existsSync(geminiSettingsPath)) {
-      settings = JSON.parse(fs20.readFileSync(geminiSettingsPath, "utf-8"));
+    if (fs21.existsSync(geminiSettingsPath)) {
+      settings = JSON.parse(fs21.readFileSync(geminiSettingsPath, "utf-8"));
     }
     const mcpServersConfig = {};
     for (const [name, cfg] of Object.entries(mcpServers)) {
       mcpServersConfig[name] = { type: "http", url: cfg.url };
     }
     settings.mcpServers = mcpServersConfig;
-    fs20.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2));
+    fs21.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2));
     console.log(`[agents-to-im] Updated Gemini CLI MCP config: ${geminiSettingsPath}`);
   } catch (err) {
     console.warn("[agents-to-im] Failed to write Gemini CLI MCP config:", err);
@@ -124230,8 +124471,8 @@ async function main() {
     permissions: gateway,
     lifecycle: {
       onBridgeStart: () => {
-        fs20.mkdirSync(RUNTIME_DIR, { recursive: true });
-        fs20.writeFileSync(PID_FILE, String(process.pid), "utf-8");
+        fs21.mkdirSync(RUNTIME_DIR, { recursive: true });
+        fs21.writeFileSync(PID_FILE, String(process.pid), "utf-8");
         writeStatus({
           running: true,
           pid: process.pid,

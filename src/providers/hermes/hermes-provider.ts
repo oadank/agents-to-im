@@ -233,6 +233,67 @@ export class HermesProvider implements LLMProvider {
               emitCanonicalTurnEvent(controller, { type: 'status', data: { reasoning: content.text } });
             }
             break;
+          case 'tool_call': {
+            // Hermes ACP sends tool_call updates for ToolCallStart/ToolCallUpdate
+            // Convert to activity_event for feishu display
+            const toolCallId = typeof (update as JsonRecord)?.toolCallId === 'string'
+              ? (update as JsonRecord).toolCallId as string
+              : '';
+            const toolTitle = typeof (update as JsonRecord)?.title === 'string'
+              ? (update as JsonRecord).title as string
+              : '';
+            const toolStatus = typeof (update as JsonRecord)?.status === 'string'
+              ? (update as JsonRecord).status as string
+              : 'in_progress';
+            const toolKind = typeof (update as JsonRecord)?.kind === 'string'
+              ? (update as JsonRecord).kind as string
+              : 'other';
+            const toolRawInput = (update as JsonRecord)?.rawInput;
+            const toolRawOutput = (update as JsonRecord)?.rawOutput;
+            // Extract tool name from title (e.g., "terminal: ls -la" -> "terminal")
+            const toolNameMatch = toolTitle.match(/^(\w+)/);
+            const toolName = toolNameMatch ? toolNameMatch[1] : toolKind;
+            // Map ACP status to activity status
+            const statusMap: Record<string, string> = {
+              'pending': 'pending',
+              'in_progress': 'running',
+              'completed': 'completed',
+              'failed': 'failed',
+            };
+            const activityStatus = statusMap[toolStatus] || 'running';
+            // Build input preview from rawInput
+            let inputPreview: string | undefined;
+            if (toolRawInput && typeof toolRawInput === 'object') {
+              const inputObj = toolRawInput as JsonRecord;
+              // For terminal, show command
+              if (toolName === 'terminal' && typeof inputObj.command === 'string') {
+                inputPreview = inputObj.command.slice(0, 100);
+              } else if (toolName === 'read_file' && typeof inputObj.path === 'string') {
+                inputPreview = inputObj.path;
+              } else if (toolName === 'write_file' && typeof inputObj.path === 'string') {
+                inputPreview = inputObj.path;
+              } else {
+                inputPreview = JSON.stringify(toolRawInput).slice(0, 100);
+              }
+            }
+            // Build result preview from rawOutput
+            let resultPreview: string | undefined;
+            if (toolRawOutput && typeof toolRawOutput === 'string') {
+              resultPreview = toolRawOutput.slice(0, 100);
+            }
+            emitCanonicalTurnEvent(controller, {
+              type: 'activity_event',
+              data: {
+                kind: 'tool_activity',
+                toolUseId: toolCallId,
+                toolName,
+                status: activityStatus,
+                inputPreview,
+                resultPreview,
+              } as import('../../bridge/host.js').ActivityEvent,
+            });
+            break;
+          }
           case 'usage_update':
             if (typeof (update as JsonRecord)?.size === 'number') {
               const used = typeof (update as JsonRecord)?.used === 'number' ? (update as JsonRecord).used as number : 0;

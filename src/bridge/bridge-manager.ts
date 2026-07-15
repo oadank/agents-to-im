@@ -1109,13 +1109,11 @@ function runAdapterLoop(adapter: BaseChannelAdapter): void {
           processWithSessionLock(binding.codepilotSessionId, () =>
             handleMessage(adapter, msg),
           ).catch(err => {
-            // Suppress empty/non-informative error objects (often from SDK transport teardown)
-            const isEmpty = err == null
-              || (typeof err === 'object' && !(err instanceof Error) && Object.keys(err as object).length === 0);
-            if (isEmpty) {
-              console.debug(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} transport closed (empty error)`);
-            } else {
-              console.error(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} error:`, err);
+            // Log Error instances with stack; suppress empty/non-informative objects (SDK transport teardown noise)
+            if (err instanceof Error) {
+              console.error(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} error:`, err.message, err.stack?.split('\n')[1]?.trim() || '');
+            } else if (err && typeof err === 'object' && Object.keys(err as object).length > 0) {
+              console.error(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} error (non-Error):`, JSON.stringify(err).slice(0, 500));
             }
           });
         }
@@ -1466,6 +1464,7 @@ async function handleMessage(
   const activityVersionBySignature = new Map<string, number>();
   const activitySignatureById = new Map<string, string>();
   let hasVisibleProgressCard = false;
+  let previewClosed = false;
   const planAttemptIsCurrent = (): boolean => isPlanAttemptCurrent(effectivePlanWorkflowMeta);
 
   const compactActivityText = (value: string | undefined): string => (value || '').replace(/\s+/g, ' ').trim();

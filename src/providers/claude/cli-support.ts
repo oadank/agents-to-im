@@ -75,14 +75,20 @@ export function buildCliExecCommand(cliPath: string, args: string[]): string {
 }
 
 function getCliVersion(cliPath: string, env?: Record<string, string>): string | undefined {
+  const cmd = buildCliExecCommand(cliPath, ['--version']);
   try {
-    return execSync(buildCliExecCommand(cliPath, ['--version']), {
+    const result = execSync(cmd, {
       encoding: 'utf-8',
       timeout: 10_000,
       env: env || buildSubprocessEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
-  } catch {
+    return result;
+  } catch (err: any) {
+    console.error(`[claude-cli] getCliVersion FAILED: cmd=${cmd}`);
+    console.error(`[claude-cli] getCliVersion error: ${err?.message || err}`);
+    if (err?.stderr) console.error(`[claude-cli] stderr: ${err.stderr}`);
+    if (err?.stdout) console.error(`[claude-cli] stdout: ${err.stdout}`);
     return undefined;
   }
 }

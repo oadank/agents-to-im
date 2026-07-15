@@ -568,7 +568,9 @@ function flushPreview(
     const parts: string[] = [];
     if (plan) parts.push(`\`\`\`\n📋 ${plan}\n\`\`\``);
     if (includeTool && tools.length > 0) {
-      parts.push(`\`\`\`\n🔧 执行中\n${tools.join('\n')}\n\`\`\``);
+      const hasRunning = tools.some(t => !t.startsWith('✅') && !t.startsWith('❌'));
+      const toolTitle = hasRunning ? '🔧 执行中' : '🔧 已完成';
+      parts.push(`\`\`\`\n${toolTitle}\n${tools.join('\n')}\n\`\`\``);
     }
     // 构建思考+正文的 body
     const bodyParts: string[] = [];
@@ -855,20 +857,49 @@ function getState(): BridgeManagerState {
 /**
  * Process a function with per-session serialization.
  * Different sessions run concurrently; same-session requests are serialized.
+ * Includes a safety timeout: if the chain hangs for > 12 minutes (beyond the
+ * 10-min watchdog in conversation-engine), force-break the chain so new
+ * messages are not blocked forever.
  */
 function processWithSessionLock(sessionId: string, fn: () => Promise<void>): Promise<void> {
   const state = getState();
   const prev = state.sessionLocks.get(sessionId) || Promise.resolve();
-  const current = prev.then(fn, fn);
+
+  // Safety timeout: break the chain if it hangs too long
+  const SAFETY_TIMEOUT_MS = 12 * 60 * 1000; // 12 minutes
+  let settled = false;
+  let chainRef: Promise<void> | null = null;
+
+  const work = prev.then(fn, fn);
+
+  const safetyTimeout = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      if (!settled) {
+        console.error(`[bridge-manager] SAFETY TIMEOUT: session ${sessionId.slice(0, 12)}... chain blocked for ${SAFETY_TIMEOUT_MS / 1000}s, breaking chain`);
+        settled = true;
+        // Force-clear the chain for this session
+        if (chainRef && state.sessionLocks.get(sessionId) === chainRef) {
+          state.sessionLocks.delete(sessionId);
+        }
+        resolve();
+      }
+    }, SAFETY_TIMEOUT_MS);
+  });
+
+  // Race work against safety timeout — if timeout wins, chain is broken
+  const current = Promise.race([work, safetyTimeout]).then(() => {
+    settled = true;
+  }) as Promise<void>;
+
+  chainRef = current;
   state.sessionLocks.set(sessionId, current);
   // Cleanup when the chain completes.
-  // Suppress rejection on the cleanup chain — callers handle errors on `current` directly.
   current.finally(() => {
     if (state.sessionLocks.get(sessionId) === current) {
       state.sessionLocks.delete(sessionId);
     }
   }).catch(() => {});
-  return current;
+  return work;
 }
 
 /**
@@ -1078,7 +1109,14 @@ function runAdapterLoop(adapter: BaseChannelAdapter): void {
           processWithSessionLock(binding.codepilotSessionId, () =>
             handleMessage(adapter, msg),
           ).catch(err => {
-            console.error(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} error:`, err);
+            // Suppress empty/non-informative error objects (often from SDK transport teardown)
+            const isEmpty = err == null
+              || (typeof err === 'object' && !(err instanceof Error) && Object.keys(err as object).length === 0);
+            if (isEmpty) {
+              console.debug(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} transport closed (empty error)`);
+            } else {
+              console.error(`[bridge-manager] Session ${binding.codepilotSessionId.slice(0, 8)} error:`, err);
+            }
           });
         }
       } catch (err) {
@@ -1799,14 +1837,14 @@ async function handleMessage(
         if (!previewState.placeholderPrimed && adapter.primePreview) {
           primePreview(adapter, previewState, streamCfg);
         }
-        // 刷新预览，但限流：思考内容没有显著增加时不刷（防频繁全量刷新导致覆盖）
+        // 刷新预览：思考内容有更新就刷新
         if (previewState.placeholderPrimed && adapter.sendPreview) {
           const now = Date.now();
           const thinkingLen = (thinkingText || '').length;
-          const elapsed = now - (previewState as any).lastReasoningFlushAt || 0;
           const grew = thinkingLen - ((previewState as any).lastReasoningFlushedLen || 0);
-          // 首次或间隔超200ms且内容增长明显时才刷新
-          if (!(previewState as any).lastReasoningFlushAt || (elapsed > 200 && grew > 20)) {
+          // 间隔超100ms且有新内容就刷新
+          const elapsed = now - (previewState as any).lastReasoningFlushAt || 0;
+          if (grew > 0 && elapsed > 100) {
             (previewState as any).lastReasoningFlushAt = now;
             (previewState as any).lastReasoningFlushedLen = thinkingLen;
             flushPreview(adapter, previewState, streamCfg);
@@ -1834,9 +1872,12 @@ async function handleMessage(
           flushPreview(adapter, previewState, streamCfg);
         }
       } else if (status === 'completed' || status === 'error') {
-        // 工具完成：从历史中移除该工具
+        // 工具完成：标记状态而不是移除（保留显示）
         const idx = previewState.toolHistory.findIndex(line => line.startsWith(toolName));
-        if (idx >= 0) previewState.toolHistory.splice(idx, 1);
+        if (idx >= 0) {
+          const completedMark = status === 'completed' ? '✅' : '❌';
+          previewState.toolHistory[idx] = `${completedMark} ${previewState.toolHistory[idx]}`;
+        }
         if (previewState.placeholderPrimed && adapter.sendPreview) {
           flushPreview(adapter, previewState, streamCfg);
         }

@@ -581,11 +581,11 @@ Get-Content C:\Users\你的用户名\.agents-to-im\logs\hermes-stderr.log -Tail 
 
 | Provider | 服务名 | Dashboard 端口 |
 |----------|--------|----------------|
-| Claude | agents-claude | 13579 |
-| Codex | agents-codex | 13580 |
-| Gemini | agents-gemini | 13581 |
-| MiMo | agents-mimo | 13582 |
-| Hermes | agents-hermes | 13583 |
+| Claude | agents-claude | 13580 |
+| Codex | agents-codex | 13581 |
+| Gemini | agents-gemini | 13582 |
+| MiMo | agents-mimo | 13583 |
+| Hermes | agents-hermes | 13584 |
 
 ### 常见问题排查速查表
 
@@ -652,6 +652,29 @@ Get-Content C:\Users\你的用户名\.agents-to-im\logs\hermes-stderr.log -Tail 
 **修复文件**: `src/providers/codex/codex-provider.ts`
 
 **Commit**: `cf7fd2e`
+
+---
+
+### 5. Claude Node.js v24 CSPRNG 崩溃（Session 0）
+
+**时间**: 2026-07-15
+
+**现象**: `自动创建会话失败：Claude CLI preflight check failed: claude CLI at "xxx" failed to execute`
+
+**根因**: `claude-sidecar-x86_64-pc-windows-msvc.exe`（Tauri 应用）内部 spawn Node.js v24，在 Windows Session 0 中触发 `ncrypto::CSPRNG(nullptr, 0)` 断言崩溃，BCryptGenRandom 不可用。
+
+**修复**:
+- CLI 路径改用 `C:\Windows\System32\claude.bat`（基于 `bun` 运行，不触发 Node.js CSPRNG）
+- `multiplex.ts` 中 `getClaudeProvider()` 预检失败时 warn 而非 throw（容错设计）
+- `bridge-manager.ts` 中空错误对象 `{}` 降为 debug 日志（SDK 传输层 teardown 噪声）
+
+**修复文件**:
+- `config.env`：`CTI_CLAUDE_CODE_EXECUTABLE=C:\Windows\System32\claude.bat`
+- `src/providers/multiplex.ts`：预检失败 warn（line 90-93）
+- `src/providers/claude/cli-support.ts`：getCliVersion 增加错误日志
+- `src/bridge/bridge-manager.ts`：空错误对象降为 debug
+
+**注意事项**: `claude.bat` 依赖 `bun` 和 `C:\D\opt\cc-haha` 源码目录，非编译二进制。
 
 ---
 

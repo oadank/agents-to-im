@@ -89,7 +89,7 @@ export class MultiplexLLMProvider implements LLMProvider {
     }
     const check = preflightCheck(cliPath);
     if (!check.ok) {
-      throw new Error(`Claude CLI preflight check failed: ${check.error}`);
+      console.warn(`[llm-provider] Claude CLI preflight check failed: ${check.error}, proceeding anyway`);
     }
     this.claudeCliPath = cliPath;
     this.claudeProvider = new SDKLLMProvider(

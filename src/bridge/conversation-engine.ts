@@ -491,7 +491,7 @@ async function consumeStream(
     }
   };
 
-  const STUCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes (reduced from 10 to detect hangs faster)
+  const STUCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
   let lastActivityAt = Date.now();
   let stuckFired = false;
 

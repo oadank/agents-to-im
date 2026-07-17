@@ -411,7 +411,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       appId,
       appSecret,
       domain,
-      loggerLevel: lark.LoggerLevel.trace,  // 最详细级别，捕获 ping/pong
+      loggerLevel: lark.LoggerLevel.info,  // 只记录 info 及以上，减少日志噪音
     });
 
     const wsClientAny = this.wsClient as unknown as {
@@ -754,14 +754,15 @@ export class FeishuAdapter extends BaseChannelAdapter {
       throw new Error('Feishu 音频资源下载能力不可用');
     }
     
-    const tmpDir = '/tmp/feishu-audio';
-    const tmpFile = `${tmpDir}/${messageId}.opus`;
-    
-    // 确保目录存在
+    // 准备临时目录和文件
+    const path = await import('node:path');
+    const os = await import('node:os');
     const fs = await import('node:fs/promises');
     const nodeFs = await import('node:fs');
+    const tmpDir = path.join(os.tmpdir(), 'feishu-audio');
+    const tmpFile = path.join(tmpDir, `${messageId}.opus`);
     await fs.mkdir(tmpDir, { recursive: true });
-    
+
     // 使用飞书 API 下载音频文件
     const response = await client.im.messageResource.get({
       params: { type: 'file' as never },  // 音频文件用 file 类型
@@ -770,7 +771,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
         file_key: fileKey,
       },
     });
-    
+
     // 从流读取数据
     const stream = response.getReadableStream();
     const chunks: Buffer[] = [];
@@ -779,15 +780,22 @@ export class FeishuAdapter extends BaseChannelAdapter {
     }
     const buffer = Buffer.concat(chunks);
     await fs.writeFile(tmpFile, buffer);
-    
-    // 调用 transcribe.sh 转写
+
+    // 调用 transcribe.ps1/sh 转写
     const { execSync } = await import('node:child_process');
-    const transcribeScript = '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
+    const isWin = process.platform === 'win32';
+    const transcribeScript = isWin
+      ? 'C:\\Users\\oadan\\.openclaw\\workspace\\main\\skills\\voice-engine\\transcribe.ps1'
+      : '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
     try {
-      const text = execSync(`bash "${transcribeScript}" "${tmpFile}"`, {
+      const text = execSync(isWin
+        ? `powershell -ExecutionPolicy Bypass -File "${transcribeScript}" "${tmpFile}"`
+        : `bash "${transcribeScript}" "${tmpFile}"`, {
         encoding: 'utf-8',
         timeout: 60000,
-        env: { ...process.env, LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || '') },
+        env: isWin
+          ? process.env
+          : { ...process.env, LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || '') },
       }).trim();
       // 清理临时文件
       await fs.unlink(tmpFile).catch(() => {});
@@ -975,7 +983,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
         : {}),
     });
     // claude 用 sdkSessionId 做 --resume，/new 必须清空旧会话，否则会接回旧 Claude session
-    if (runtime === 'claude') {
+    // hermes/codex 也同样逻辑，清空旧 sdkSessionId 确保创建新 ACP session
+    if (runtime === 'claude' || runtime === 'hermes' || runtime === 'codex') {
       store.updateChannelBinding(initialBinding.id, { sdkSessionId: '' });
     }
     if (options?.bindingMode && initialBinding.mode !== options.bindingMode) {

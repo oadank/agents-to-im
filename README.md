@@ -336,7 +336,8 @@ nssm install agents-hermes
 | **Application** | Path | `C:\Program Files\nodejs\node.exe` | Node 绝对路径，不要用相对路径 |
 | | Startup directory | `C:\D\opt\agents-to-im` | 项目根目录，**绝对路径** |
 | | Arguments | `C:\D\opt\agents-to-im\dist\daemon.mjs` | daemon.mjs 的绝对路径 |
-| **Log on** | Log on as | `Local System account` | **勾选** `Allow service to interact with desktop` ← 这是 Session 0 关键 |
+| **Log on** | Log on as | `.\oadan`（或你的实际用户名） | **不要用** `Local System account`，否则丢失用户环境（APPDATA/USERPROFILE） |
+| | | **必须勾选** `Allow service to interact with desktop` | 这是 Session 0 下 ConPTY/node-pty 能工作的关键 |
 | **Process** | Console window | ✅ `Create console window` | 这是解决 Session 0 死锁的关键 |
 | | Priority | `Normal` | 默认即可 |
 | | Affinity | All | 默认即可 |
@@ -361,17 +362,15 @@ nssm install $serviceName C:\Program Files\nodejs\node.exe
 nssm set $serviceName AppDirectory C:\D\opt\agents-to-im
 nssm set $serviceName AppParameters C:\D\opt\agents-to-im\dist\daemon.mjs
 
-# 3. 关键！允许服务与桌面交互（解决 Session 0 死锁）
-nssm set $serviceName Type SERVICE_WIN32_OWN_PROCESS + SERVICE_INTERACTIVE_PROCESS
-
-# 4. 日志路径（路径必须先存在！）
+# 3. 日志路径（路径必须先存在！）
 mkdir C:\Users\你的用户名\.agents-to-im\logs -Force
 nssm set $serviceName AppStdout C:\Users\你的用户名\.agents-to-im\logs\hermes-stdout.log
 nssm set $serviceName AppStderr C:\Users\你的用户名\.agents-to-im\logs\hermes-stderr.log
 nssm set $serviceName AppStdoutCreationDisposition 4  # 覆盖而非追加
 nssm set $serviceName AppStderrCreationDisposition 4
 
-# 5. 环境变量（把 config.env 的内容全部设进去）
+# 4. 环境变量（必须用 REG_MULTI_SZ，一行一个变量）
+#    ❌ 不要用 foreach + nssm set AppEnvironment，会把所有变量拼成一条
 $envVars = @(
   "CTI_BOT=hermes",
   "CTI_DEFAULT_RUNTIME=hermes",
@@ -379,20 +378,27 @@ $envVars = @(
   "CTI_DEFAULT_WORKDIR=C:\D\opt",
   "APPDATA=C:\Users\你的用户名\AppData\Roaming",
   "USERPROFILE=C:\Users\你的用户名",
-  "PATH=C:\Windows\System32;C:\Program Files\nodejs"  # 关键！确保 node 和 nssm 能找到子进程
+  "PATH=C:\Windows\System32;C:\Program Files\nodejs"
 )
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName\Parameters" -Name AppEnvironmentExtra -Type MultiString -Value $envVars
 
-foreach ($env in $envVars) {
-  nssm set $serviceName AppEnvironment $env
-}
-
-# 6. 设置自动重启
+# 5. 设置自动重启
 nssm set $serviceName AppExit Default Restart
 nssm set $serviceName AppRestartDelay 1000
 nssm set $serviceName AppThrottle 60000
 
-# 7. 设置启动类型为自动
+# 6. 设置启动类型为自动
 Set-Service -Name $serviceName -StartupType Automatic
+
+# 7. 关键！启用交互式服务（解决 Session 0 下 ConPTY 失败）
+#    ⚠️ nssm 不支持 set Type，必须直接改注册表
+#    当前 Type=0x10 (SERVICE_WIN32_OWN_PROCESS)
+#    需要改为 0x110 (SERVICE_WIN32_OWN_PROCESS | SERVICE_INTERACTIVE_PROCESS)
+reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\$serviceName" /v Type /t REG_DWORD /d 0x110 /f
+
+# 8. 验证修改
+Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName" -Name Type
+# 期望输出: Type : 272 (0x110)
 ```
 
 ### 第三步：Session 0 隔离的核心坑点（划重点）
@@ -412,11 +418,13 @@ Windows Session 0（服务运行的隔离环境）没有真实的 `conhost.exe`�
 1. `git status` / `git rev-parse` 等 git 命令（Hermes 的 `coding_system_blocks()`）
 2. `subprocess.run()` 捕获 stdout/stderr 时，句柄继承失败
 3. Windows API `GetConsoleWindow()` 返回 `NULL` 导致无限等待
+4. Codex CLI 内置的 `node-pty` 调用 `CreateFileMappingW` 创建 ConPTY 失败（`os error 5`）
 
 **解决方案**（必须同时满足）：
-1. ✅ NSSM 中勾选 `Allow service to interact with desktop`
+1. ✅ NSSM 中勾选 `Allow service to interact with desktop` —— 或直接修改注册表 `Type=0x110`
 2. ✅ NSSM 中勾选 `Create console window`
 3. ✅ 代码层对 `platform == "acp"` 跳过 git/filesystem 探测（见下文）
+4. ✅ 服务以 `.\oadan` 用户身份运行（不要用 `Local System`，否则丢失 APPDATA/USERPROFILE）
 
 #### ❌ 坑 2：PYTHONUNBUFFERED 不是万能的
 

@@ -337,7 +337,7 @@ nssm install agents-hermes
 | | Startup directory | `C:\D\opt\agents-to-im` | 项目根目录，**绝对路径** |
 | | Arguments | `C:\D\opt\agents-to-im\dist\daemon.mjs` | daemon.mjs 的绝对路径 |
 | **Log on** | Log on as | `.\oadan`（或你的实际用户名） | **不要用** `Local System account`，否则丢失用户环境（APPDATA/USERPROFILE） |
-| | | **必须勾选** `Allow service to interact with desktop` | 这是 Session 0 下 ConPTY/node-pty 能工作的关键 |
+| | | 不建议依赖 `Allow service to interact with desktop` | Windows 11 上实测仍运行于 Session 0，不能修复 Codex ConPTY/node-pty |
 | **Process** | Console window | ✅ `Create console window` | 这是解决 Session 0 死锁的关键 |
 | | Priority | `Normal` | 默认即可 |
 | | Affinity | All | 默认即可 |
@@ -390,15 +390,11 @@ nssm set $serviceName AppThrottle 60000
 # 6. 设置启动类型为自动
 Set-Service -Name $serviceName -StartupType Automatic
 
-# 7. 关键！启用交互式服务（解决 Session 0 下 ConPTY 失败）
-#    ⚠️ nssm 不支持 set Type，必须直接改注册表
-#    当前 Type=0x10 (SERVICE_WIN32_OWN_PROCESS)
-#    需要改为 0x110 (SERVICE_WIN32_OWN_PROCESS | SERVICE_INTERACTIVE_PROCESS)
-reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\$serviceName" /v Type /t REG_DWORD /d 0x110 /f
-
-# 8. 验证修改
-Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName" -Name Type
-# 期望输出: Type : 272 (0x110)
+# 7. ⚠️ 原生 shell 需要：通过 Windows Task Scheduler 启动（可选，只用于 shell 执行失败时）
+#    NSSM + Type=0x110 在 Windows 11 实测无效（子进程仍在 Session 0，ConPTY/CreateFileMappingW 仍失败）
+#    方案：创建用户登录触发的计划任务，Action: node.exe dist/daemon.mjs，Principal: LECOO\oadan，LogonType=Interactive
+#    缺点：用户注销后服务停止，不适合 24/7 无人值守生产环境
+#    替代方案：改用 MCP shell（child_process.exec）作为 shell 能力的实现，回避 ConPTY 限制
 ```
 
 ### 第三步：Session 0 隔离的核心坑点（划重点）
@@ -420,11 +416,12 @@ Windows Session 0（服务运行的隔离环境）没有真实的 `conhost.exe`�
 3. Windows API `GetConsoleWindow()` 返回 `NULL` 导致无限等待
 4. Codex CLI 内置的 `node-pty` 调用 `CreateFileMappingW` 创建 ConPTY 失败（`os error 5`）
 
-**解决方案**（必须同时满足）：
-1. ✅ NSSM 中勾选 `Allow service to interact with desktop` —— 或直接修改注册表 `Type=0x110`
-2. ✅ NSSM 中勾选 `Create console window`
-3. ✅ 代码层对 `platform == "acp"` 跳过 git/filesystem 探测（见下文）
-4. ✅ 服务以 `.\oadan` 用户身份运行（不要用 `Local System`，否则丢失 APPDATA/USERPROFILE）
+**解决方案**：
+1. ✅ 服务账户使用 `.\oadan`，并显式设置 `APPDATA`、`USERPROFILE` 和 `PATH`
+2. ✅ 环境变量必须以 `REG_MULTI_SZ` 写入 `AppEnvironmentExtra`
+3. ✅ 代码层对 `platform == "acp"` 跳过不必要的 git/filesystem 探测（见下文）
+4. ✅ Codex 需要完整原生 shell 时，使用 Task Scheduler 的 `InteractiveToken` 在用户 Session 中启动；NSSM 的 `SERVICE_INTERACTIVE_PROCESS` 在 Windows 11 实测不能把子进程移出 Session 0
+5. ✅ 需要注销后仍 24/7 运行时，保留 NSSM 并使用 MCP shell（`child_process.exec`）实现 shell 能力
 
 #### ❌ 坑 2：PYTHONUNBUFFERED 不是万能的
 

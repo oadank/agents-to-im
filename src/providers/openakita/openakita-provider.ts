@@ -96,6 +96,10 @@ export class OpenAkitaProvider implements LLMProvider {
       async start(controller) {
         try {
           await self.runTask(controller, params);
+          // 正常完成：必须发 done 事件并 close stream，否则 conversation-engine
+          // 的 reader 永远等不到结束，会话锁不释放，后续消息全部被 "busy" 挡掉
+          emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
+          controller.close();
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           console.error('[openakita-provider] streamChat error:', e);
@@ -126,6 +130,7 @@ export class OpenAkitaProvider implements LLMProvider {
       rtLog(`[openakita-provider] runTask: exe=${this.executable} cwd=${cwd}`);
       rtLog(`[openakita-provider] task length=${task.length}`);
       this.thinkingLines = [];
+      this.lastSentBoxLen = 0;
 
       // 构造命令参数，复用 wrapper 的调用方式
       const args = ['--auto-confirm'];
@@ -136,6 +141,8 @@ export class OpenAkitaProvider implements LLMProvider {
 
       const env: NodeJS.ProcessEnv = {
         ...process.env,
+        // 关键：Python 进程管道输出默认块缓冲，必须无缓冲才能实时流式
+        PYTHONUNBUFFERED: '1',
         PYTHONIOENCODING: 'utf-8',
         PYTHONUTF8: '1',
         OPENAKITA_WORKSPACE: this.workspace,
@@ -153,6 +160,11 @@ export class OpenAkitaProvider implements LLMProvider {
       let stderrBuf = '';
       let lineBuf = '';
       let sessionStarted = false;
+      // 任务结果 box 状态机：box 内文本实时发送（不再等进程结束）
+      let inResultBox = false;
+      let resultBoxType: 'complete' | 'error' | null = null;
+      let boxLines: string[] = [];
+      let sentResultText = false;
 
       const settle = (err?: string) => {
         if (settled) return;
@@ -196,6 +208,44 @@ export class OpenAkitaProvider implements LLMProvider {
             if (this.handleReActLogLine(line, controller)) continue;
             continue;
           }
+          if (line.startsWith('┌')) {
+            // 任务完成/失败 box 开始
+            if (line.includes('任务完成')) {
+              inResultBox = true;
+              resultBoxType = 'complete';
+              boxLines = [];
+            } else if (line.includes('任务失败')) {
+              inResultBox = true;
+              resultBoxType = 'error';
+              boxLines = [];
+            }
+            continue;
+          }
+          if (line.startsWith('│') && inResultBox) {
+            // box 内容行：剥掉 │ 与 padding
+            const content = line.replace(/^│/, '').replace(/│$/, '').trim();
+            if (content) {
+              boxLines.push(content);
+              // 实时发送：有内容就立即推给前端（累积发送，避免逐字符刷屏）
+              this.emitResultTextProgress(controller, boxLines.join('\n'), resultBoxType);
+            }
+            continue;
+          }
+          if (line.startsWith('└') && inResultBox) {
+            // box 结束：文本已通过增量实时发送；仅当失败且内容明确是错误信息时补发 error 事件
+            if (resultBoxType === 'error' && !sentResultText) {
+              const errText = boxLines.join('\n').trim();
+              // OpenAkita 有时把含正常思考内容的回复标记为"任务失败"box，
+              // 只有内容以"错误:"/"Error"开头才视为真错误，否则当正常文本
+              if (errText && (errText.startsWith('错误') || errText.startsWith('Error') || errText.includes('大模型返回异常'))) {
+                sentResultText = true;
+                emitCanonicalTurnEvent(controller, { type: 'error', data: errText });
+              }
+            }
+            inResultBox = false;
+            resultBoxType = null;
+            continue;
+          }
           if (line.startsWith('┌') || line.startsWith('└') || line.startsWith('│') || line.startsWith('─')) {
             continue;
           }
@@ -230,8 +280,8 @@ export class OpenAkitaProvider implements LLMProvider {
         if (stderrBuf.trim()) {
           rtLog(`[openakita-provider] STDERR TAIL: ${stderrBuf.slice(-1500)}`);
         }
-        // 兜底：从 stdout 提取最终回复文本
-        if (!sessionStarted && stdoutBuf.trim()) {
+        // 兜底：从 stdout 提取最终回复文本（仅当 box 未实时发送过）
+        if (!sessionStarted && stdoutBuf.trim() && this.lastSentBoxLen === 0) {
           const extracted = this.extractFallbackText(stdoutBuf);
           if (extracted) {
             emitCanonicalTurnEvent(controller, {
@@ -267,6 +317,8 @@ export class OpenAkitaProvider implements LLMProvider {
   }
 
   /** 解析 OpenAkita 日志行中的 ReAct 推理 / IntentTag 意图 / 工具调用痕迹 */
+  private pendingTools: { toolUseId: string; toolName: string }[] = [];
+
   private handleReActLogLine(
     line: string,
     controller: ReadableStreamDefaultController<string>,
@@ -285,7 +337,9 @@ export class OpenAkitaProvider implements LLMProvider {
       }
       if (tools) {
         thought += `，调用工具 [${tools}]`;
-        // 工具调用事件：先 running（加入工具列表）再 completed（标记完成）
+        // 先完成上一轮的工具（真实时序：上一批工具已在两轮迭代间执行完毕）
+        this.completePendingTools(controller);
+        // 本轮工具标记 running
         const toolNames = tools.split(',').map((t) => t.trim()).filter(Boolean);
         for (const toolName of toolNames) {
           const toolUseId = `openakita:${iter}:${toolName}`;
@@ -300,17 +354,11 @@ export class OpenAkitaProvider implements LLMProvider {
               source: 'openakita',
             }),
           });
-          emitCanonicalTurnEvent(controller, {
-            type: 'activity_event',
-            data: JSON.stringify({
-              kind: 'tool_activity',
-              toolUseId,
-              toolName,
-              status: 'completed',
-              source: 'openakita',
-            }),
-          });
+          this.pendingTools.push({ toolUseId, toolName });
         }
+      } else if (decision === 'final_answer') {
+        // 决策完成：所有之前 pending 的工具已完成
+        this.completePendingTools(controller);
       }
       this.emitReasoning(thought, controller);
       return true;
@@ -321,6 +369,9 @@ export class OpenAkitaProvider implements LLMProvider {
     if (intentMatch) {
       const intent = intentMatch[1].trim();
       const hasTools = intentMatch[2].trim();
+      // 提取 text_preview（模型决策时的真实文本预览，作为思考内容）
+      const previewMatch = line.match(/text_preview="([^"]*)"/);
+      const preview = previewMatch ? previewMatch[1].trim() : '';
       // 工具调用痕迹：显示意图与工具状态
       let thought = `意图分析：${intent}`;
       if (hasTools === 'True') {
@@ -332,6 +383,10 @@ export class OpenAkitaProvider implements LLMProvider {
         }
       } else {
         thought += '，直接回复';
+      }
+      // 追加真实思考内容（text_preview）
+      if (preview && preview !== '...' && !preview.includes('No intent tag')) {
+        thought += `\n思考：${preview}`;
       }
       this.emitReasoning(thought, controller);
       return true;
@@ -346,11 +401,57 @@ export class OpenAkitaProvider implements LLMProvider {
     // [TaskMonitor] Task completed — 任务完成
     const doneMatch = line.match(/\[TaskMonitor\]\s*Task completed:.*?duration=([\d.]+)s,\s*iterations=(\d+)/);
     if (doneMatch) {
+      this.completePendingTools(controller);
       this.emitReasoning(`任务完成，耗时 ${doneMatch[1]}s，共 ${doneMatch[2]} 轮推理`, controller);
       return true;
     }
 
+    // 任务失败兜底：也完成 pending 工具
+    const failedMatch = line.match(/\[TaskMonitor\]\s*Task completed:.*?success=False/);
+    if (failedMatch) {
+      this.completePendingTools(controller);
+    }
+
     return false;
+  }
+
+  /** 将 pending 中的工具标记为已完成 */
+  private completePendingTools(controller: ReadableStreamDefaultController<string>): void {
+    for (const tool of this.pendingTools) {
+      emitCanonicalTurnEvent(controller, {
+        type: 'activity_event',
+        data: JSON.stringify({
+          kind: 'tool_activity',
+          toolUseId: tool.toolUseId,
+          toolName: tool.toolName,
+          status: 'completed',
+          source: 'openakita',
+        }),
+      });
+    }
+    this.pendingTools = [];
+  }
+
+  /** 增量发送 box 文本（text 事件是追加语义，只能发新增部分） */
+  private lastSentBoxLen = 0;
+
+  private emitResultTextProgress(
+    controller: ReadableStreamDefaultController<string>,
+    fullText: string,
+    boxType: 'complete' | 'error' | null,
+  ): void {
+    if (!fullText) return;
+    // 增量：只发送比上次多的部分
+    if (fullText.length > this.lastSentBoxLen) {
+      const delta = fullText.slice(this.lastSentBoxLen);
+      this.lastSentBoxLen = fullText.length;
+      if (boxType === 'error') {
+        // 错误文本也走 text 通道，但标记前缀，避免和正常回复混淆
+        emitCanonicalTurnEvent(controller, { type: 'text', data: delta });
+      } else {
+        emitCanonicalTurnEvent(controller, { type: 'text', data: delta });
+      }
+    }
   }
 
   /** 去重发送 reasoning 状态（累积完整思考链，preview 卡片只保留最后一条，需要发送全链才能看到过程） */

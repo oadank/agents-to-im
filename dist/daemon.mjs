@@ -132259,6 +132259,8 @@ var OpenAkitaProvider = class {
       async start(controller) {
         try {
           await self2.runTask(controller, params2);
+          emitCanonicalTurnEvent(controller, { type: "done", data: "" });
+          controller.close();
         } catch (e2) {
           const message = e2 instanceof Error ? e2.message : String(e2);
           console.error("[openakita-provider] streamChat error:", e2);
@@ -132283,6 +132285,7 @@ ${userPrompt}`;
       rtLog8(`[openakita-provider] runTask: exe=${this.executable} cwd=${cwd}`);
       rtLog8(`[openakita-provider] task length=${task.length}`);
       this.thinkingLines = [];
+      this.lastSentBoxLen = 0;
       const args = ["--auto-confirm"];
       if (cwd && fs20.existsSync(cwd)) {
         args.push("--cwd", cwd);
@@ -132290,6 +132293,8 @@ ${userPrompt}`;
       args.push("run", task);
       const env = {
         ...process.env,
+        // 关键：Python 进程管道输出默认块缓冲，必须无缓冲才能实时流式
+        PYTHONUNBUFFERED: "1",
         PYTHONIOENCODING: "utf-8",
         PYTHONUTF8: "1",
         OPENAKITA_WORKSPACE: this.workspace
@@ -132305,6 +132310,10 @@ ${userPrompt}`;
       let stderrBuf = "";
       let lineBuf = "";
       let sessionStarted = false;
+      let inResultBox = false;
+      let resultBoxType = null;
+      let boxLines = [];
+      let sentResultText = false;
       const settle = (err) => {
         if (settled) return;
         settled = true;
@@ -132338,6 +132347,38 @@ ${userPrompt}`;
             if (this.handleReActLogLine(line, controller)) continue;
             continue;
           }
+          if (line.startsWith("\u250C")) {
+            if (line.includes("\u4EFB\u52A1\u5B8C\u6210")) {
+              inResultBox = true;
+              resultBoxType = "complete";
+              boxLines = [];
+            } else if (line.includes("\u4EFB\u52A1\u5931\u8D25")) {
+              inResultBox = true;
+              resultBoxType = "error";
+              boxLines = [];
+            }
+            continue;
+          }
+          if (line.startsWith("\u2502") && inResultBox) {
+            const content = line.replace(/^│/, "").replace(/│$/, "").trim();
+            if (content) {
+              boxLines.push(content);
+              this.emitResultTextProgress(controller, boxLines.join("\n"), resultBoxType);
+            }
+            continue;
+          }
+          if (line.startsWith("\u2514") && inResultBox) {
+            if (resultBoxType === "error" && !sentResultText) {
+              const errText = boxLines.join("\n").trim();
+              if (errText && (errText.startsWith("\u9519\u8BEF") || errText.startsWith("Error") || errText.includes("\u5927\u6A21\u578B\u8FD4\u56DE\u5F02\u5E38"))) {
+                sentResultText = true;
+                emitCanonicalTurnEvent(controller, { type: "error", data: errText });
+              }
+            }
+            inResultBox = false;
+            resultBoxType = null;
+            continue;
+          }
           if (line.startsWith("\u250C") || line.startsWith("\u2514") || line.startsWith("\u2502") || line.startsWith("\u2500")) {
             continue;
           }
@@ -132365,7 +132406,7 @@ ${userPrompt}`;
         if (stderrBuf.trim()) {
           rtLog8(`[openakita-provider] STDERR TAIL: ${stderrBuf.slice(-1500)}`);
         }
-        if (!sessionStarted && stdoutBuf.trim()) {
+        if (!sessionStarted && stdoutBuf.trim() && this.lastSentBoxLen === 0) {
           const extracted = this.extractFallbackText(stdoutBuf);
           if (extracted) {
             emitCanonicalTurnEvent(controller, {
@@ -132403,6 +132444,7 @@ ${userPrompt}`;
     });
   }
   /** 解析 OpenAkita 日志行中的 ReAct 推理 / IntentTag 意图 / 工具调用痕迹 */
+  pendingTools = [];
   handleReActLogLine(line, controller) {
     const reactMatch = line.match(/\[ReAct-Stream\]\s*Iter\s+(\d+)\s*[—\-–]\s*decision=([^,]+),\s*tools=\[([^\]]*)\]/);
     if (reactMatch) {
@@ -132417,6 +132459,7 @@ ${userPrompt}`;
       }
       if (tools) {
         thought += `\uFF0C\u8C03\u7528\u5DE5\u5177 [${tools}]`;
+        this.completePendingTools(controller);
         const toolNames = tools.split(",").map((t) => t.trim()).filter(Boolean);
         for (const toolName of toolNames) {
           const toolUseId = `openakita:${iter}:${toolName}`;
@@ -132431,17 +132474,10 @@ ${userPrompt}`;
               source: "openakita"
             })
           });
-          emitCanonicalTurnEvent(controller, {
-            type: "activity_event",
-            data: JSON.stringify({
-              kind: "tool_activity",
-              toolUseId,
-              toolName,
-              status: "completed",
-              source: "openakita"
-            })
-          });
+          this.pendingTools.push({ toolUseId, toolName });
         }
+      } else if (decision === "final_answer") {
+        this.completePendingTools(controller);
       }
       this.emitReasoning(thought, controller);
       return true;
@@ -132450,6 +132486,8 @@ ${userPrompt}`;
     if (intentMatch) {
       const intent = intentMatch[1].trim();
       const hasTools = intentMatch[2].trim();
+      const previewMatch = line.match(/text_preview="([^"]*)"/);
+      const preview = previewMatch ? previewMatch[1].trim() : "";
       let thought = `\u610F\u56FE\u5206\u6790\uFF1A${intent}`;
       if (hasTools === "True") {
         thought += "\uFF0C\u9700\u8981\u8C03\u7528\u5DE5\u5177";
@@ -132460,6 +132498,10 @@ ${userPrompt}`;
       } else {
         thought += "\uFF0C\u76F4\u63A5\u56DE\u590D";
       }
+      if (preview && preview !== "..." && !preview.includes("No intent tag")) {
+        thought += `
+\u601D\u8003\uFF1A${preview}`;
+      }
       this.emitReasoning(thought, controller);
       return true;
     }
@@ -132469,10 +132511,45 @@ ${userPrompt}`;
     }
     const doneMatch = line.match(/\[TaskMonitor\]\s*Task completed:.*?duration=([\d.]+)s,\s*iterations=(\d+)/);
     if (doneMatch) {
+      this.completePendingTools(controller);
       this.emitReasoning(`\u4EFB\u52A1\u5B8C\u6210\uFF0C\u8017\u65F6 ${doneMatch[1]}s\uFF0C\u5171 ${doneMatch[2]} \u8F6E\u63A8\u7406`, controller);
       return true;
     }
+    const failedMatch = line.match(/\[TaskMonitor\]\s*Task completed:.*?success=False/);
+    if (failedMatch) {
+      this.completePendingTools(controller);
+    }
     return false;
+  }
+  /** 将 pending 中的工具标记为已完成 */
+  completePendingTools(controller) {
+    for (const tool of this.pendingTools) {
+      emitCanonicalTurnEvent(controller, {
+        type: "activity_event",
+        data: JSON.stringify({
+          kind: "tool_activity",
+          toolUseId: tool.toolUseId,
+          toolName: tool.toolName,
+          status: "completed",
+          source: "openakita"
+        })
+      });
+    }
+    this.pendingTools = [];
+  }
+  /** 增量发送 box 文本（text 事件是追加语义，只能发新增部分） */
+  lastSentBoxLen = 0;
+  emitResultTextProgress(controller, fullText, boxType) {
+    if (!fullText) return;
+    if (fullText.length > this.lastSentBoxLen) {
+      const delta = fullText.slice(this.lastSentBoxLen);
+      this.lastSentBoxLen = fullText.length;
+      if (boxType === "error") {
+        emitCanonicalTurnEvent(controller, { type: "text", data: delta });
+      } else {
+        emitCanonicalTurnEvent(controller, { type: "text", data: delta });
+      }
+    }
   }
   /** 去重发送 reasoning 状态（累积完整思考链，preview 卡片只保留最后一条，需要发送全链才能看到过程） */
   thinkingLines = [];

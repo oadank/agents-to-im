@@ -7,3 +7,13 @@ config.env
 .hello-cc/mesh.db
 SKILL.md
 dist/daemon.mjs
+debug_*.log
+
+# 运行日志与临时文件
+pm2_*.log
+*.log
+*.bak
+*.bak.*
+test_msg.json
+tsconfig.tsbuildinfo
+nssm.exe

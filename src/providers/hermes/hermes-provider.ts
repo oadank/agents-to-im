@@ -21,6 +21,7 @@
 import { HermesAppServerClient, type HermesServerMessage } from './hermes-app-server-client.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
+import { LARK_CLI_INSTRUCTIONS } from '../../config/runtime-configs.js';
 import fs from 'node:fs';
 
 function rtLog(msg: string): void {
@@ -202,7 +203,7 @@ export class HermesProvider implements LLMProvider {
             cwd: params.workingDirectory || this.workingDirectory,
             mcpServers: [],
             provider: 'custom:litellm',
-            model: 'MiMogo',
+            model: 'codex-model',
           });
           sessionId = newSession.sessionId;
           console.log(`[hermes-provider] Session ${sessionId} created (resume failed)`);
@@ -212,7 +213,7 @@ export class HermesProvider implements LLMProvider {
           cwd: params.workingDirectory || this.workingDirectory,
           mcpServers: [],
           provider: 'custom:litellm',
-          model: 'MiMogo',
+          model: 'codex-model',
         });
         sessionId = newSession.sessionId;
         console.log(`[hermes-provider] Session ${sessionId} created`);
@@ -397,6 +398,9 @@ export class HermesProvider implements LLMProvider {
   ): Array<{ type: string; text?: string; image?: string; alt?: string }> {
     const parts: Array<{ type: string; text?: string; image?: string; alt?: string }> = [];
 
+    // 注入语音标签（如果是语音消息）
+    const audioPrefix = params.fromAudio ? '[Audio] ' : '';
+
     // 注入历史（如果需要）
     const history = params.conversationHistory;
     if (history && history.length > 0) {
@@ -406,10 +410,10 @@ export class HermesProvider implements LLMProvider {
         .join('\n\n');
       parts.push({
         type: 'text',
-        text: `以下是之前的对话历史，请继续对话：\n\n${historyText}\n\n---\n\n用户最新消息：\n${params.prompt}`,
+        text: `${LARK_CLI_INSTRUCTIONS}\n以下是之前的对话历史，请继续对话：\n\n${historyText}\n\n---\n用户最新消息：\n${audioPrefix}${params.prompt}`,
       });
     } else {
-      parts.push({ type: 'text', text: params.prompt });
+      parts.push({ type: 'text', text: `${LARK_CLI_INSTRUCTIONS}\n${audioPrefix}${params.prompt}` });
     }
 
     return parts;

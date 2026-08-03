@@ -82,6 +82,7 @@ function getCliVersion(cliPath: string, env?: Record<string, string>): string | 
       timeout: 10_000,
       env: env || buildSubprocessEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     }).trim();
     return result;
   } catch (err: any) {
@@ -103,6 +104,7 @@ function checkRequiredFlags(cliPath: string, env?: Record<string, string>): stri
       timeout: 10_000,
       env: env || buildSubprocessEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
   } catch {
     return [];
@@ -217,7 +219,7 @@ function findAllInPath(): string[] {
   if (process.platform === 'win32') {
     try {
       return parseWindowsWhereClaudeOutput(
-        execSync('where claude', { encoding: 'utf-8', timeout: 3000 }),
+        execSync('where claude', { encoding: 'utf-8', timeout: 3000, windowsHide: true }),
       );
     } catch {
       return [];
@@ -225,7 +227,7 @@ function findAllInPath(): string[] {
   }
   /* node:coverage enable */
   try {
-    return execSync('which -a claude', { encoding: 'utf-8', timeout: 3000 })
+    return execSync('which -a claude', { encoding: 'utf-8', timeout: 3000, windowsHide: true })
       .trim()
       .split('\n')
       .map(s => s.trim())

@@ -2133,6 +2133,7 @@ async function handleMessage(
       storedUserText,
       permissionModeOverride: effectivePlanWorkflowMeta?.permissionMode,
       collaborationModeOverride: resolveCodexCollaborationMode(binding, effectivePlanWorkflowMeta),
+      fromAudio: msg.fromAudio,
       onModeChanged: async (mode) => {
         if (!planAttemptIsCurrent()) return;
         if (isCodexRuntime(binding.codepilotSessionId)) return;

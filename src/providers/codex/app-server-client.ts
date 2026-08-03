@@ -306,6 +306,7 @@ export class CodexAppServerClient {
       '-c', 'sandbox_mode=danger-full-access',
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
       env: {
         ...process.env,
         HOME: os.homedir(),

@@ -28,6 +28,17 @@ export interface SenderIdentity {
   type: MemberIdType;
 }
 
+export interface FeishuMention {
+  key: string;
+  id: {
+    open_id?: string;
+    union_id?: string;
+    user_id?: string;
+  };
+  name?: string;
+  tenant_key?: string;
+}
+
 export interface FeishuMessageEventData {
   sender: {
     sender_id?: {
@@ -48,6 +59,8 @@ export interface FeishuMessageEventData {
     content: string;
     create_time: string;
   };
+  /** Mentions present in the message text (only for group messages with @) */
+  mentions?: FeishuMention[];
 }
 
 export interface FeishuChatUpdatedEventData {
@@ -167,6 +180,7 @@ export interface AdapterContext {
   readonly channelType: ChannelType;
   readonly profileId: string;
   readonly label: string;
+  readonly botOpenId: string | null;
   getStore(): JsonFileStore;
   getLarkClient(): LarkClient;
   getPreviewService(): PreviewService;

@@ -436,6 +436,7 @@ export interface StreamChatParams {
   onRuntimeStatusChange?: (status: string) => void;
   onModeChanged?: (mode: ClaudePermissionMode) => void;
   collaborationMode?: 'plan' | 'default';
+  fromAudio?: boolean;
 }
 
 export interface LLMProvider {

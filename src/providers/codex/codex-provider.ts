@@ -18,6 +18,7 @@ import {
   type PermissionResolution,
 } from '../claude/permission-gateway.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
+import { LARK_CLI_INSTRUCTIONS } from '../../config/runtime-configs.js';
 
 const MIME_EXT: Record<string, string> = {
   'image/png': '.png',
@@ -171,13 +172,13 @@ function mapTokenUsage(breakdown: TokenUsageBreakdown | undefined): {
 function buildCollaborationMode(
   mode: 'plan' | 'default',
   model: string,
-): { mode: 'plan' | 'default'; settings: { model: string; reasoning_effort: null; developer_instructions: null } } {
+): { mode: 'plan' | 'default'; settings: { model: string; reasoning_effort: null; developer_instructions: string } } {
   return {
     mode,
     settings: {
       model,
       reasoning_effort: null,
-      developer_instructions: null,
+      developer_instructions: LARK_CLI_INSTRUCTIONS,
     },
   };
 }
@@ -558,8 +559,15 @@ async function buildUserInput(
   prompt: string,
   files: StreamChatParams['files'],
   history?: Array<{ role: 'user' | 'assistant'; content: string }> | undefined,
+  fromAudio?: boolean,
 ): Promise<{ input: Array<Record<string, unknown>>; tempFiles: string[] }> {
   const tempFiles: string[] = [];
+
+  // 注入语音标签（如果是语音消息）
+  const audioPrefix = fromAudio ? '[Audio] ' : '';
+
+  // 注入 LARK_CLI_INSTRUCTIONS 系统提示（与其他 provider 一致）
+  const systemPrefix = `${LARK_CLI_INSTRUCTIONS}\n\n`;
 
   // If history is provided (session lost), inject as context
   let effectivePrompt = prompt;
@@ -567,14 +575,16 @@ async function buildUserInput(
     const historyText = history
       .map((msg) => `${msg.role === 'user' ? '用户' : '助手'}：${msg.content}`)
       .join('\n\n');
-    effectivePrompt = `以下是之前的对话历史，请继续对话：
+    effectivePrompt = `${systemPrefix}以下是之前的对话历史，请继续对话：
 
 ${historyText}
 
 ---
 
 用户最新消息：
-${prompt}`;
+${audioPrefix}${prompt}`;
+  } else {
+    effectivePrompt = `${systemPrefix}${audioPrefix}${prompt}`;
   }
 
   const input: Array<Record<string, unknown>> = [toTextInput(effectivePrompt)];
@@ -721,6 +731,7 @@ export class CodexProvider implements LLMProvider {
         params.prompt,
         params.files,
         needsHistoryInjection ? params.conversationHistory : undefined,
+        params.fromAudio,
       );
       tempFiles.push(...createdTemps);
 

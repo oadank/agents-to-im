@@ -16,8 +16,19 @@
 import { GeminiAppServerClient, type GeminiServerMessage } from './gemini-app-server-client.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
+import { LARK_CLI_INSTRUCTIONS } from '../../config/runtime-configs.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 type JsonRecord = Record<string, unknown>;
+
+function rtLog(msg: string): void {
+  const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'gemini'}.log`;
+  try {
+    fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`, 'utf-8');
+  } catch {}
+}
 
 // ── Gemini ACP types ────────────────────────────────────────────────────────
 
@@ -73,6 +84,7 @@ export interface GeminiConfig {
   acpArgs?: string[];
   apiKey?: string;
   baseUrl?: string;
+  modelGroup?: string;
   workingDirectory?: string;
 }
 
@@ -83,24 +95,40 @@ export class GeminiProvider implements LLMProvider {
   private readonly baseUrl: string;
   private readonly cliPath: string;
   private readonly acpArgs: string[];
+  private readonly modelGroup: string;
   private readonly workingDirectory: string;
-  // 累积缓冲区：用于处理跨 chunk 的 <think> 标签
+  // 累积缓冲区：用于处理跨 chunk 的  thinking 标签
   private thinkingBuffer = '';
 
   constructor(config?: GeminiConfig) {
     this.apiKey = config?.apiKey || process.env.CTI_GEMINI_API_KEY || process.env.LITELLM_API_KEY || 'sk-200418';
     this.baseUrl = config?.baseUrl || process.env.CTI_GEMINI_BASE_URL || 'http://127.0.0.1:4000';
     this.cliPath = config?.cliPath || process.env.CTI_GEMINI_CLI_PATH || 'gemini';
+    // 优先从 settings.json 读取模型名，其次从环境变量，最后用默认值
+    this.modelGroup = config?.modelGroup || this.readModelFromSettings() || process.env.CTI_BOT_GEMINI_MODEL_GROUP || 'gemini-model';
     // 添加 --include-directories 让 gemini-cli 可以访问更多目录
     const includeDirs = process.platform === 'win32'
       ? '--include-directories=C:\\,C:\\Users,C:\\D'
       : '--include-directories=/,/root,/opt,/tmp';
-    this.acpArgs = config?.acpArgs || ['--acp', '--yolo', includeDirs];
+    this.acpArgs = config?.acpArgs || ['--acp', '--yolo', '--model', this.modelGroup, includeDirs];
     // Windows 上使用 Windows 路径，默认为用户目录
     const defaultWorkDir = process.platform === 'win32'
       ? (process.env.CTI_GEMINI_WORKING_DIR || 'C:\\Users\\oadan')
       : (process.env.CTI_GEMINI_WORKING_DIR || '/opt');
     this.workingDirectory = config?.workingDirectory || defaultWorkDir;
+  }
+
+  private readModelFromSettings(): string | undefined {
+    try {
+      const settingsPath = path.join(os.homedir(), '.gemini', 'settings.json');
+      if (fs.existsSync(settingsPath)) {
+        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+        return settings.model?.name;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return undefined;
   }
 
   private async ensureClient(): Promise<GeminiAppServerClient> {
@@ -156,8 +184,6 @@ export class GeminiProvider implements LLMProvider {
     this.thinkingBuffer = '';
     const client = await this.ensureClient();
     let unsubscribe: (() => void) | null = null;
-    const queue: GeminiServerMessage[] = [];
-    let wakeQueue: (() => void) | null = null;
 
     try {
       // 创建会话
@@ -168,61 +194,33 @@ export class GeminiProvider implements LLMProvider {
       const sessionId = newSession.sessionId;
       console.log(`[gemini-provider] Session ${sessionId} created (model: ${newSession.models?.currentModelId || 'unknown'})`);
 
-      // 订阅 server notifications
+      // 订阅 server notifications — 直接 emit 到流，不经过 queue（实时反馈）
+      // ACP 协议保证：所有 agent_message_chunk 通知在 session/prompt RPC 响应之前到达
       unsubscribe = client.subscribe((message) => {
         if (extractSessionId(message) !== sessionId) return;
-        queue.push(message);
-        wakeQueue?.();
-        wakeQueue = null;
-      });
 
-      emitCanonicalTurnEvent(controller, {
-        type: 'status',
-        data: { session_id: sessionId },
-      });
-
-      // 发送 prompt
-      const promptInput = this.buildPrompt(params);
-      const result = await client.call<GeminiPromptResult>('session/prompt', {
-        sessionId,
-        prompt: promptInput,
-      });
-
-      // 处理流式 notifications（result 返回后，队列里可能还有攒着的 notifications）
-      const MAX_DRAIN_WAIT_MS = 3000;
-      const drainStart = Date.now();
-      while (true) {
-        if (params.abortController?.signal.aborted) break;
-
-        let message: GeminiServerMessage | null;
-        try {
-          message = await this.readNext(queue, () => {
-            if (wakeQueue) return;
-            wakeQueue = () => {};
-          }, () => {
-            // 队列空且 result 已回：用定时器确保在剩余时间内退出
-            const elapsed = Date.now() - drainStart;
-            if (elapsed >= MAX_DRAIN_WAIT_MS || queue.length > 0) {
-              if (queue.length === 0) return Promise.reject(new Error('drain-done'));
-              return; // 队列有数据，返回 undefined 让 readNext 重新检查
+        // 立即处理 server request
+        if (message.kind === 'request') {
+          if (message.method === 'fs/read_text_file') {
+            const reqParams = message.params as JsonRecord | undefined;
+            const filePath = reqParams?.path ? String(reqParams.path) : '';
+            rtLog(`[gemini-provider] Handling fs/read_text_file request: id=${message.id} path=${filePath}`);
+            try {
+              const content = fs.readFileSync(filePath, 'utf-8');
+              client.respond(message.id, { content }).catch((err) => {
+                console.error('[gemini-provider] Error responding to fs/read_text_file:', err);
+              });
+            } catch (err) {
+              client.respondError(message.id, -32000, `Read failed: ${String(err)}`).catch(() => {});
             }
-            // 创建带超时的等待：剩余时间后自动 reject
-            const remainingMs = MAX_DRAIN_WAIT_MS - elapsed;
-            return new Promise<void>((resolve, reject) => {
-              const timer = setTimeout(() => reject(new Error('drain-done')), remainingMs);
-              wakeQueue = () => {
-                clearTimeout(timer);
-                resolve();
-              };
-            });
-          });
-        } catch (e) {
-          if ((e as Error)?.message === 'drain-done') break;
-          throw e;
+          } else {
+            rtLog(`[gemini-provider] Unhandled server request: id=${message.id} method=${message.method}`);
+            client.respondError(message.id, -32601, `Method not supported: ${message.method}`).catch(() => {});
+          }
+          return;
         }
-        if (!message) continue;
-        if (message.kind === 'request') continue; // 暂不支持 request
 
+        // 处理 notifications — 直接 emit 到流（实时反馈）
         const paramsRecord = (typeof message.params === 'object' && message.params ? message.params as JsonRecord : {});
         const updateType = sessionUpdateType(paramsRecord);
         const update = paramsRecord.update as JsonRecord | undefined;
@@ -237,12 +235,19 @@ export class GeminiProvider implements LLMProvider {
               // 累积到缓冲区
               this.thinkingBuffer += text;
 
-              // 尝试提取完整的 <think> 标签
-              const thinkingMatch = this.thinkingBuffer.match(/<think>([\s\S]*?)<\/think>/);
-              if (thinkingMatch) {
-                // 有完整 <think> 标签：提取思考内容，发送为 reasoning_activity
-                const thinkingText = thinkingMatch[1].trim();
-                const bodyText = this.thinkingBuffer.replace(/<think>[\s\S]*?<\/think>/, '').trim();
+              // 兼容把思考内容嵌入标签的模型响应，避免在源码中写入字面 HTML 标签。
+              const tagStart = String.fromCharCode(60) + 'think' + String.fromCharCode(62);
+              const tagEnd = String.fromCharCode(60) + '/think' + String.fromCharCode(62);
+              const startIndex = this.thinkingBuffer.indexOf(tagStart);
+              const endIndex = this.thinkingBuffer.indexOf(tagEnd, Math.max(startIndex, 0));
+              if (startIndex >= 0 && endIndex >= 0) {
+                const thinkingText = this.thinkingBuffer
+                  .slice(startIndex + tagStart.length, endIndex)
+                  .trim();
+                const bodyText = (
+                  this.thinkingBuffer.slice(0, startIndex) +
+                  this.thinkingBuffer.slice(endIndex + tagEnd.length)
+                ).trim();
                 if (thinkingText) {
                   emitCanonicalTurnEvent(controller, {
                     type: 'activity_event',
@@ -254,15 +259,14 @@ export class GeminiProvider implements LLMProvider {
                     },
                   });
                 }
-                // 清空缓冲区，只保留 <think> 标签之后的文本
-                this.thinkingBuffer = bodyText;
-                // 发送 <think> 标签之后的普通文本
+                this.thinkingBuffer = '';
                 if (bodyText) {
                   emitCanonicalTurnEvent(controller, { type: 'text', data: bodyText });
                 }
-              } else if (this.thinkingBuffer.includes('<think>') && !this.thinkingBuffer.includes('</think>')) {
-                // 不完整的 <think> 标签（思考进行中）：提取思考内容发送，但不发送普通文本
-                const partialThinking = this.thinkingBuffer.replace(/<think>/g, '').trim();
+              } else if (startIndex >= 0) {
+                const partialThinking = this.thinkingBuffer
+                  .slice(startIndex + tagStart.length)
+                  .trim();
                 if (partialThinking) {
                   emitCanonicalTurnEvent(controller, {
                     type: 'activity_event',
@@ -274,12 +278,10 @@ export class GeminiProvider implements LLMProvider {
                     },
                   });
                 }
-              } else if (!this.thinkingBuffer.includes('<think>')) {
-                // 没有 <think> 标签，清空缓冲区并发送普通文本
+              } else {
                 this.thinkingBuffer = '';
                 emitCanonicalTurnEvent(controller, { type: 'text', data: text });
               }
-              // 如果有不完整的 <think> 标签，等待更多内容，不发送任何东西
             }
             break;
           case 'agent_thought_chunk':
@@ -318,7 +320,19 @@ export class GeminiProvider implements LLMProvider {
             // 忽略其他未处理的 update 类型
             break;
         }
-      }
+      });
+
+      emitCanonicalTurnEvent(controller, {
+        type: 'status',
+        data: { session_id: sessionId },
+      });
+
+      // 发送 prompt（RPC 响应到达时，所有流式通知已通过订阅回调 emit）
+      const promptInput = this.buildPrompt(params);
+      const result = await client.call<GeminiPromptResult>('session/prompt', {
+        sessionId,
+        prompt: promptInput,
+      });
 
       // 发送最终 result
       const isError = result.stopReason !== 'end_turn';
@@ -364,6 +378,18 @@ export class GeminiProvider implements LLMProvider {
   ): Array<{ type: string; text?: string }> {
     const parts: Array<{ type: string; text?: string }> = [];
 
+    // 工具使用指令：强制使用 MCP run_bash 而非内置 run_shell_command
+    // 原因：Gemini CLI 内置的 run_shell_command 使用 @lydell/node-pty，
+    // 在 Windows 服务（Session 0）环境下 AttachConsole 失败（error code 5）。
+    // mcp-shell（stdio MCP server，配置在 ~/.gemini/settings.json）提供 run_bash 工具，
+    // 使用 child_process.exec + bash，在 Session 0 下正常工作。
+    const toolInstruction =
+      '【工具使用规则】执行 shell 命令时，必须使用 MCP 工具 `run_bash`，' +
+      '禁止使用内置的 `run_shell_command`（当前 Windows 服务环境下会因 AttachConsole 失败而报错 code 5）。\n\n';
+
+    // 注入语音标签（如果是语音消息）
+    const audioPrefix = params.fromAudio ? '[Audio] ' : '';
+
     // 注入历史（如果需要）
     const history = params.conversationHistory;
     if (history && history.length > 0) {
@@ -373,24 +399,13 @@ export class GeminiProvider implements LLMProvider {
         .join('\n\n');
       parts.push({
         type: 'text',
-        text: `以下是之前的对话历史，请继续对话：\n\n${historyText}\n\n---\n\n用户最新消息：\n${params.prompt}`,
+        text: `${toolInstruction}${LARK_CLI_INSTRUCTIONS}\n以下是之前的对话历史，请继续对话：\n\n${historyText}\n\n---\n用户最新消息：\n${audioPrefix}${params.prompt}`,
       });
     } else {
-      parts.push({ type: 'text', text: params.prompt });
+      parts.push({ type: 'text', text: `${toolInstruction}${LARK_CLI_INSTRUCTIONS}\n${audioPrefix}${params.prompt}` });
     }
 
     return parts;
-  }
-
-  private async readNext(
-    queue: GeminiServerMessage[],
-    _arm: () => void,
-    wait: () => Promise<void> | undefined,
-  ): Promise<GeminiServerMessage | null> {
-    if (queue.length > 0) return queue.shift() || null;
-    const w = wait();
-    if (w) await w;
-    return queue.shift() || null;
   }
 }
 

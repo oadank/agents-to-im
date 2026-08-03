@@ -192,6 +192,7 @@ export class ZCodeProvider implements LLMProvider {
     return new Promise<void>((resolve, reject) => {
       const child = spawn('zcode-acp', ['--version'], {
         stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
       });
       child.on('close', (code) => {
         code === 0 ? resolve() : reject(new Error('zcode-acp not available'));
@@ -266,6 +267,7 @@ export class ZCodeProvider implements LLMProvider {
 
     const child = spawn(agentCli.bin, args, {
       cwd, env, stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
 
     emitCanonicalTurnEvent(controller, {

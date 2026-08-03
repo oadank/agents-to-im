@@ -2,12 +2,16 @@ import { Buffer } from 'node:buffer';
 import { spawn } from 'node:child_process';
 import { writeFileSync, unlinkSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import type * as lark from '@larksuiteoapi/node-sdk';
 
 import type { FileAttachment } from '../../bridge/types.js';
 
-const TMP_DIR = '/tmp/agents-to-im-audio';
+const isWin = process.platform === 'win32';
+const TMP_DIR = isWin
+  ? join(tmpdir(), 'agents-to-im-audio')
+  : '/tmp/agents-to-im-audio';
 
 export interface TranscribeResult {
   text: string;
@@ -59,17 +63,24 @@ export class InboundAudioService {
   }
 
   async transcribeAudio(audioPath: string): Promise<TranscribeResult> {
-    const transcribeScript = '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
-    
+    const isWin = process.platform === 'win32';
+    const transcribeScript = isWin
+      ? 'C:\\Users\\oadan\\.openclaw\\workspace\\main\\skills\\voice-engine\\transcribe.ps1'
+      : '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
+
     const startTime = Date.now();
-    
+
     return new Promise((resolve, reject) => {
-      const proc = spawn('bash', [transcribeScript, audioPath], {
-        env: {
-          ...process.env,
-          LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || ''),
-        },
-      });
+      const proc = isWin
+        ? spawn('powershell.exe', ['-NoProfile', '-WindowStyle Hidden', '-ExecutionPolicy Bypass', '-File', transcribeScript, audioPath], {
+            windowsHide: true,
+          })
+        : spawn('bash', [transcribeScript, audioPath], {
+            env: {
+              ...process.env,
+              LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || ''),
+            },
+          });
       
       let stdout = '';
       let stderr = '';
@@ -84,18 +95,18 @@ export class InboundAudioService {
       
       proc.on('close', (code) => {
         const duration_ms = Date.now() - startTime;
-        
-        if (code !== 0) {
-          reject(new Error(`ASR 失败 (code=${code}): ${stderr || stdout}`));
+
+        if (code !== 0 && !stdout.trim()) {
+          reject(new Error(`ASR 进程退出 (code=${code}): ${stderr.slice(0, 500)}`));
           return;
         }
-        
+
         const text = stdout.trim();
-        if (!text || text.startsWith('[转码失败]') || text.startsWith('[ASR 无结果]')) {
-          reject(new Error(`ASR 无结果: ${text}`));
+        if (!text) {
+          reject(new Error(`ASR 无输出`));
           return;
         }
-        
+
         resolve({ text, duration_ms });
       });
       
@@ -108,20 +119,21 @@ export class InboundAudioService {
   async downloadAndTranscribe(messageId: string, fileKey: string): Promise<TranscribeResult> {
     const attachment = await this.downloadInboundAudioAttachment(messageId, fileKey);
     const audioPath = join(TMP_DIR, attachment.name);
-    
-    // 写入临时文件
+
+    // 写入临时文件（保留文件用于调试）
     writeFileSync(audioPath, Buffer.from(attachment.data, 'base64'));
-    
+    console.log(`[voice-debug] 下载完成: ${audioPath}, size=${Buffer.from(attachment.data, 'base64').length} bytes`);
+
     try {
       const result = await this.transcribeAudio(audioPath);
+      console.log(`[voice-debug] 转写成功: "${result.text}"`);
       return result;
+    } catch (error) {
+      console.error(`[voice-debug] 转写失败: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     } finally {
-      // 清理临时文件
-      try {
-        unlinkSync(audioPath);
-      } catch {
-        // 忽略删除失败
-      }
+      // 保留文件用于调试（不删除）
+      console.log(`[voice-debug] 文件保留在: ${audioPath}`);
     }
   }
 }

@@ -10,6 +10,7 @@ import {
   buildHandledClaudePlanExitCard,
 } from '../../runtime/claude-plan-exit.js';
 import { buildHandledPlanCard } from '../cards/index.js';
+import type { RuntimeName } from '../../runtime/types.js';
 import type {
   AdapterContext,
   CardActionResult,
@@ -25,7 +26,7 @@ function createAttemptId(): string {
 
 function enqueuePlanAttempt(
   ctx: AdapterContext,
-  runtime: 'claude' | 'codex',
+  runtime: RuntimeName,
   workflowId: string,
   attemptId: string,
   inbound: InboundMessage,

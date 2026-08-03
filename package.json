@@ -58,7 +58,8 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.81",
     "@larksuiteoapi/node-sdk": "^1.59.0",
     "markdown-it": "^14.1.1",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "ssh2": "^1.17.0"
   },
   "devDependencies": {
     "@types/node": "^22",

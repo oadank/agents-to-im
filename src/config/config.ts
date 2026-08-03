@@ -34,7 +34,7 @@ export interface CompactConfig {
 
 export interface Config {
   defaultWorkDir: string;
-  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' | 'hermes';
+  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' | 'hermes' | 'openakita';
   feishu: FeishuProfileConfig;
   /** 多 bot 配置列表（新格式） */
   bots?: BotConfig[];
@@ -47,7 +47,7 @@ export interface BotConfig {
   name: string;
   appId: string;
   appSecret: string;
-  runtime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' | 'hermes';
+  runtime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' | 'hermes' | 'openakita';
   agentName?: string;
   modelGroup?: string;
   modelProvider?: string;
@@ -148,7 +148,8 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
             : runtimeStr === 'mimo' ? 'mimo'
               : runtimeStr === 'gemini' ? 'gemini'
                 : runtimeStr === 'hermes' ? 'hermes'
-                  : 'claude';
+                  : runtimeStr === 'openakita' ? 'openakita'
+                    : 'claude';
 
     console.log(`[config] Single bot mode: ${name}(${runtime})`);
     return [{
@@ -192,7 +193,8 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
             : runtimeStr === 'mimo' ? 'mimo'
               : runtimeStr === 'gemini' ? 'gemini'
                 : runtimeStr === 'hermes' ? 'hermes'
-                  : 'claude';
+                  : runtimeStr === 'openakita' ? 'openakita'
+                    : 'claude';
 
     bots.push({
       name,
@@ -224,14 +226,15 @@ export function loadConfig(): Config {
   }
 
   const runtimeStr = env.get('CTI_DEFAULT_RUNTIME') || 'claude';
-  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' | 'hermes' =
+  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' | 'hermes' | 'openakita' =
     runtimeStr === 'codex' ? 'codex'
       : runtimeStr === 'openhuman' ? 'openhuman'
         : runtimeStr === 'zcode' ? 'zcode'
           : runtimeStr === 'mimo' ? 'mimo'
             : runtimeStr === 'gemini' ? 'gemini'
               : runtimeStr === 'hermes' ? 'hermes'
-                : 'claude';
+                : runtimeStr === 'openakita' ? 'openakita'
+                  : 'claude';
 
   const bots = parseBotConfigs(env);
   if (bots.length > 0) {

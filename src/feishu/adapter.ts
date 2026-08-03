@@ -1,4 +1,5 @@
 import * as lark from '@larksuiteoapi/node-sdk';
+import fs from 'node:fs';
 
 import type {
   ActivityEvent,
@@ -65,6 +66,16 @@ import {
   replayNativeSessionHistory as replayNativeSessionHistoryWithContext,
 } from './handlers/index.js';
 import { LarkClient } from './lark-client.js';
+
+// 实时日志：绕过 NSSM stdout 缓冲，直接写硬盘
+const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'unknown'}.log`;
+function rtLog(msg: string): void {
+  const time = new Date().toISOString();
+  try {
+    fs.appendFileSync(DEBUG_LOG, `[${time}] ${msg}\n`, 'utf-8');
+  } catch {}
+}
+
 import {
   buildActionCard,
   buildClaudeModeCard,
@@ -148,6 +159,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
   private readonly instanceProfileId: string;
   private static readonly SELF_RENAME_ECHO_TTL_MS = 30_000;
 
+  private botOpenId: string | null = null;
   private running = false;
   private queue: InboundMessage[] = [];
   private waiters: Array<(msg: InboundMessage | null) => void> = [];
@@ -278,6 +290,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       channelType: this.channelType,
       profileId: this.profileId,
       label: this.label,
+      botOpenId: this.botOpenId,
       getStore: this.getStore.bind(this),
       getLarkClient: this.getLarkClient.bind(this),
       getPreviewService: this.getPreviewService.bind(this),
@@ -380,6 +393,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
 
     const { appId, appSecret, domain } = this.getClientConfig();
     this.restClient = new lark.Client({ appId, appSecret, domain });
+    void this.fetchBotOpenId();
 
     const dispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: unknown) => {
@@ -441,6 +455,23 @@ export class FeishuAdapter extends BaseChannelAdapter {
     void this.larkClient.runScopeDiagnostic();
     void this.wsClient.start({ eventDispatcher: dispatcher });
     console.log('[feishu-adapter] Started');
+  }
+
+  private async fetchBotOpenId(): Promise<void> {
+    if (!this.restClient) return;
+    try {
+      const response = await this.restClient.request({
+        url: '/open-apis/bot/v3/info',
+        method: 'GET',
+      }) as { bot?: { open_id?: string } };
+      const openId = response?.bot?.open_id;
+      if (openId) {
+        this.botOpenId = openId;
+        console.log(`[feishu-adapter] Bot open_id: ${openId}`);
+      }
+    } catch (error) {
+      console.warn('[feishu-adapter] Failed to fetch bot open_id:', error);
+    }
   }
 
   async stop(): Promise<void> {
@@ -748,21 +779,25 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return this.inboundImageService.downloadInboundImageAttachment(messageId, imageKey);
   }
 
-  private async downloadAndTranscribe(messageId: string, fileKey: string): Promise<{ text: string }> {
+  private async downloadAndTranscribe(messageId: string, fileKey: string): Promise<{ text: string; noSpeech?: boolean }> {
+    rtLog(`[VOICE-DEBUG] downloadAndTranscribe called with messageId=${messageId}, fileKey=${fileKey}`);
     const client = this.getLarkClient().getClient();
     if (!client?.im?.messageResource?.get) {
+      rtLog(`[VOICE-DEBUG] Feishu audio resource download capability unavailable`);
       throw new Error('Feishu 音频资源下载能力不可用');
     }
-    
+    rtLog(`[VOICE-DEBUG] Client and im.messageResource.get method available`);
+
     // 准备临时目录和文件
     const path = await import('node:path');
     const os = await import('node:os');
-    const fs = await import('node:fs/promises');
-    const nodeFs = await import('node:fs');
+    const fsp = await import('node:fs/promises');
     const tmpDir = path.join(os.tmpdir(), 'feishu-audio');
     const tmpFile = path.join(tmpDir, `${messageId}.opus`);
-    await fs.mkdir(tmpDir, { recursive: true });
+    const wavFile = path.join(tmpDir, `asr_${messageId}.wav`);
+    await fsp.mkdir(tmpDir, { recursive: true });
 
+    rtLog(`[VOICE-DEBUG] Downloading audio resource from messageId=${messageId}, fileKey=${fileKey}`);
     // 使用飞书 API 下载音频文件
     const response = await client.im.messageResource.get({
       params: { type: 'file' as never },  // 音频文件用 file 类型
@@ -771,37 +806,134 @@ export class FeishuAdapter extends BaseChannelAdapter {
         file_key: fileKey,
       },
     });
+    rtLog(`[VOICE-DEBUG] Download response received`);
 
     // 从流读取数据
     const stream = response.getReadableStream();
+    rtLog(`[VOICE-DEBUG] Getting readable stream from response`);
     const chunks: Buffer[] = [];
     for await (const chunk of stream) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
+    rtLog(`[VOICE-DEBUG] Stream read complete, total chunks: ${chunks.length}`);
     const buffer = Buffer.concat(chunks);
-    await fs.writeFile(tmpFile, buffer);
+    await fsp.writeFile(tmpFile, buffer);
+    rtLog(`[VOICE-DEBUG] Audio file written to ${tmpFile}`);
 
-    // 调用 transcribe.ps1/sh 转写
-    const { execSync } = await import('node:child_process');
     const isWin = process.platform === 'win32';
-    const transcribeScript = isWin
-      ? 'C:\\Users\\oadan\\.openclaw\\workspace\\main\\skills\\voice-engine\\transcribe.ps1'
-      : '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
+
+    const cleanup = async () => {
+      rtLog(`[VOICE-DEBUG] Running cleanup: deleting ${tmpFile}, ${wavFile}`);
+      await fsp.unlink(tmpFile).catch(() => {});
+      await fsp.unlink(wavFile).catch(() => {});
+      rtLog(`[VOICE-DEBUG] Cleanup completed`);
+    };
+
     try {
-      const text = execSync(isWin
-        ? `powershell -ExecutionPolicy Bypass -File "${transcribeScript}" "${tmpFile}"`
-        : `bash "${transcribeScript}" "${tmpFile}"`, {
-        encoding: 'utf-8',
-        timeout: 60000,
-        env: isWin
-          ? process.env
-          : { ...process.env, LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || '') },
-      }).trim();
-      // 清理临时文件
-      await fs.unlink(tmpFile).catch(() => {});
-      return { text };
+      let text: string;
+
+      if (isWin) {
+        // Windows: 直接调用 ffmpeg 和 sherpa-onnx-offline.exe（当前稳定方案）
+        rtLog(`[VOICE-DEBUG] Starting Windows audio processing`);
+        const { spawnSync } = await import('node:child_process');
+        const ffmpeg = 'C:\\Users\\oadan\\AppData\\Local\\Microsoft\\WinGet\\Links\\ffmpeg.exe';
+        const sherpaBin = 'C:\\D\\opt\\sherpa-onnx\\bin\\sherpa-onnx-offline.exe';
+        const modelDir = 'C:\\D\\opt\\sherpa-onnx\\models\\sensevoice-int8';
+
+        rtLog(`[VOICE-DEBUG] Executing ffmpeg conversion`);
+        const ffmpegResult = spawnSync(ffmpeg, ['-y', '-i', tmpFile, '-ar', '16000', '-ac', '1', '-f', 'wav', wavFile], {
+          windowsHide: true,
+          timeout: 30000,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        if (ffmpegResult.error || ffmpegResult.status !== 0) {
+          const errorMsg = ffmpegResult.error?.message || ffmpegResult.stderr?.toString() || 'Unknown ffmpeg error';
+          console.error('[feishu-adapter] ffmpeg conversion failed:', errorMsg);
+          rtLog(`[VOICE-DEBUG] ffmpeg conversion failed: ${errorMsg}`);
+          throw new Error('ffmpeg 音频转换失败');
+        }
+        rtLog(`[VOICE-DEBUG] FFmpeg conversion completed`);
+
+        rtLog(`[VOICE-DEBUG] Executing sherpa-onnx recognition via HTTP service`);
+        const startTime = Date.now();
+        const http = await import('node:http');
+        
+        const postData = JSON.stringify({ audioPath: wavFile });
+        const options = {
+          hostname: 'localhost',
+          port: 18790,
+          path: '/transcribe',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData),
+          },
+        };
+
+        const sherpaOutput = await new Promise<string>((resolve, reject) => {
+          const req = http.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+              try {
+                const result = JSON.parse(data);
+                if (result.error) {
+                  reject(new Error(result.error));
+                } else {
+                  resolve(result.text || '');
+                }
+              } catch (e) {
+                reject(new Error(`解析 ASR 响应失败: ${e.message}`));
+              }
+            });
+          });
+          req.on('error', reject);
+          req.write(postData);
+          req.end();
+        });
+
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+        rtLog(`[VOICE-DEBUG] Sherpa-onnx recognition completed (${elapsed}s)`);
+        rtLog(`[VOICE-DEBUG] Sherpa raw output: "${sherpaOutput.substring(0, 200)}"`);
+        text = sherpaOutput;
+
+        // Step 4: 标点恢复 (调用 node 脚本)
+        if (text) {
+          rtLog(`[VOICE-DEBUG] Starting punctuation recovery`);
+          const scriptDir = 'C:\\Users\\oadan\\.openclaw\\workspace\\main\\skills\\voice-engine';
+          const punctResult = spawnSync('node', [path.join(scriptDir, 'add-punctuation.mjs'), text], {
+            windowsHide: true,
+            timeout: 10000,
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+          });
+          if (!punctResult.error && punctResult.status === 0 && punctResult.stdout) {
+            text = punctResult.stdout.trim();
+          }
+          rtLog(`[VOICE-DEBUG] Punctuation recovery completed: "${text.substring(0, 50)}..."`);
+        } else {
+          rtLog(`[VOICE-DEBUG] No text extracted from sherpa output`);
+        }
+      } else {
+        // Linux: 使用 bash 脚本（保持不变）
+        rtLog(`[VOICE-DEBUG] Starting Linux audio processing`);
+        const { execFileSync } = await import('node:child_process');
+        const transcribeScript = '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
+        text = execFileSync('bash', [transcribeScript, tmpFile], {
+          encoding: 'utf-8',
+          timeout: 60000,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || '') },
+        }).trim();
+        rtLog(`[VOICE-DEBUG] Linux audio processing completed: "${text.substring(0, 50)}..."`);
+      }
+
+      await cleanup();
+      rtLog(`[VOICE-DEBUG] downloadAndTranscribe completed successfully, returning text`);
+      return { text, noSpeech: !text.trim() };
     } catch (error) {
-      await fs.unlink(tmpFile).catch(() => {});
+      rtLog(`[VOICE-DEBUG] downloadAndTranscribe caught error: ${error instanceof Error ? error.message : String(error)}`);
+      await cleanup();
       throw error;
     }
   }
@@ -1489,27 +1621,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
   }
 
   private async syncChatName(chatId: string): Promise<void> {
-    if (!this.restClient) return;
-    const chatApi = this.restClient.im?.chat;
-    if (!chatApi?.update) return;
-    // p2p 私聊不支持改名，跳过；旧绑定无 chatType 时也跳过（安全默认）
-    const store = this.getStore();
-    const binding = store.getChannelBinding(this.channelType, chatId, this.profileId);
-    if (!binding || binding.chatType !== 'group') return;
-    const name = this.computeChatDisplayName(chatId);
-    if (!name) return;
-    if (this.knownChatNames.get(chatId) === name) return;
-    try {
-      const response = await chatApi.update({
-        path: { chat_id: chatId },
-        data: { name },
-      });
-      assertLarkOk(response, 'im.chat.update');
-      this.rememberObservedChatName(chatId, name);
-      this.rememberSelfRename(chatId, name);
-    } catch (error: any) {
-      console.warn('[feishu-adapter] Failed to sync chat name:', error);
-    }
+    // Disabled: do not modify group names per user request
+    return;
   }
 
   private extractSenderIdentity(data: FeishuMessageEventData): SenderIdentity | null {

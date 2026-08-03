@@ -8,6 +8,7 @@ import { ZCodeProvider, createZCodeProvider } from './zcode/zcode-provider.js';
 import { MiMoProvider } from './mimo/mimo-provider.js';
 import { GeminiProvider, createGeminiProvider } from './gemini/gemini-provider.js';
 import { HermesProvider, createHermesProvider } from './hermes/hermes-provider.js';
+import { OpenAkitaProvider } from './openakita/openakita-provider.js';
 import { preflightCheck, resolveClaudeCliPath } from './claude/cli-support.js';
 import { PendingApprovals, type PendingPermissions, PendingStructuredInputs } from './claude/permission-gateway.js';
 import {
@@ -18,6 +19,7 @@ import {
   MiMoRuntimeDriver,
   GeminiRuntimeDriver,
   HermesRuntimeDriver,
+  OpenAkitaRuntimeDriver,
   type RuntimeDriver,
 } from '../runtime/driver.js';
 import {
@@ -37,6 +39,7 @@ export class MultiplexLLMProvider implements LLMProvider {
   private mimoProvider: MiMoProvider | null = null;
   private geminiProvider: GeminiProvider | null = null;
   private hermesProvider: HermesProvider | null = null;
+  private openakitaProvider: OpenAkitaProvider | null = null;
   private claudeDriver: ClaudeRuntimeDriver | null = null;
   private codexDriver: CodexRuntimeDriver | null = null;
   private openhumanDriver: OpenHumanRuntimeDriver | null = null;
@@ -44,6 +47,7 @@ export class MultiplexLLMProvider implements LLMProvider {
   private mimoDriver: MiMoRuntimeDriver | null = null;
   private geminiDriver: GeminiRuntimeDriver | null = null;
   private hermesDriver: HermesRuntimeDriver | null = null;
+  private openakitaDriver: OpenAkitaRuntimeDriver | null = null;
   private claudeCliPath: string | null = null;
   private readonly pendingApprovals: PendingApprovals;
   private readonly pendingStructuredInputs: PendingStructuredInputs;
@@ -146,6 +150,12 @@ export class MultiplexLLMProvider implements LLMProvider {
     return this.hermesProvider;
   }
 
+  private async getOpenAkitaProvider(): Promise<OpenAkitaProvider> {
+    if (this.openakitaProvider) return this.openakitaProvider;
+    this.openakitaProvider = new OpenAkitaProvider();
+    return this.openakitaProvider;
+  }
+
   protected async getProvider(runtime: RuntimeName): Promise<LLMProvider> {
     if (runtime === 'codex') return this.getCodexProvider();
     if (runtime === 'openhuman') return this.getOpenHumanProvider();
@@ -153,6 +163,7 @@ export class MultiplexLLMProvider implements LLMProvider {
     if (runtime === 'mimo') return this.getMiMoProvider();
     if (runtime === 'gemini') return this.getGeminiProvider();
     if (runtime === 'hermes') return this.getHermesProvider();
+    if (runtime === 'openakita') return this.getOpenAkitaProvider();
     return this.getClaudeProvider();
   }
 
@@ -216,6 +227,16 @@ export class MultiplexLLMProvider implements LLMProvider {
         );
       }
       return this.hermesDriver;
+    }
+    if (runtime === 'openakita') {
+      if (!this.openakitaDriver) {
+        this.openakitaDriver = new OpenAkitaRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('openakita') as Promise<OpenAkitaProvider>,
+        );
+      }
+      return this.openakitaDriver;
     }
     if (!this.claudeDriver) {
       this.claudeDriver = new ClaudeRuntimeDriver(

@@ -185,6 +185,7 @@ function execBash(command: string, timeoutMs?: number, cwd?: string): ToolResult
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024, // 10MB
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
     return { content: stdout || '(no output)', isError: false };
   } catch (err: unknown) {

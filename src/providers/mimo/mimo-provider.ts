@@ -14,6 +14,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { LARK_CLI_INSTRUCTIONS } from '../../config/runtime-configs.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
@@ -254,7 +255,7 @@ export class MiMoProvider implements LLMProvider {
       emitCanonicalTurnEvent(controller, {
         type: 'status', data: { session_id: sdkSessionId || '' },
       });
-      return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params.conversationHistory);
+      return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio);
     }
 
     // 新建 session
@@ -276,6 +277,7 @@ export class MiMoProvider implements LLMProvider {
     const env = buildSpawnEnv();
     const child = spawn(command, [...args, 'acp', '--hostname', '127.0.0.1', '--cwd', configCwd], {
       cwd, stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
       env,
     });
     rtLog(`[mimo-provider] ACP spawned successfully: pid=${child.pid}`);
@@ -459,7 +461,7 @@ export class MiMoProvider implements LLMProvider {
       return;
     }
 
-    return this.sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, params.conversationHistory);
+    return this.sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio);
   }
 
   /** 处理 ACP 进程的 stdout 数据 */
@@ -670,6 +672,7 @@ export class MiMoProvider implements LLMProvider {
     sdkSessionId: string | undefined,
     abortController: AbortController | undefined,
     conversationHistory?: StreamChatParams['conversationHistory'],
+    fromAudio?: boolean,
   ): Promise<void> {
     rtLog(`[mimo-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
     return new Promise<void>((resolve) => {
@@ -680,7 +683,15 @@ export class MiMoProvider implements LLMProvider {
       cached._inThinking = false;
       cached._textEmitted = false;
       cached.lastUsed = Date.now();
-      cached.pendingRetryPrompt = prompt;
+      // 先增强 prompt（加入 LARK_CLI_INSTRUCTIONS），再存入 pendingRetryPrompt 以便重试时携带
+      let enhancedPrompt = `${LARK_CLI_INSTRUCTIONS}\n\n${prompt}`;
+      if (!sdkSessionId) {
+        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+        if (memory) {
+          enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + prompt;
+        }
+      }
+      cached.pendingRetryPrompt = enhancedPrompt;
       cached.pendingRetryController = controller;
       cached.pendingRetrySdkSessionId = sdkSessionId;
       cached.pendingRetryAbortController = abortController;
@@ -737,11 +748,12 @@ export class MiMoProvider implements LLMProvider {
       };
 
       // 记忆注入
-      let fullPrompt = prompt;
+      const audioPrefix = fromAudio ? '[Audio] ' : '';
+      let fullPrompt = `${LARK_CLI_INSTRUCTIONS}\n\n${audioPrefix}${prompt}`;
       if (!sdkSessionId) {
         const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
         if (memory) {
-          fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n用户消息：' + prompt;
+          fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + audioPrefix + prompt;
         }
       }
 

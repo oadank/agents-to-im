@@ -1,12 +1,18 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type * as lark from '@larksuiteoapi/node-sdk';
 
 import type { ChannelAddress } from '../../bridge/types.js';
 
-const TMP_DIR = '/tmp/agents-to-im-audio';
-const TTS_WRAPPER = '/opt/.claude/skills/voice-engine/tts-wrapper.mjs';
+const isWin = process.platform === 'win32';
+const TMP_DIR = isWin
+  ? join(tmpdir(), 'openclaw')
+  : '/tmp/openclaw';
+const TTS_WRAPPER = isWin
+  ? 'C:\\Users\\oadan\\.openclaw\\workspace\\main\\skills\\voice-engine\\tts-wrapper.mjs'
+  : '/opt/.openclaw/workspace/main/skills/voice-engine/tts-wrapper.mjs';
 
 export interface AudioReplyResult {
   success: boolean;
@@ -25,10 +31,13 @@ export class OutboundAudioService {
    */
   async generateAudio(text: string): Promise<string> {
     return new Promise((resolve, reject) => {
+      const ttsProvider = process.env.CTI_TTS_PROVIDER || 'auto';
       const proc = spawn('node', [TTS_WRAPPER, text], {
+        windowsHide: true,
         env: {
           ...process.env,
           TTS_CHANNEL: 'feishu', // OPUS format for Feishu
+          TTS_PROVIDER: ttsProvider,
         },
       });
 
@@ -49,11 +58,13 @@ export class OutboundAudioService {
           return;
         }
 
-        // TTS wrapper outputs file path to stderr with [TTS_OUTPUT] marker
-        // Format: [TTS_OUTPUT] /tmp/openclaw/小米TTS.opus
-        const pathMatch = stderr.match(/\[TTS_OUTPUT\]\s*(\/tmp\/[^\s\n]+\.(opus|mp3))/);
-        const audioPath = pathMatch ? pathMatch[1] : null;
-
+        // tts-wrapper.mjs outputs file path to stdout (plain path, no marker)
+        // Fallback: stderr with [TTS_OUTPUT] marker for legacy compatibility
+        let audioPath = stdout.trim() || null;
+        if (!audioPath) {
+          const pathMatch = stderr.match(/\[TTS_OUTPUT\]\s*([^\s\n]+\.(opus|mp3))/);
+          audioPath = pathMatch ? pathMatch[1] : null;
+        }
         if (!audioPath || !existsSync(audioPath)) {
           reject(new Error(`TTS output invalid: ${audioPath || 'no path found in stderr'}`));
           return;

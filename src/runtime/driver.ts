@@ -12,6 +12,7 @@ import { ZCodeProvider } from '../providers/zcode/zcode-provider.js';
 import { MiMoProvider } from '../providers/mimo/mimo-provider.js';
 import { GeminiProvider } from '../providers/gemini/gemini-provider.js';
 import { HermesProvider } from '../providers/hermes/hermes-provider.js';
+import { OpenAkitaProvider } from '../providers/openakita/openakita-provider.js';
 import type { RuntimeName } from './types.js';
 import { RUNTIME_CAPABILITIES, type ProviderCapabilities } from './capabilities.js';
 
@@ -270,5 +271,35 @@ export class HermesRuntimeDriver extends BaseRuntimeDriver {
 
   async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
     // Hermes 不支持 session title 存储
+  }
+}
+
+export class OpenAkitaRuntimeDriver extends BaseRuntimeDriver {
+  readonly runtime = 'openakita' as const;
+
+  constructor(
+    store: JsonFileStore,
+    config: Config,
+    private readonly providerLoader: () => Promise<OpenAkitaProvider>,
+  ) {
+    super(store, config, 'openakita');
+  }
+
+  async prepare(): Promise<void> {
+    const provider = await this.providerLoader();
+    await provider.prepare();
+  }
+
+  async streamTurn(params: StreamChatParams): Promise<ReadableStream<string>> {
+    const provider = await this.providerLoader();
+    return provider.streamChat(params);
+  }
+
+  async readSessionTitle(_sessionId: string): Promise<string | null> {
+    return null;
+  }
+
+  async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
+    // OpenAkita 不支持 session title 存储
   }
 }

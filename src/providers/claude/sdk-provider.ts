@@ -25,46 +25,11 @@ import { buildSubprocessEnv } from './cli-support.js';
 import type { PendingPermissions, PendingStructuredInputs } from './permission-gateway.js';
 
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
+import { LARK_CLI_INSTRUCTIONS } from '../../config/runtime-configs.js';
 
 
-// ── Memory injection (since SDK doesn't trigger CLI SessionStart hooks) ──
+// ── Memory injection disabled (use hook mechanism instead) ──
 
-function loadMemoryContent(): string {
-  try {
-    const claudeHome = process.env.CLAUDE_HOME || (process.env.HOME + '/.claude');
-    const settingsPath = claudeHome + '/settings.json';
-    if (!fs.existsSync(settingsPath)) return '';
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    const memDir = settings.autoMemoryDirectory;
-    if (!memDir || !fs.existsSync(memDir)) return '';
-    
-    const parts: string[] = [];
-    // Load MEMORY.md as the index
-    const memFile = memDir + '/MEMORY.md';
-    if (fs.existsSync(memFile)) {
-      parts.push(fs.readFileSync(memFile, 'utf-8'));
-    }
-    // Load key memory files
-    for (const name of ['user_profile.md', 'user_identity.md', 'feedback_behavior_rules.md', 'feedback_no-docker.md', 'project_2026-05-30-debian13-migration.md']) {
-      const fp = memDir + '/' + name;
-      if (fs.existsSync(fp)) {
-        parts.push('\n=== ' + name + ' ===\n' + fs.readFileSync(fp, 'utf-8'));
-      }
-    }
-    return parts.join('\n---\n');
-  } catch { return ''; }
-}
-
-// Cache memory content (load once per process)
-let _cachedMemory: string | undefined;
-function getMemoryContent(): string {
-  if (_cachedMemory === undefined) {
-    _cachedMemory = loadMemoryContent();
-    if (_cachedMemory) console.log('[llm-provider] Memory loaded (' + _cachedMemory.length + ' chars)');
-    else console.log('[llm-provider] No memory loaded');
-  }
-  return _cachedMemory;
-}
 
 // ── Auth/credential-error detection ──
 
@@ -128,8 +93,6 @@ export function isNonClaudeModel(model?: string): boolean {
   return !!model && NON_CLAUDE_MODEL_RE.test(model);
 }
 
-import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
-
 // ── Multi-modal prompt builder ──
 
 type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
@@ -150,6 +113,7 @@ function buildPrompt(
   files?: FileAttachment[],
 ): string | AsyncIterable<{ type: 'user'; message: { role: 'user'; content: unknown[] }; parent_tool_use_id: null; session_id: string }> {
   const imageFiles = files?.filter(f => SUPPORTED_IMAGE_TYPES.has(f.type));
+  // buildPrompt is always a new session → include rules prefix
   if (!imageFiles || imageFiles.length === 0) return CHINESE_THINKING_INSTRUCTION + text;
 
   const contentBlocks: unknown[] = [];
@@ -204,7 +168,8 @@ function buildPromptWithHistory(
       }
     }
 
-    // Then yield the current user message
+    // Then yield the current user message (prefix rules only for first message, i.e. no history)
+    const prefix = (!history || history.length === 0) ? CHINESE_THINKING_INSTRUCTION : '';
     const imageFiles = files?.filter(f => SUPPORTED_IMAGE_TYPES.has(f.type));
     if (imageFiles && imageFiles.length > 0) {
       const contentBlocks: unknown[] = [];
@@ -219,7 +184,7 @@ function buildPromptWithHistory(
         });
       }
       if (text.trim()) {
-        contentBlocks.push({ type: 'text', text: CHINESE_THINKING_INSTRUCTION + text });
+        contentBlocks.push({ type: 'text', text: prefix + text });
       }
       yield {
         type: 'user' as const,
@@ -230,7 +195,7 @@ function buildPromptWithHistory(
     } else {
       yield {
         type: 'user' as const,
-        message: { role: 'user' as const, content: CHINESE_THINKING_INSTRUCTION + text },
+        message: { role: 'user' as const, content: prefix + text },
         parent_tool_use_id: null,
         session_id: '',
       };
@@ -615,7 +580,7 @@ export class SDKLLMProvider implements LLMProvider {
               systemPrompt: {
                 type: 'preset',
                 preset: 'claude_code',
-                append: '1.先想再干 — 不确定就问，不要假设\n2.最简代码 — 能 50 行解决不要 200 行，不加未要求的功能\n3.手术刀式改动 — 只改必须改的，不碰相邻代码\n4.目标驱动 — 定义成功标准，循环验证',
+                append: '1.先想再干 — 不确定就问，不要假设\n2.最简代码 — 能 50 行解决不要 200 行，不加未要求的功能\n3.手术刀式改动 — 只改必须改的，不碰相邻代码\n4.目标驱动 — 定义成功标准，循环验证\n\n' + LARK_CLI_INSTRUCTIONS,
               },
               // Keep local CLI-managed config (for MCPs in `~/.claude.json`),
               // user auth/billing settings, and project overrides aligned with
@@ -738,13 +703,11 @@ export class SDKLLMProvider implements LLMProvider {
             if (needsHistoryInjection) {
               console.log(`[llm-provider] Injecting ${params.conversationHistory!.length} history messages (session lost)`);
             }
-            // Inject memory on new sessions (no sdkSessionId)
+            // Inject memory on new sessions (no sdkSessionId) - disabled, use hook mechanism
             let userPrompt = params.prompt;
-            if (!params.sdkSessionId) {
-              const memory = getMemoryContent();
-              if (memory) {
-                userPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n用户消息：' + params.prompt;
-              }
+            // Inject voice label for audio messages
+            if (params.fromAudio) {
+              userPrompt = '[Audio] ' + userPrompt;
             }
             const prompt = needsHistoryInjection
               ? buildPromptWithHistory(userPrompt, params.conversationHistory, params.files)

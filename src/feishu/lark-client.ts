@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { exec } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -16,19 +17,14 @@ import {
   isNonEmptyString,
 } from './utils.js';
 
-const USER_TOKEN_PATH = path.join(CTI_HOME, 'user-token.json');
-
 export class LarkClient {
   readonly outboundMessageQueues = new Map<string, Promise<void>>();
   readonly lastOutboundMessageAt = new Map<string, number>();
 
   private client: lark.Client | null = null;
-  private userAccessToken: string | null = null;
-  private userRefreshToken: string | null = null;
-  private userTokenExpiresAt: number = 0;
 
   constructor() {
-    this.loadUserToken();
+    // Removed user token loading - now using lark-cli for user identity
   }
 
   getClient(): lark.Client | null {
@@ -44,49 +40,26 @@ export class LarkClient {
   }
 
   getUserAccessToken(): string | null {
-    if (this.userAccessToken && Date.now() < this.userTokenExpiresAt) {
-      return this.userAccessToken;
-    }
+    // Now handled by lark-cli, always return null
     return null;
   }
 
   setUserAccessToken(token: string, refreshToken?: string, expiresIn?: number): void {
-    this.userAccessToken = token;
-    this.userRefreshToken = refreshToken || null;
-    this.userTokenExpiresAt = Date.now() + (expiresIn || 7200) * 1000;
-    this.saveUserToken();
+    // Now handled by lark-cli, do nothing
+    console.warn('[lark-client] setUserAccessToken deprecated, use lark-cli for token management');
   }
 
   clearUserAccessToken(): void {
-    this.userAccessToken = null;
-    this.userRefreshToken = null;
-    this.userTokenExpiresAt = 0;
-    this.saveUserToken();
+    // Now handled by lark-cli, do nothing
+    console.warn('[lark-client] clearUserAccessToken deprecated, use lark-cli for token management');
   }
 
   private loadUserToken(): void {
-    try {
-      const data = JSON.parse(fs.readFileSync(USER_TOKEN_PATH, 'utf-8'));
-      this.userAccessToken = data.accessToken || null;
-      this.userRefreshToken = data.refreshToken || null;
-      this.userTokenExpiresAt = data.expiresAt || 0;
-    } catch {
-      // Token file doesn't exist or is invalid
-    }
+    // Removed - now using lark-cli for token management
   }
 
   private saveUserToken(): void {
-    try {
-      const dir = path.dirname(USER_TOKEN_PATH);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(USER_TOKEN_PATH, JSON.stringify({
-        accessToken: this.userAccessToken,
-        refreshToken: this.userRefreshToken,
-        expiresAt: this.userTokenExpiresAt,
-      }, null, 2), { mode: 0o600 });
-    } catch (error) {
-      console.error('[lark-client] Failed to save user token:', error);
-    }
+    // Removed - now using lark-cli for token management
   }
 
   async sendMessage(
@@ -97,13 +70,14 @@ export class LarkClient {
     requestUuid?: string,
     useUserToken?: boolean,
   ): Promise<LarkMessageResponse> {
+    // When useUserToken is true, delegate to lark-cli which manages its own token
+    if (useUserToken) {
+      return this.sendMessageViaLarkCli(address, msgType, content, replyToMessageId);
+    }
+
     if (!this.client) {
       throw new Error('Feishu client not initialized');
     }
-
-    // Determine which token to use
-    const userToken = useUserToken ? this.getUserAccessToken() : null;
-    const requestOpts = userToken ? lark.withUserAccessToken(userToken) : undefined;
 
     return this.enqueueMessage(address.chatId, async () => {
       const uuid = requestUuid || randomUUID().slice(0, 50);
@@ -119,14 +93,12 @@ export class LarkClient {
                 ...(address.threadId ? { reply_in_thread: true } : {}),
               },
             },
-            requestOpts,
+            undefined,
           );
         } catch (error) {
-          // Check if the error is "message withdrawn" (code 230011)
           const axiosError = error as { response?: { data?: { code?: number } } };
           if (axiosError.response?.data?.code === 230011) {
             console.warn('[feishu-adapter] Reply message was withdrawn, falling back to create new message');
-            // Fall back to creating a new message without reply
             const receiveId = address.threadId || address.chatId;
             const receiveIdType = (address.threadId ? 'thread_id' : 'chat_id') as 'thread_id' | 'chat_id';
             return (this.client!.im.message.create as Function)(
@@ -136,10 +108,10 @@ export class LarkClient {
                   receive_id: receiveId,
                   msg_type: msgType,
                   content,
-                  uuid: randomUUID().slice(0, 50), // New UUID to avoid conflict
+                  uuid: randomUUID().slice(0, 50),
                 },
               },
-              requestOpts,
+              undefined,
             );
           }
           throw error;
@@ -157,8 +129,56 @@ export class LarkClient {
             uuid,
           },
         },
-        requestOpts,
+        undefined,
       );
+    });
+  }
+
+  private sendMessageViaLarkCli(
+    address: ChannelAddress,
+    msgType: 'interactive' | 'post' | 'image',
+    content: string,
+    replyToMessageId?: string,
+  ): Promise<LarkMessageResponse> {
+    return new Promise((resolve, reject) => {
+      const chatId = address.threadId || address.chatId;
+      // lark-cli supports --chat-id and --text. For interactive/post, we pass content as text.
+      // For image, fall back to bot mode (lark-cli doesn't support image send easily)
+      if (msgType === 'image') {
+        reject(new Error('Image messages not supported via lark-cli, use bot mode'));
+        return;
+      }
+
+      const escapedContent = content.replace(/"/g, '\\"');
+      const cmd = `lark-cli im +messages-send --chat-id "${chatId}" --text "${escapedContent}"`;
+
+      exec(cmd, { timeout: 15000, windowsHide: true }, (error, stdout, stderr) => {
+        if (error) {
+          console.warn('[lark-client] lark-cli send failed, falling back to SDK:', stderr?.slice(0, 500));
+          // Fallback: send via bot mode if lark-cli fails
+          this.sendMessage(address, msgType, content, replyToMessageId, undefined, false)
+            .then(resolve)
+            .catch(reject);
+          return;
+        }
+        try {
+          const parsed = JSON.parse(stdout);
+          if (parsed.ok && parsed.data?.message_id) {
+            resolve({
+              code: 0,
+              msg: 'ok',
+              data: {
+                message_id: parsed.data.message_id,
+                open_message_id: parsed.data.open_message_id || '',
+              },
+            });
+          } else {
+            reject(new Error(`lark-cli error: ${JSON.stringify(parsed)}`));
+          }
+        } catch {
+          reject(new Error(`lark-cli returned non-JSON: ${stdout?.slice(0, 200)}`));
+        }
+      });
     });
   }
 

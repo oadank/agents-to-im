@@ -47,13 +47,33 @@ function writeStatus(info: StatusInfo): void {
 }
 
 /** 从 CTI_MCP_* 环境变量同步生成各 agent 的 MCP 配置文件 */
-function generateMcpConfigs(): void {
+function generateMcpConfigs(config: Config): void {
   const mcpServers: Record<string, { url: string }> = {};
-  if (process.env.CTI_MCP_AGENTMEMORY_URL) {
-    mcpServers.agentmemory = { url: process.env.CTI_MCP_AGENTMEMORY_URL };
-  }
-  if (process.env.CTI_MCP_WIKI_URL) {
-    mcpServers.wiki = { url: process.env.CTI_MCP_WIKI_URL };
+  // 从 process.env 或 config.env 读取 MCP URL
+  const mcpUrls = [
+    process.env.CTI_MCP_AGENTMEMORY_URL,
+    process.env.CTI_MCP_WIKI_URL,
+  ].filter(Boolean);
+  // 读 config.env fallback
+  if (mcpUrls.length === 0) {
+    try {
+      const envPath = path.join(CTI_HOME, 'config.env');
+      const envContent = fs.readFileSync(envPath, 'utf-8');
+      for (const line of envContent.split('\n')) {
+        const t = line.trim();
+        if (!t || t.startsWith('#')) continue;
+        const eq = t.indexOf('=');
+        if (eq === -1) continue;
+        const k = t.slice(0, eq).trim();
+        let v = t.slice(eq + 1).trim();
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+        if (k === 'CTI_MCP_AGENTMEMORY_URL' && v) mcpServers.agentmemory = { url: v };
+        if (k === 'CTI_MCP_WIKI_URL' && v) mcpServers.wiki = { url: v };
+      }
+    } catch {}
+  } else {
+    if (process.env.CTI_MCP_AGENTMEMORY_URL) mcpServers.agentmemory = { url: process.env.CTI_MCP_AGENTMEMORY_URL };
+    if (process.env.CTI_MCP_WIKI_URL) mcpServers.wiki = { url: process.env.CTI_MCP_WIKI_URL };
   }
   if (Object.keys(mcpServers).length === 0) return;
 
@@ -96,20 +116,41 @@ function generateMcpConfigs(): void {
     }
   }
 
-  // 3. Gemini CLI: /root/.gemini/settings.json
+  // 3. Gemini CLI: ~/.gemini/settings.json (MCP only — model name managed in settings.json directly)
   try {
-    const geminiSettingsPath = '/root/.gemini/settings.json';
+    const geminiSettingsPath = path.join(os.homedir(), '.gemini', 'settings.json');
     let settings: Record<string, unknown> = {};
     if (fs.existsSync(geminiSettingsPath)) {
       settings = JSON.parse(fs.readFileSync(geminiSettingsPath, 'utf-8'));
     }
-    const mcpServersConfig: Record<string, unknown> = {};
+    // 合并而非覆盖：保留用户手动添加的 MCP server（如 mcp-shell）
+    const existingMcp = typeof settings.mcpServers === 'object' && settings.mcpServers ? settings.mcpServers as Record<string, unknown> : {};
     for (const [name, cfg] of Object.entries(mcpServers)) {
-      mcpServersConfig[name] = { type: 'http', url: cfg.url };
+      existingMcp[name] = { type: 'http', url: cfg.url };
     }
-    settings.mcpServers = mcpServersConfig;
+    settings.mcpServers = existingMcp;
+    // Sync model name from config.env → settings.json (单一配置源)
+    // NOTE: must read from config.env directly (not config.bots) because in single-bot mode
+    // config.bots only contains the current bot, so gemini bot would be missing.
+    let geminiModelGroup = 'gemini-model';
+    try {
+      const envPath2 = path.join(CTI_HOME, 'config.env');
+      const envContent2 = fs.readFileSync(envPath2, 'utf-8');
+      for (const line of envContent2.split('\n')) {
+        const t = line.trim();
+        if (!t || t.startsWith('#')) continue;
+        const eq = t.indexOf('=');
+        if (eq === -1) continue;
+        const k = t.slice(0, eq).trim();
+        let v = t.slice(eq + 1).trim();
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+        if (k === 'CTI_BOT_GEMINI_MODEL_GROUP' && v) { geminiModelGroup = v; break; }
+      }
+    } catch {}
+    settings.model = { name: geminiModelGroup };
+    fs.mkdirSync(path.dirname(geminiSettingsPath), { recursive: true });
     fs.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2));
-    console.log(`[agents-to-im] Updated Gemini CLI MCP config: ${geminiSettingsPath}`);
+    console.log(`[agents-to-im] Updated Gemini CLI config (model=${geminiModelGroup}): ${geminiSettingsPath}`);
   } catch (err) {
     console.warn('[agents-to-im] Failed to write Gemini CLI MCP config:', err);
   }
@@ -120,7 +161,7 @@ async function main(): Promise<void> {
   setupLogger();
 
   // ── MCP 配置同步：从 CTI_MCP_* 环境变量生成配置文件 ──
-  generateMcpConfigs();
+  generateMcpConfigs(config);
 
   const runId = crypto.randomUUID();
   const startTime = Date.now();
@@ -281,6 +322,14 @@ async function main(): Promise<void> {
     writeStatus({ running: false, lastExitReason: `unhandledRejection: ${reason instanceof Error ? reason.message : String(reason)}` });
   });
   process.on('uncaughtException', (err) => {
+    const msg = err.message || '';
+    // Stream write errors (write EOF / EPIPE) happen when a CLI subprocess
+    // exits unexpectedly while we are still writing to its stdin. These are
+    // recoverable — the per-session error handler will report the failure.
+    if (msg.includes('write EOF') || msg.includes('EPIPE')) {
+      console.warn('[agents-to-im] Recoverable stream error (ignored):', msg);
+      return;
+    }
     console.error('[agents-to-im] uncaughtException:', err.stack || err.message);
     writeStatus({ running: false, lastExitReason: `uncaughtException: ${err.message}` });
     process.exit(1);
@@ -318,8 +367,9 @@ async function main(): Promise<void> {
         if (msgCount < MIN_MESSAGES_FOR_COMPACT) continue;
         // Idle session with enough messages — LLM summarize
         const sid = binding.codepilotSessionId;
+        const runtime = store.getSessionExt?.(sid)?.runtime || 'claude';
         console.log(`[idle-compact] Compacting session ${sid} (idle ${Math.round((now - updatedAt) / 60000)}min, ${msgCount} msgs)`);
-        const result = await compactConversation(store, sid, config2.compact);
+        const result = await compactConversation(store, sid, config2.compact, runtime);
         if (result.success) {
           applyCompactResult(store, sid, result);
           if (config2.compact.clearSdkSession) {

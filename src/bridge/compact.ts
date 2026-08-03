@@ -6,8 +6,7 @@
 
 import type { BridgeMessage, BridgeStore } from './host.js';
 import type { CompactConfig } from '../config/config.js';
-
-/** Per-session compact lock to prevent concurrent compaction */
+import { getRuntimeConfig } from '../config/runtime-configs.js';
 const compactLocks = new Map<string, boolean>();
 
 /** How many recent messages to preserve verbatim after compaction */
@@ -133,6 +132,7 @@ export async function compactConversation(
   store: BridgeStore,
   sessionId: string,
   compactConfig: CompactConfig,
+  runtime?: string,
 ): Promise<CompactResult> {
   // Prevent concurrent compaction on the same session
   if (compactLocks.get(sessionId)) {
@@ -141,6 +141,15 @@ export async function compactConversation(
   compactLocks.set(sessionId, true);
 
   try {
+    // 如果传入了 runtime，用 getRuntimeConfig 解析当前模型
+    if (runtime) {
+      const rc = getRuntimeConfig(runtime);
+      if (rc.model) {
+        compactConfig = { ...compactConfig, model: rc.model };
+        console.log(`[compact] runtime=${runtime} → 使用当前模型: ${rc.model}`);
+      }
+    }
+
     const { messages } = store.getMessages(sessionId);
     if (messages.length < 4) {
       return { success: false, originalCount: messages.length, error: '消息太少，无需压缩' };

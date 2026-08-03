@@ -8,7 +8,6 @@ await esbuild.build({
   target: 'node20',
   outfile: 'dist/daemon.mjs',
   external: [
-    '@anthropic-ai/claude-agent-sdk',
     // discord.js optional native deps
     'bufferutil', 'utf-8-validate', 'zlib-sync', 'erlpack',
     // Node.js built-ins
@@ -16,7 +15,7 @@ await esbuild.build({
     'stream', 'events', 'url', 'util', 'child_process', 'worker_threads',
     'node:*',
   ],
-  banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url); import { fileURLToPath } from 'url'; const __filename = fileURLToPath(import.meta.url); const __dirname = __filename.replace(/[\/][^\/]*$/, '');" },
+  banner: { js: "import { createRequire as __cr } from 'module'; import { fileURLToPath as __f2p } from 'url'; const require = __cr(import.meta.url); const __filename = __f2p(import.meta.url); const __dirname = __filename.replace(/[\/][^\/]*$/, '');" },
 });
 
 console.log('Built dist/daemon.mjs');

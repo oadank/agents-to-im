@@ -78,6 +78,7 @@ export interface ProcessMessageOptions {
   permissionModeOverride?: string;
   collaborationModeOverride?: 'plan' | 'default';
   onModeChanged?: OnModeChanged;
+  fromAudio?: boolean;
 }
 
 interface PlanStepState {
@@ -244,6 +245,7 @@ export async function processMessage(
 
   // Abort controller — shared between watchdog and stream consumption
   const abortController = new AbortController();
+  let watchdogFired = false;
 
   // Lock renewal interval
   const renewalInterval = setInterval(() => {
@@ -254,6 +256,7 @@ export async function processMessage(
   // abort and release the lock so subsequent messages are not blocked forever.
   const WATCHDOG_TIMEOUT_MS = parseInt(process.env.CTI_WATCHDOG_TIMEOUT_MS || '600000', 10); // 10 min default
   const watchdogTimer = setTimeout(() => {
+    watchdogFired = true;
     console.error(`[conversation-engine] WATCHDOG: session ${sessionId.slice(0, 12)}... exceeded ${WATCHDOG_TIMEOUT_MS / 1000}s, aborting`);
     try { abortController.abort(); } catch { /* best effort */ }
     try { store.forceReleaseStaleLock(sessionId, 'watchdog-timeout'); } catch { /* best effort */ }
@@ -344,6 +347,7 @@ export async function processMessage(
       provider: resolvedProvider,
       conversationHistory: historyMsgs,
       files,
+      fromAudio: options?.fromAudio,
       onRuntimeStatusChange: (status: string) => {
         try { store.setSessionRuntimeStatus(sessionId, status); } catch { /* best effort */ }
       },
@@ -365,6 +369,8 @@ export async function processMessage(
       onResponseSegment,
       onActivityEvent,
       options?.onModeChanged,
+      watchdogFired,
+      WATCHDOG_TIMEOUT_MS,
     );
   } finally {
     clearTimeout(watchdogTimer);
@@ -390,6 +396,8 @@ async function consumeStream(
   onResponseSegment?: OnResponseSegment,
   onActivityEvent?: OnActivityEvent,
   onModeChanged?: OnModeChanged,
+  isWatchdogFired?: boolean,
+  watchdogTimeoutMs?: number,
 ): Promise<ConversationResult> {
   const { store } = getBridgeContext();
   const reader = stream.getReader();
@@ -497,10 +505,8 @@ async function consumeStream(
 
   // Anti-thinking-loop detection
   const REASONING_REPEAT_THRESHOLD = 5; // consecutive identical reasoning events
-  const REASONING_MAX_CHARS = 40_000; // ~10K tokens of thinking, abort if no answer yet
   let reasoningRepeatCount = 0;
   let lastReasoningHash = '';
-  let totalReasoningChars = 0;
   let hasAnswered = false;
 
   const simpleHash = (s: string): string => {
@@ -695,7 +701,6 @@ async function consumeStream(
                 
                 // Anti-thinking-loop detection
                 if (!hasAnswered && reasoningText && reasoningText !== '正在思考…') {
-                  totalReasoningChars += reasoningText.length;
                   const hash = simpleHash(reasoningText);
                   if (hash === lastReasoningHash && reasoningText.length > 50) {
                     reasoningRepeatCount++;
@@ -707,12 +712,6 @@ async function consumeStream(
                   } else {
                     reasoningRepeatCount = 0;
                     lastReasoningHash = hash;
-                  }
-                  // Hard limit: if reasoning exceeds 40K chars without any answer, abort
-                  if (totalReasoningChars > REASONING_MAX_CHARS) {
-                    console.warn(`[conversation-engine] Anti-loop: reasoning exceeded ${totalReasoningChars} chars without answer, aborting (session ${sessionId})`);
-                    try { reader.cancel('thinking-loop-exceeded'); } catch { /* best effort */ }
-                    break;
                   }
                 }
                 
@@ -900,12 +899,15 @@ async function consumeStream(
     const isAbort = e instanceof DOMException && e.name === 'AbortError'
       || e instanceof Error && e.name === 'AbortError';
 
-    // stuckFired → stream was idle too long, report as error to user
-    // isAbort (user-initiated) → not an error
-    const finalHasError = stuckFired || (!isAbort && !stuckFired);
+    // stuckFired -> stream was idle too long, report as error to user
+    // isWatchdogFired -> watchdog triggered abort (timeout), MUST report error to user
+    // isAbort (user-initiated) -> not an error
+    const finalHasError = stuckFired || !!isWatchdogFired || (!isAbort && !stuckFired);
     const finalErrorMessage = stuckFired
       ? '⚠️ Task aborted: no output for 5 minutes. The model may be stuck or the API is unresponsive. Please try again.'
-      : isAbort ? 'Task stopped by user' : (e instanceof Error ? e.message : 'Stream consumption error');
+      : isWatchdogFired
+        ? `⚠️ Task timed out after ${(watchdogTimeoutMs || 600000) / 1000}s. The model did not respond in time. Please try again.`
+        : isAbort ? 'Task stopped by user' : (e instanceof Error ? e.message : 'Stream consumption error');
 
     return {
       responseText: responseSegments.join('\n\n').trim(),

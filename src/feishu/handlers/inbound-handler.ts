@@ -26,8 +26,15 @@ export async function handleIncomingEvent(
 ): Promise<void> {
   const messageId = data.message.message_id;
   rtLog(`[STEP1] handleIncomingEvent entered, messageId=${messageId}, chatId=${data.message.chat_id}, senderType=${data.sender?.sender_type}`);
+  rtLog(`[STEP1-RAW] data keys: ${Object.keys(data).join(',')}, data.mentions=${JSON.stringify(data.mentions)}, (data as any).message?.mentions=${JSON.stringify((data as any).message?.mentions)}`);
   if (data.sender.sender_type === 'app') {
     rtLog(`[STEP1] sender_type=app, returning`);
+    return;
+  }
+  // Skip stale messages (older than 60s) to prevent reprocessing after PM2 restart
+  const messageTime = Number(data.message.create_time || '0') * 1000;
+  if (messageTime > 0 && Date.now() - messageTime > 60_000) {
+    rtLog(`[STEP1] stale message (age=${Math.floor((Date.now() - messageTime) / 1000)}s), skipping`);
     return;
   }
   const seen = ctx.markSeenMessage(messageId);
@@ -58,6 +65,7 @@ export async function handleIncomingEvent(
   );
 
   rtLog(`[STEP4] Calling enqueueChatTask, routeKey=${routeKey}, msgType=${data.message.message_type}`);
+  console.log(`[feishu-adapter] DEBUG: Actual message_type value: "${data.message.message_type}" (length=${data.message.message_type.length})`);
   await ctx.enqueueChatTask(routeKey, async () => {
     rtLog(`[STEP5] enqueueChatTask callback EXECUTED for routeKey=${routeKey}`);
     ctx.prunePendingInboundImages();
@@ -77,6 +85,7 @@ export async function handleIncomingEvent(
         parentId: data.message.parent_id,
         threadId,
         messageType: data.message.message_type,
+        mentions: (data as any).message?.mentions ?? data.mentions,
       },
     };
 
@@ -143,47 +152,64 @@ export async function handleIncomingEvent(
 
     // 语音消息处理
     if (data.message.message_type === 'audio') {
+      rtLog(`[VOICE-DEBUG] Starting audio processing for messageId=${messageId}`);
       const fileKey = parseAudioFileKey(data.message.content);
+      rtLog(`[VOICE-DEBUG] Parsed fileKey: ${fileKey || 'null'}`);
       if (!fileKey) {
+        rtLog(`[VOICE-DEBUG] No fileKey found, sending error message`);
         await ctx.sendAsPost(
           inbound.address,
           '已收到语音消息，但读取语音文件失败。请重新发送语音。',
           messageId,
         );
+        rtLog(`[VOICE-DEBUG] Error message sent, returning`);
         return;
       }
       try {
+        rtLog(`[VOICE-DEBUG] Calling downloadAndTranscribe with messageId=${messageId}, fileKey=${fileKey}`);
         console.log(`[feishu-adapter] Transcribing audio ${messageId} file_key=${fileKey}`);
         const result = await ctx.downloadAndTranscribe(messageId, fileKey);
+        rtLog(`[VOICE-DEBUG] downloadAndTranscribe completed successfully`);
         const transcribedText = result.text.trim();
-        if (!transcribedText) {
+        rtLog(`[VOICE-DEBUG] Transcribed text length: ${transcribedText.length}`);
+        if (transcribedText) {
+          console.log(`[feishu-adapter] Audio transcribed: "${transcribedText}"`);
+          rtLog(`[VOICE-DEBUG] Sending transcription result: "${transcribedText.substring(0, 50)}..."`);
           await ctx.sendAsPost(
             inbound.address,
-            '语音转写失败。请重新发送语音或直接发文字。',
+            `语音转写：${transcribedText}`,
             messageId,
           );
+          rtLog(`[VOICE-DEBUG] Transcription message sent successfully`);
+          // 把转写文本当作普通文本继续处理，并标记来源为语音
+          inbound.text = transcribedText;
+          inbound.fromAudio = true; // 标记消息来源为语音，用于触发语音回复
+          data.message.message_type = 'text';
+          // 标记此 chat 需要语音回复
+          ctx.setPendingAudioReply(data.message.chat_id, true);
+          console.log(`[feishu-adapter] Audio converted to text (fromAudio=true), continuing processing...`);
+          rtLog(`[VOICE-DEBUG] Audio processing completed, continuing with text processing`);
+        } else {
+          // 语音转录成功但内容为空
+          rtLog(`[VOICE-DEBUG] Audio transcription completed but no content detected`);
+          await ctx.sendAsPost(
+            inbound.address,
+            `语音转写：未识别到语音内容`,
+            messageId,
+          );
+          rtLog(`[VOICE-DEBUG] No-content transcription message sent`);
+          // 空内容时不继续处理（不转换为文字输入）
           return;
         }
-        console.log(`[feishu-adapter] Audio transcribed: "${transcribedText}"`);
-        await ctx.sendAsPost(
-          inbound.address,
-          `语音转写：${transcribedText}`,
-          messageId,
-        );
-        // 把转写文本当作普通文本继续处理，并标记来源为语音
-        inbound.text = transcribedText;
-        inbound.fromAudio = true; // 标记消息来源为语音，用于触发语音回复
-        data.message.message_type = 'text';
-        // 标记此 chat 需要语音回复
-        ctx.setPendingAudioReply(data.message.chat_id, true);
-        console.log(`[feishu-adapter] Audio converted to text (fromAudio=true), continuing processing...`);
       } catch (error) {
+        rtLog(`[VOICE-DEBUG] downloadAndTranscribe threw error: ${error instanceof Error ? error.message : String(error)}`);
         console.warn('[feishu-adapter] Audio transcription failed:', error);
         await ctx.sendAsPost(
           inbound.address,
           `语音转写失败：${error instanceof Error ? error.message : String(error)}`,
           messageId,
         );
+        rtLog(`[VOICE-DEBUG] Error message sent after exception, returning`);
         return;
       }
     }
@@ -206,6 +232,17 @@ export async function handleIncomingEvent(
     // 如果已有转写文本（语音），跳过 parseTextContent
     if (!inbound.text) {
       inbound.text = parseTextContent(data.message.content);
+    }
+    // Strip @mention placeholders (e.g. @_user_1) — replace with mention name
+    if (data.mentions && data.mentions.length > 0) {
+      for (const mention of data.mentions) {
+        if (mention.key && mention.name) {
+          inbound.text = inbound.text.replace(mention.key, mention.name);
+        } else if (mention.key) {
+          inbound.text = inbound.text.replace(mention.key, '').trim();
+        }
+      }
+      inbound.text = inbound.text.replace(/\s+/g, ' ').trim();
     }
     if (!inbound.text) {
       console.warn(
@@ -443,22 +480,11 @@ export async function handleDirectMessage(
     }
     await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId, true);
 
-    // Get session's runtime to use its model for compact
-    const sessionExt = store.getSessionExt(sessionId);
-    const runtime = sessionExt?.runtime || ctx.getDefaultRuntime();
-    const runtimeConfig = getRuntimeConfig(runtime);
+    // Use global compact config from config.env
+    const compactConfig = loadConfig().compact;
+    const runtime = store.getSessionExt?.(sessionId)?.runtime || 'claude';
 
-    // Create compact config from runtime config
-    const compactConfig: CompactConfig = {
-      model: runtimeConfig.model,
-      apiKey: '', // Will be filled by compactConversation from env/config
-      baseUrl: '', // Will be filled by compactConversation from env/config
-      maxTokens: 3000,
-      temperature: 0.2,
-      clearSdkSession: true
-    };
-
-    const result = await compactConversation(store, sessionId, compactConfig);
+    const result = await compactConversation(store, sessionId, compactConfig, runtime);
     if (result.success) {
       applyCompactResult(store, sessionId, result);
       if (compactConfig.clearSdkSession) {
@@ -529,6 +555,30 @@ export async function handleGroupMessage(
   const binding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
   const workflow = binding ? store.getActivePlanWorkflowByBinding(binding.id) : null;
 
+  // 群命令（/reset, /new, /stop, /mode, /plan, /compact）不需要 @ bot，所有 bot 各自处理自己的会话
+  const isGroupCommand = lower === '/reset' || lower === '/new' || lower.startsWith('/new')
+    || lower === '/stop' || lower.startsWith('/mode') || lower === '/plan' || lower.startsWith('/plan ')
+    || lower === '/compact';
+
+  if (!isGroupCommand) {
+    // 非命令消息必须 @到本 bot 才回复，不 @ 静默忽略
+    const raw = inbound.raw as { mentions?: Array<{ key: string; id?: { open_id?: string } }> } | undefined;
+    const mentions = raw?.mentions;
+    rtLog(`[MENTION-DEBUG] botOpenId=${ctx.botOpenId}, mentions=${JSON.stringify(mentions)}, rawKeys=${raw ? Object.keys(raw).join(',') : 'null'}`);
+    if (mentions && mentions.length > 0) {
+      if (ctx.botOpenId) {
+        const isMentioned = mentions.some((m) => m.id?.open_id === ctx.botOpenId);
+        rtLog(`[MENTION-DEBUG] isMentioned=${isMentioned}, checking against botOpenId=${ctx.botOpenId}`);
+        if (!isMentioned) return; // 未 @本 bot，静默忽略
+      }
+      // botOpenId 未知时，只要有 @ 就处理
+    } else {
+      // 没有 @，不回复
+      rtLog(`[MENTION-DEBUG] no mentions found, returning`);
+      return;
+    }
+  }
+
   if (lower === '/reset') {
     await ctx.handleResetCommand(inbound.address, inbound.messageId);
     return;
@@ -569,21 +619,11 @@ export async function handleGroupMessage(
       if (sid2) {
         await ctx.sendAsPost(inbound.address, '⏳ 正在压缩上下文，请稍候…', inbound.messageId);
 
-        // Get session's runtime to use its model for compact
-        const sessionExt2 = store2.getSessionExt(sid2);
-        const runtime2 = sessionExt2?.runtime || ctx.getDefaultRuntime();
-        const runtimeConfig2 = getRuntimeConfig(runtime2);
+        // Use global compact config from config.env
+        const compactConfig2 = loadConfig().compact;
+        const runtime2 = store2.getSessionExt?.(sid2)?.runtime || 'claude';
 
-        const compactConfig2: CompactConfig = {
-          model: runtimeConfig2.model,
-          apiKey: '',
-          baseUrl: '',
-          maxTokens: 3000,
-          temperature: 0.2,
-          clearSdkSession: true
-        };
-
-        const result2 = await compactConversation(store2, sid2, compactConfig2);
+        const result2 = await compactConversation(store2, sid2, compactConfig2, runtime2);
         if (result2.success) {
           applyCompactResult(store2, sid2, result2);
           if (compactConfig2.clearSdkSession) {

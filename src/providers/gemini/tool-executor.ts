@@ -15,8 +15,6 @@ import path from 'node:path';
 
 const CWD = process.env.CTI_WORKDIR || os.homedir();
 const AGENTMEMORY_URL = process.env.CTI_AGENTMEMORY_URL || 'http://127.0.0.1:3111';
-const CTI_HOME = process.env.CTI_HOME || path.join(os.homedir(), '.agents-to-im');
-const TOKEN_FILE = path.join(CTI_HOME, 'user-token.json');
 
 /** run_bash 黑名单（命中即拒绝） */
 const BASH_BLACKLIST = [
@@ -95,7 +93,7 @@ async function execRunBash(args: Record<string, unknown>): Promise<string> {
     if (re.test(command)) return `Error: 命令被安全黑名单拦截（匹配 ${re}）`;
   }
   return new Promise<string>((resolve) => {
-    const child = spawn('bash', ['-c', command], { cwd: CWD, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('bash', ['-c', command], { cwd: CWD, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -117,28 +115,47 @@ async function execSendFeishu(args: Record<string, unknown>): Promise<string> {
   const chatId = String(args.chat_id || '');
   const text = String(args.text || '');
   if (!chatId || !text) return 'Error: 缺少 chat_id 或 text 参数';
-  let token = '';
-  try {
-    token = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf-8')).accessToken || '';
-  } catch (e) {
-    return `Error: 读取飞书 token 失败 - ${(e as Error).message}`;
-  }
-  if (!token) return 'Error: 飞书 token 为空';
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 10_000);
-    const res = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) }),
-      signal: ctrl.signal,
+
+  return new Promise<string>((resolve) => {
+    const escapedText = text.replace(/"/g, '\\"');
+    const cmd = `lark-cli im +messages-send --chat-id "${chatId}" --text "${escapedText}"`;
+
+    const child = spawn('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (c) => { stdout += c.toString(); });
+    child.stderr.on('data', (c) => { stderr += c.toString(); });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      resolve(`Error: lark-cli 超时（15s）`);
+    }, 15_000);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        console.warn('[tool-executor] lark-cli send failed:', stderr.slice(0, 200));
+        resolve(`Error: lark-cli 发送失败 exit=${code}`);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout);
+        if (parsed.ok) {
+          resolve(`OK: 消息已发送到 ${chatId}`);
+        } else {
+          resolve(`Error: lark-cli 返回错误 ${JSON.stringify(parsed).slice(0, 200)}`);
+        }
+      } catch {
+        resolve(`Error: lark-cli 返回非 JSON: ${stdout.slice(0, 200)}`);
+      }
     });
-    clearTimeout(timer);
-    const data = await res.json() as { code?: number; msg?: string };
-    return data.code === 0 ? `OK: 消息已发送到 ${chatId}` : `Error: 飞书返回 code=${data.code} msg=${data.msg}`;
-  } catch (e) {
-    return `Error: 发送失败 - ${(e as Error).message}`;
-  }
+
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      resolve(`Error: 执行失败 - ${e.message}`);
+    });
+  });
 }
 
 async function execMemoryRecall(args: Record<string, unknown>): Promise<string> {

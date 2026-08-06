@@ -24,6 +24,39 @@ import { getBridgeContext } from './context.js';
 import { getRuntimeConfig } from '../config/runtime-configs.js';
 import crypto from 'crypto';
 
+// ── 缓存命中率统计（进程级，按 sessionId）──
+// 各 provider 在 result 事件的 usage 里上报 cache_read_input_tokens（缓存命中），
+// 这里累计每 session 的最近一轮 + 平均命中率，供 adapter 渲染 meta 行。
+export interface SessionCacheStats {
+  /** 最近一轮请求的缓存命中 token 数 */
+  lastHit: number;
+  /** 最近一轮请求的总输入 token 数（命中+未命中） */
+  lastTotal: number;
+  /** 累计命中 token 数 */
+  sumHit: number;
+  /** 累计未命中 token 数 */
+  sumMiss: number;
+  /** 请求次数 */
+  count: number;
+}
+
+const sessionCacheStats = new Map<string, SessionCacheStats>();
+
+export function recordSessionCacheUsage(sessionId: string, hitTokens: number, missTokens: number): void {
+  const cur = sessionCacheStats.get(sessionId) || { lastHit: 0, lastTotal: 0, sumHit: 0, sumMiss: 0, count: 0 };
+  cur.lastHit = hitTokens;
+  cur.lastTotal = hitTokens + missTokens;
+  cur.sumHit += hitTokens;
+  cur.sumMiss += missTokens;
+  cur.count += 1;
+  sessionCacheStats.set(sessionId, cur);
+}
+
+export function getSessionCacheStats(sessionId: string): SessionCacheStats | null {
+  return sessionCacheStats.get(sessionId) || null;
+}
+
+
 export interface PermissionRequestInfo {
   permissionRequestId: string;
   toolName: string;
@@ -778,7 +811,14 @@ async function consumeStream(
           case 'result': {
             try {
               const resultData = JSON.parse(event.data);
-              if (resultData.usage) tokenUsage = resultData.usage;
+              if (resultData.usage) {
+                tokenUsage = resultData.usage;
+                // 缓存命中率统计：cache_read_input_tokens = 命中；总输入 - 命中 = 未命中
+                const u = resultData.usage as TokenUsage;
+                const hit = Number(u.cache_read_input_tokens ?? 0) + Number(u.cache_creation_input_tokens ?? 0);
+                const miss = Math.max(0, Number(u.input_tokens ?? 0) - Number(u.cache_read_input_tokens ?? 0));
+                if (hit + miss > 0) recordSessionCacheUsage(sessionId, hit, miss);
+              }
               if (resultData.is_error) hasError = true;
               try {
                 fs.appendFileSync(

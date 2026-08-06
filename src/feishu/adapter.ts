@@ -1,5 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import type {
   ActivityEvent,
@@ -18,6 +20,7 @@ import type { StructuredInputRequestInfo } from '../bridge/host.js';
 import { BaseChannelAdapter } from '../bridge/channel-adapter.js';
 import { getBridgeContext } from '../bridge/context.js';
 import { interruptActiveTask } from '../bridge/bridge-manager.js';
+import { getSessionCacheStats } from '../bridge/conversation-engine.js';
 import { appendLocalCommandExchange } from '../bridge/local-command-history.js';
 import {
   buildCardContent,
@@ -153,6 +156,53 @@ function isToolCallActivityEvent(event: ActivityEvent): boolean {
   return event.kind === 'tool_activity'
     || event.kind === 'command_execution'
     || event.kind === 'file_change';
+}
+
+/**
+ * 读取 reasonix 的 usage stats（stats/YYYY-MM-DD.jsonl），返回最近一轮 + 当日平均的缓存命中率。
+ * source=cli 是飞书 bot（reasonix ACP）的请求记录；source=desktop 是桌面端（跳过）。
+ * 供 reasonix（ACP 直连无 usage 上报到 conversation-engine）fallback 使用。
+ */
+function readReasonixCacheStats(): { lastRate: number; avgRate: number } | null {
+  try {
+    const statsDir = path.join(
+      process.platform === 'win32'
+        ? (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'))
+        : path.join(os.homedir(), '.config'),
+      'reasonix',
+      'stats',
+    );
+    // 文件按本地日期命名（如 2026-08-06），不能用 toISOString（UTC 会偏一天）
+    const now = new Date();
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const file = path.join(statsDir, `${localDate}.jsonl`);
+    if (!fs.existsSync(file)) return null;
+
+    let lastRate: number | null = null;
+    let sumHit = 0;
+    let sumMiss = 0;
+    let total = 0;
+    const lines = fs.readFileSync(file, 'utf-8').split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let rec: { source?: string; cache_hit?: number; cache_miss?: number };
+      try { rec = JSON.parse(line); } catch { continue; }
+      if (rec.source !== 'cli') continue; // 只看飞书 bot 的请求
+      const hit = Number(rec.cache_hit ?? 0);
+      const miss = Number(rec.cache_miss ?? 0);
+      if (hit + miss <= 0) continue;
+      const rate = (hit / (hit + miss)) * 100;
+      lastRate = rate;
+      sumHit += hit;
+      sumMiss += miss;
+      total++;
+    }
+    if (lastRate == null || total === 0) return null;
+    const avgRate = (sumHit / (sumHit + sumMiss)) * 100;
+    return { lastRate, avgRate };
+  } catch {
+    return null;
+  }
 }
 
 export class FeishuAdapter extends BaseChannelAdapter {
@@ -852,10 +902,10 @@ export class FeishuAdapter extends BaseChannelAdapter {
     rtLog(`[VOICE-DEBUG] Client and im.messageResource.get method available`);
 
     // 准备临时目录和文件
-    const path = await import('node:path');
-    const os = await import('node:os');
+    const pathMod = await import('node:path');
+    const osMod = await import('node:os');
     const fsp = await import('node:fs/promises');
-    const tmpDir = path.join(os.tmpdir(), 'feishu-audio');
+    const tmpDir = pathMod.join(osMod.tmpdir(), 'feishu-audio');
     const tmpFile = path.join(tmpDir, `${messageId}.opus`);
     const wavFile = path.join(tmpDir, `asr_${messageId}.wav`);
     await fsp.mkdir(tmpDir, { recursive: true });
@@ -1855,14 +1905,37 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const modelName = runtimeConfig.model || session?.model || 'N/A';
       const providerName = runtimeConfig.provider || 'N/A';
 
+      const cacheStats = this.buildCacheDivider(binding);
+
       return {
         agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
         session: binding?.sdkSessionId?.substring(0, 8) || binding?.codepilotSessionId?.substring(0, 8) || 'N/A',
+        ...(cacheStats ? { cacheHitRate: cacheStats.lastRate, cacheAvgRate: cacheStats.avgRate } : {}),
       };
     }
     return undefined;
+  }
+
+  /** 计算当前 session 的缓存命中率（最近一轮 + 平均），供 meta 行显示 */
+  private buildCacheDivider(binding: ChannelBinding | null): { lastRate: number; avgRate: number } | null {
+    let cacheStats: { lastRate: number; avgRate: number } | null = null;
+    const sid = binding?.codepilotSessionId;
+    if (sid) {
+      const s = getSessionCacheStats(sid);
+      rtLog(`[cacheStats] session=${sid.slice(0, 8)} stats=${s ? JSON.stringify({ lastTotal: s.lastTotal, sumHit: s.sumHit, sumMiss: s.sumMiss }) : 'null'}`);
+      if (s && s.lastTotal > 0) {
+        const lastRate = (s.lastHit / s.lastTotal) * 100;
+        const avgRate = (s.sumHit / (s.sumHit + s.sumMiss)) * 100;
+        cacheStats = { lastRate, avgRate };
+      }
+    }
+    if (!cacheStats) {
+      cacheStats = readReasonixCacheStats();
+      rtLog(`[cacheStats] reasonix fallback: ${cacheStats ? `${cacheStats.lastRate.toFixed(2)}/${cacheStats.avgRate.toFixed(2)}` : 'null'}`);
+    }
+    return cacheStats;
   }
 
   private async sendAsInteractiveCard(
@@ -1887,11 +1960,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const modelName = runtimeConfig.model || session?.model || 'N/A';
       const providerName = runtimeConfig.provider || 'N/A';
 
+      const cacheStats2 = this.buildCacheDivider(binding);
       dividerInfo = {
         agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
         session: binding?.sdkSessionId?.substring(0, 8) || binding?.codepilotSessionId?.substring(0, 8) || 'N/A',
+        ...(cacheStats2 ? { cacheHitRate: cacheStats2.lastRate, cacheAvgRate: cacheStats2.avgRate } : {}),
       };
     }
 
@@ -1932,11 +2007,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const modelName = runtimeConfig.model || session?.model || 'N/A';
       const providerName = runtimeConfig.provider || 'N/A';
 
+      const cacheStats2 = this.buildCacheDivider(binding);
       dividerInfo = {
         agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
         session: binding?.sdkSessionId?.substring(0, 8) || binding?.codepilotSessionId?.substring(0, 8) || 'N/A',
+        ...(cacheStats2 ? { cacheHitRate: cacheStats2.lastRate, cacheAvgRate: cacheStats2.avgRate } : {}),
       };
     }
 

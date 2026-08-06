@@ -62,6 +62,10 @@ export interface AgentDividerInfo {
   provider?: string;
   /** Session ID prefix (first 8 chars) for debugging */
   session?: string;
+  /** 最近一轮请求的缓存命中率（百分数，如 99.87） */
+  cacheHitRate?: number;
+  /** 当日该 agent 的平均缓存命中率 */
+  cacheAvgRate?: number;
 }
 
 /**
@@ -84,6 +88,11 @@ export function buildCardContent(text: string, dividerInfo?: AgentDividerInfo): 
     if (dividerInfo.model) parts.push(`Model: ${dividerInfo.model}`);
     if (dividerInfo.provider) parts.push(`Provider: ${dividerInfo.provider}`);
     if (dividerInfo.session) parts.push(`Session: ${dividerInfo.session}`);
+    if (dividerInfo.cacheHitRate != null && dividerInfo.cacheAvgRate != null) {
+      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%⁞${dividerInfo.cacheAvgRate.toFixed(2)}%`);
+    } else if (dividerInfo.cacheHitRate != null) {
+      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
+    }
 
     const infoText = parts.join(' | ') || 'Agent: N/A';
     elements.push({
@@ -118,6 +127,11 @@ export function buildPostContent(text: string, dividerInfo?: AgentDividerInfo): 
     if (dividerInfo.model) parts.push(`Model: ${dividerInfo.model}`);
     if (dividerInfo.provider) parts.push(`Provider: ${dividerInfo.provider}`);
     if (dividerInfo.session) parts.push(`Session: ${dividerInfo.session}`);
+    if (dividerInfo.cacheHitRate != null && dividerInfo.cacheAvgRate != null) {
+      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%⁞${dividerInfo.cacheAvgRate.toFixed(2)}%`);
+    } else if (dividerInfo.cacheHitRate != null) {
+      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
+    }
 
     const infoText = parts.join(' | ') || 'Agent: N/A';
     finalText = `${text}\n\n---\n${infoText}`;

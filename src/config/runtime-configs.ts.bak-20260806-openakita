@@ -300,7 +300,7 @@ export function getRuntimeConfig(runtime: string): RuntimeConfig {
     openhuman:  { model: 'openhuman-v1',  provider: 'openhuman', displayName: 'OpenHuman' },
     gemini:     { model: 'gemini-model',  provider: 'LiteLLM',   displayName: 'Gemini',   role: '视频/音频队长：负责生视频/配音/剪辑/成片，通过 Multica 调度视频语音/配音剪辑专家' },
     hermes:     { model: 'codex-model',   provider: 'LiteLLM',   displayName: 'Hermes',   role: '测试队长：各队产出测试质检，通过 Multica 调度测试工程师' },
-    openakita:  { model: 'codex-model',   provider: 'LiteLLM',   displayName: 'OpenAkita', role: 'GitHub 推送队长：负责将团队产物/代码推送到 GitHub 仓库（commit/branch/PR/发布），通过 Multica 调度交付工程师/编码工程师' },
+    openakita:  { model: 'codex-model',   provider: 'LiteLLM',   displayName: 'OpenAkita', role: '队长（岗位待定）：原哨兵/巡查职责已移交 Multica 巡检智能体（定时任务），新岗位由用户定义中' },
   };
 
   const d = defaults[runtime] || defaults.mimo;

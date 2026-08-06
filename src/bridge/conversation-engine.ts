@@ -253,8 +253,11 @@ export async function processMessage(
   }, 60_000);
 
   // Watchdog: maximum processing time (10 minutes). If the provider hangs,
-  // abort and release the lock so subsequent messages are not blocked forever.
-  const WATCHDOG_TIMEOUT_MS = parseInt(process.env.CTI_WATCHDOG_TIMEOUT_MS || '600000', 10); // 10 min default
+  // Watchdog: absolute ceiling (30 min) to prevent permanent hang. Long tasks with
+  // continuous output are NOT killed by this — stuck detection (no output for N min)
+  // is the real liveness check. Raised from 10min (2026-08-06): 10min was killing
+  // legit long tasks that keep producing output (user requirement: no time limit while working).
+  const WATCHDOG_TIMEOUT_MS = parseInt(process.env.CTI_WATCHDOG_TIMEOUT_MS || '1800000', 10); // 30 min default
   const watchdogTimer = setTimeout(() => {
     watchdogFired = true;
     console.error(`[conversation-engine] WATCHDOG: session ${sessionId.slice(0, 12)}... exceeded ${WATCHDOG_TIMEOUT_MS / 1000}s, aborting`);
@@ -499,7 +502,10 @@ async function consumeStream(
     }
   };
 
-  const STUCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+  // 无输出判定（空闲超时）：连续 N 分钟无任何 SSE 事件才判定模型卡死并报错给用户。
+  // 2026-08-06 与 reasonix-provider 的 5 分钟 inactivity timeout 对齐，确保流级 stuck
+  // 先于 provider 层触发，发出明确的"无输出 N 分钟"断流提醒（原 10 分钟过长，进程已被 provider 先杀）。
+  const STUCK_TIMEOUT_MS = parseInt(process.env.CTI_STUCK_TIMEOUT_MS || '300000', 10); // 默认 5 分钟
   let lastActivityAt = Date.now();
   let stuckFired = false;
 
@@ -855,7 +861,7 @@ async function consumeStream(
     // If stream was stuck (reader.cancel → done=true path), report error to user
     if (stuckFired && !hasError) {
       hasError = true;
-      errorMessage = '⚠️ Task aborted: no output for 5 minutes. The model may be stuck or the API is unresponsive. Please try again.';
+      errorMessage = `⚠️ Task aborted: no output for ${STUCK_TIMEOUT_MS / 60000} minutes. The model may be stuck or the API is unresponsive. Please try again.`;
       console.warn(`[conversation-engine] Stream stuck (session ${sessionId.slice(0, 12)}...) — reporting error to user`);
     }
 
@@ -904,7 +910,7 @@ async function consumeStream(
     // isAbort (user-initiated) -> not an error
     const finalHasError = stuckFired || !!isWatchdogFired || (!isAbort && !stuckFired);
     const finalErrorMessage = stuckFired
-      ? '⚠️ Task aborted: no output for 5 minutes. The model may be stuck or the API is unresponsive. Please try again.'
+      ? `⚠️ Task aborted: no output for ${STUCK_TIMEOUT_MS / 60000} minutes. The model may be stuck or the API is unresponsive. Please try again.`
       : isWatchdogFired
         ? `⚠️ Task timed out after ${(watchdogTimeoutMs || 600000) / 1000}s. The model did not respond in time. Please try again.`
         : isAbort ? 'Task stopped by user' : (e instanceof Error ? e.message : 'Stream consumption error');

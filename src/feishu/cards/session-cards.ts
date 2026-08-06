@@ -525,40 +525,71 @@ export function buildInterruptCard(opts: {
   chatId: string;
   messageId: string;
   botName: string;
+  /** 卡片状态：pending=待操作（带按钮）；auto=已自动插队；yes=已立即插队；no=已排队稍后处理；cancel=已取消消息 */
+  status?: 'pending' | 'auto' | 'yes' | 'no' | 'cancel';
 }): Record<string, unknown> {
-  const { chatId, messageId, botName } = opts;
+  const { chatId, messageId, botName, status = 'pending' } = opts;
+  const buttons = [
+    { text: '⚡ 立即插队', callbackData: `interrupt:yes:${chatId}:${messageId}`, type: 'primary' as const },
+    { text: '🗑 取消消息', callbackData: `interrupt:cancel:${chatId}:${messageId}`, type: 'danger' as const },
+    { text: '⏳ 稍后处理', callbackData: `interrupt:no:${chatId}:${messageId}`, type: 'default' as const },
+  ];
+
+  const statusContent: Record<NonNullable<typeof status>, string> = {
+    pending: `**${botName}** 正在处理上一条消息。\n你的新消息已排在队列最前：\n- **⚡ 立即插队**：中断当前任务（10 秒未操作将自动选择此项）\n- **🗑 取消消息**：撤回这条消息\n- **⏳ 稍后处理**：等当前任务完成后再处理`,
+    auto: `**${botName}** 正在处理上一条消息。\n⏱️ **10 秒未操作，已自动插队**：当前任务已中断，你的新消息优先处理中…`,
+    yes: `**${botName}** 正在处理上一条消息。\n⚡ **已立即插队**：当前任务已中断，你的新消息优先处理中…`,
+    no: `**${botName}** 正在处理上一条消息。\n⏳ **已排队**：你的新消息将在当前任务完成后自动处理。`,
+    cancel: `**${botName}** 正在处理上一条消息。\n🗑 **已取消这条消息**：当前任务继续处理，该消息不会再执行。`,
+  };
+
+  const showButtons = status === 'pending';
+
   return {
     schema: '2.0',
-    config: { wide_screen_mode: true, update_multi: true },
+    config: {
+      wide_screen_mode: true,
+      update_multi: true,
+    },
     header: {
-      title: { tag: 'plain_text', content: '⚡ 是否插队？' },
+      title: {
+        tag: 'plain_text',
+        content: status === 'pending' ? '⚡ 是否插队？' : '⚡ 插队',
+      },
       template: 'orange',
     },
-    elements: [
-      {
-        tag: 'div',
-        text: {
-          tag: 'lark_md',
-          content: `**${botName}** 正在处理上一条消息。\n你的新消息已排在队列最前，可**插队立即打断**当前任务，或**稍后处理**（等当前任务完成）。`,
+    body: {
+      elements: [
+        {
+          tag: 'markdown',
+          content: statusContent[status],
         },
-      },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '⚡ 立即插队' },
-            type: 'primary',
-            behaviors: [{ type: 'callback', value: { callback_data: `interrupt:yes:${chatId}:${messageId}` } }],
-          },
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '稍后处理' },
-            type: 'default',
-            behaviors: [{ type: 'callback', value: { callback_data: `interrupt:no:${chatId}:${messageId}` } }],
-          },
-        ],
-      },
-    ],
+        ...(showButtons
+          ? [{
+              tag: 'column_set',
+              flex_mode: 'flow',
+              horizontal_spacing: '8px',
+              horizontal_align: 'left',
+              columns: buttons.map((b) => ({
+                tag: 'column',
+                width: 'auto',
+                elements: [
+                  {
+                    tag: 'button',
+                    text: { tag: 'plain_text', content: b.text },
+                    type: b.type,
+                    behaviors: [
+                      {
+                        type: 'callback',
+                        value: { callback_data: b.callbackData },
+                      },
+                    ],
+                  },
+                ],
+              })),
+            }]
+          : []),
+      ],
+    },
   };
 }

@@ -9995,7 +9995,7 @@ var require_form_data = __commonJS({
     var http2 = __require("http");
     var https = __require("https");
     var parseUrl = __require("url").parse;
-    var fs27 = __require("fs");
+    var fs28 = __require("fs");
     var Stream = __require("stream").Stream;
     var crypto4 = __require("crypto");
     var mime = require_mime_types();
@@ -10062,7 +10062,7 @@ var require_form_data = __commonJS({
         if (value2.end != void 0 && value2.end != Infinity && value2.start != void 0) {
           callback(null, value2.end + 1 - (value2.start ? value2.start : 0));
         } else {
-          fs27.stat(value2.path, function(err, stat) {
+          fs28.stat(value2.path, function(err, stat) {
             if (err) {
               callback(err);
               return;
@@ -23542,7 +23542,7 @@ var require_lib2 = __commonJS({
     var qs = require_lib();
     var identity = require_lodash();
     var pickBy = require_lodash2();
-    var fs27 = __require("fs");
+    var fs28 = __require("fs");
     var merge = require_lodash3();
     var qs$1 = __require("querystring");
     var WebSocket3 = require_ws();
@@ -23553,7 +23553,7 @@ var require_lib2 = __commonJS({
     var crypto__default = /* @__PURE__ */ _interopDefaultLegacy(crypto4);
     var identity__default = /* @__PURE__ */ _interopDefaultLegacy(identity);
     var pickBy__default = /* @__PURE__ */ _interopDefaultLegacy(pickBy);
-    var fs__default = /* @__PURE__ */ _interopDefaultLegacy(fs27);
+    var fs__default = /* @__PURE__ */ _interopDefaultLegacy(fs28);
     var merge__default = /* @__PURE__ */ _interopDefaultLegacy(merge);
     var qs__default = /* @__PURE__ */ _interopDefaultLegacy(qs$1);
     var WebSocket__default = /* @__PURE__ */ _interopDefaultLegacy(WebSocket3);
@@ -103116,7 +103116,7 @@ var require_lib2 = __commonJS({
 // node_modules/xmlhttprequest-ssl/lib/XMLHttpRequest.js
 var require_XMLHttpRequest = __commonJS({
   "node_modules/xmlhttprequest-ssl/lib/XMLHttpRequest.js"(exports2, module2) {
-    var fs27 = __require("fs");
+    var fs28 = __require("fs");
     var Url = __require("url");
     var spawn11 = __require("child_process").spawn;
     module2.exports = XMLHttpRequest3;
@@ -103274,7 +103274,7 @@ var require_XMLHttpRequest = __commonJS({
             throw new Error("XMLHttpRequest: Only GET method is supported");
           }
           if (settings.async) {
-            fs27.readFile(unescape(url2.pathname), function(error, data2) {
+            fs28.readFile(unescape(url2.pathname), function(error, data2) {
               if (error) {
                 self2.handleError(error, error.errno || -1);
               } else {
@@ -103286,7 +103286,7 @@ var require_XMLHttpRequest = __commonJS({
             });
           } else {
             try {
-              this.response = fs27.readFileSync(unescape(url2.pathname));
+              this.response = fs28.readFileSync(unescape(url2.pathname));
               this.responseText = this.response.toString("utf8");
               this.status = 200;
               setState(self2.DONE);
@@ -103412,15 +103412,15 @@ var require_XMLHttpRequest = __commonJS({
         } else {
           var contentFile = ".node-xmlhttprequest-content-" + process.pid;
           var syncFile = ".node-xmlhttprequest-sync-" + process.pid;
-          fs27.writeFileSync(syncFile, "", "utf8");
+          fs28.writeFileSync(syncFile, "", "utf8");
           var execString = "var http = require('http'), https = require('https'), fs = require('fs');var doRequest = http" + (ssl ? "s" : "") + ".request;var options = " + JSON.stringify(options) + ";var responseText = '';var responseData = Buffer.alloc(0);var req = doRequest(options, function(response) {response.on('data', function(chunk) {  var data = Buffer.from(chunk);  responseText += data.toString('utf8');  responseData = Buffer.concat([responseData, data]);});response.on('end', function() {fs.writeFileSync('" + contentFile + "', JSON.stringify({err: null, data: {statusCode: response.statusCode, headers: response.headers, text: responseText, data: responseData.toString('base64')}}), 'utf8');fs.unlinkSync('" + syncFile + "');});response.on('error', function(error) {fs.writeFileSync('" + contentFile + "', 'NODE-XMLHTTPREQUEST-ERROR:' + JSON.stringify(error), 'utf8');fs.unlinkSync('" + syncFile + "');});}).on('error', function(error) {fs.writeFileSync('" + contentFile + "', 'NODE-XMLHTTPREQUEST-ERROR:' + JSON.stringify(error), 'utf8');fs.unlinkSync('" + syncFile + "');});" + (data ? "req.write('" + JSON.stringify(data).slice(1, -1).replace(/'/g, "\\'") + "');" : "") + "req.end();";
           var syncProc = spawn11(process.argv[0], ["-e", execString]);
           var statusText;
-          while (fs27.existsSync(syncFile)) {
+          while (fs28.existsSync(syncFile)) {
           }
-          self2.responseText = fs27.readFileSync(contentFile, "utf8");
+          self2.responseText = fs28.readFileSync(contentFile, "utf8");
           syncProc.stdin.end();
-          fs27.unlinkSync(contentFile);
+          fs28.unlinkSync(contentFile);
           if (self2.responseText.match(/^NODE-XMLHTTPREQUEST-ERROR:/)) {
             var errorObj = JSON.parse(self2.responseText.replace(/^NODE-XMLHTTPREQUEST-ERROR:/, ""));
             self2.handleError(errorObj, 503);
@@ -103594,7 +103594,7 @@ var require_cjs = __commonJS({
 });
 
 // src/main.ts
-import fs26 from "node:fs";
+import fs27 from "node:fs";
 import path23 from "node:path";
 import os15 from "node:os";
 import crypto3 from "node:crypto";
@@ -104035,7 +104035,7 @@ function getRuntimeConfig(runtime) {
     openhuman: { model: "openhuman-v1", provider: "openhuman", displayName: "OpenHuman" },
     gemini: { model: "gemini-model", provider: "LiteLLM", displayName: "Gemini", role: "\u89C6\u9891/\u97F3\u9891\u961F\u957F\uFF1A\u8D1F\u8D23\u751F\u89C6\u9891/\u914D\u97F3/\u526A\u8F91/\u6210\u7247\uFF0C\u901A\u8FC7 Multica \u8C03\u5EA6\u89C6\u9891\u8BED\u97F3/\u914D\u97F3\u526A\u8F91\u4E13\u5BB6" },
     hermes: { model: "codex-model", provider: "LiteLLM", displayName: "Hermes", role: "\u6D4B\u8BD5\u961F\u957F\uFF1A\u5404\u961F\u4EA7\u51FA\u6D4B\u8BD5\u8D28\u68C0\uFF0C\u901A\u8FC7 Multica \u8C03\u5EA6\u6D4B\u8BD5\u5DE5\u7A0B\u5E08" },
-    openakita: { model: "codex-model", provider: "LiteLLM", displayName: "OpenAkita", role: "\u961F\u957F\uFF08\u5C97\u4F4D\u5F85\u5B9A\uFF09\uFF1A\u539F\u54E8\u5175/\u5DE1\u67E5\u804C\u8D23\u5DF2\u79FB\u4EA4 Multica \u5DE1\u68C0\u667A\u80FD\u4F53\uFF08\u5B9A\u65F6\u4EFB\u52A1\uFF09\uFF0C\u65B0\u5C97\u4F4D\u7531\u7528\u6237\u5B9A\u4E49\u4E2D" }
+    openakita: { model: "codex-model", provider: "LiteLLM", displayName: "OpenAkita", role: "GitHub \u63A8\u9001\u961F\u957F\uFF1A\u8D1F\u8D23\u5C06\u56E2\u961F\u4EA7\u7269/\u4EE3\u7801\u63A8\u9001\u5230 GitHub \u4ED3\u5E93\uFF08commit/branch/PR/\u53D1\u5E03\uFF09\uFF0C\u901A\u8FC7 Multica \u8C03\u5EA6\u4EA4\u4ED8\u5DE5\u7A0B\u5E08/\u7F16\u7801\u5DE5\u7A0B\u5E08" }
   };
   const d2 = defaults[runtime] || defaults.mimo;
   const config = {
@@ -104371,7 +104371,7 @@ async function processMessage(binding, text, onPermissionRequest, abortSignal, f
     } catch {
     }
   }, 6e4);
-  const WATCHDOG_TIMEOUT_MS = parseInt(process.env.CTI_WATCHDOG_TIMEOUT_MS || "600000", 10);
+  const WATCHDOG_TIMEOUT_MS = parseInt(process.env.CTI_WATCHDOG_TIMEOUT_MS || "1800000", 10);
   const watchdogTimer = setTimeout(() => {
     watchdogFired = true;
     console.error(`[conversation-engine] WATCHDOG: session ${sessionId.slice(0, 12)}... exceeded ${WATCHDOG_TIMEOUT_MS / 1e3}s, aborting`);
@@ -104567,7 +104567,7 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
       }
     }
   };
-  const STUCK_TIMEOUT_MS = 10 * 60 * 1e3;
+  const STUCK_TIMEOUT_MS = parseInt(process.env.CTI_STUCK_TIMEOUT_MS || "300000", 10);
   let lastActivityAt = Date.now();
   let stuckFired = false;
   const REASONING_REPEAT_THRESHOLD = 5;
@@ -104890,7 +104890,7 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
     clearTimeout(stuckTimer);
     if (stuckFired && !hasError) {
       hasError = true;
-      errorMessage = "\u26A0\uFE0F Task aborted: no output for 5 minutes. The model may be stuck or the API is unresponsive. Please try again.";
+      errorMessage = `\u26A0\uFE0F Task aborted: no output for ${STUCK_TIMEOUT_MS / 6e4} minutes. The model may be stuck or the API is unresponsive. Please try again.`;
       console.warn(`[conversation-engine] Stream stuck (session ${sessionId.slice(0, 12)}...) \u2014 reporting error to user`);
     }
     return {
@@ -104924,7 +104924,7 @@ async function consumeStream(stream, sessionId, runtime, collaborationModeOverri
     }
     const isAbort = e2 instanceof DOMException && e2.name === "AbortError" || e2 instanceof Error && e2.name === "AbortError";
     const finalHasError = stuckFired || !!isWatchdogFired || !isAbort && !stuckFired;
-    const finalErrorMessage = stuckFired ? "\u26A0\uFE0F Task aborted: no output for 5 minutes. The model may be stuck or the API is unresponsive. Please try again." : isWatchdogFired ? `\u26A0\uFE0F Task timed out after ${(watchdogTimeoutMs || 6e5) / 1e3}s. The model did not respond in time. Please try again.` : isAbort ? "Task stopped by user" : e2 instanceof Error ? e2.message : "Stream consumption error";
+    const finalErrorMessage = stuckFired ? `\u26A0\uFE0F Task aborted: no output for ${STUCK_TIMEOUT_MS / 6e4} minutes. The model may be stuck or the API is unresponsive. Please try again.` : isWatchdogFired ? `\u26A0\uFE0F Task timed out after ${(watchdogTimeoutMs || 6e5) / 1e3}s. The model did not respond in time. Please try again.` : isAbort ? "Task stopped by user" : e2 instanceof Error ? e2.message : "Stream consumption error";
     return {
       responseText: responseSegments.join("\n\n").trim(),
       responseSegments,
@@ -108232,10 +108232,10 @@ async function callCompactApi(prompt, compactConfig) {
   let model = compactConfig.model || "codex-model";
   if (!apiKey) {
     try {
-      const fs27 = await import("node:fs");
+      const fs28 = await import("node:fs");
       const providersPath = "/root/.claude/cc-haha/providers.json";
-      if (fs27.existsSync(providersPath)) {
-        const providersContent = fs27.readFileSync(providersPath, "utf-8");
+      if (fs28.existsSync(providersPath)) {
+        const providersContent = fs28.readFileSync(providersPath, "utf-8");
         const providersData = JSON.parse(providersContent);
         const activeProvider = providersData.providers.find(
           (p2) => p2.id === providersData.activeId
@@ -108364,7 +108364,7 @@ ${preserved[0].content}` });
 
 // src/feishu/adapter.ts
 var lark = __toESM(require_lib2(), 1);
-import fs10 from "node:fs";
+import fs11 from "node:fs";
 
 // src/bridge/markdown/feishu.ts
 function preprocessFeishuMarkdown(text) {
@@ -108382,6 +108382,7 @@ function buildCardContent(text, dividerInfo) {
     if (dividerInfo.agent) parts2.push(`Agent: ${dividerInfo.agent}`);
     if (dividerInfo.model) parts2.push(`Model: ${dividerInfo.model}`);
     if (dividerInfo.provider) parts2.push(`Provider: ${dividerInfo.provider}`);
+    if (dividerInfo.session) parts2.push(`Session: ${dividerInfo.session}`);
     const infoText = parts2.join(" | ") || "Agent: N/A";
     elements.push({
       tag: "markdown",
@@ -108406,6 +108407,7 @@ function buildPostContent(text, dividerInfo) {
     if (dividerInfo.agent) parts2.push(`Agent: ${dividerInfo.agent}`);
     if (dividerInfo.model) parts2.push(`Model: ${dividerInfo.model}`);
     if (dividerInfo.provider) parts2.push(`Provider: ${dividerInfo.provider}`);
+    if (dividerInfo.session) parts2.push(`Session: ${dividerInfo.session}`);
     const infoText = parts2.join(" | ") || "Agent: N/A";
     finalText = `${text}
 
@@ -109894,41 +109896,72 @@ function buildReplayMessageText(runtime, item, partIndex = 0, totalParts = 1) {
 ${body}`;
 }
 function buildInterruptCard(opts) {
-  const { chatId, messageId, botName } = opts;
+  const { chatId, messageId, botName, status = "pending" } = opts;
+  const buttons = [
+    { text: "\u26A1 \u7ACB\u5373\u63D2\u961F", callbackData: `interrupt:yes:${chatId}:${messageId}`, type: "primary" },
+    { text: "\u{1F5D1} \u53D6\u6D88\u6D88\u606F", callbackData: `interrupt:cancel:${chatId}:${messageId}`, type: "danger" },
+    { text: "\u23F3 \u7A0D\u540E\u5904\u7406", callbackData: `interrupt:no:${chatId}:${messageId}`, type: "default" }
+  ];
+  const statusContent = {
+    pending: `**${botName}** \u6B63\u5728\u5904\u7406\u4E0A\u4E00\u6761\u6D88\u606F\u3002
+\u4F60\u7684\u65B0\u6D88\u606F\u5DF2\u6392\u5728\u961F\u5217\u6700\u524D\uFF1A
+- **\u26A1 \u7ACB\u5373\u63D2\u961F**\uFF1A\u4E2D\u65AD\u5F53\u524D\u4EFB\u52A1\uFF0810 \u79D2\u672A\u64CD\u4F5C\u5C06\u81EA\u52A8\u9009\u62E9\u6B64\u9879\uFF09
+- **\u{1F5D1} \u53D6\u6D88\u6D88\u606F**\uFF1A\u64A4\u56DE\u8FD9\u6761\u6D88\u606F
+- **\u23F3 \u7A0D\u540E\u5904\u7406**\uFF1A\u7B49\u5F53\u524D\u4EFB\u52A1\u5B8C\u6210\u540E\u518D\u5904\u7406`,
+    auto: `**${botName}** \u6B63\u5728\u5904\u7406\u4E0A\u4E00\u6761\u6D88\u606F\u3002
+\u23F1\uFE0F **10 \u79D2\u672A\u64CD\u4F5C\uFF0C\u5DF2\u81EA\u52A8\u63D2\u961F**\uFF1A\u5F53\u524D\u4EFB\u52A1\u5DF2\u4E2D\u65AD\uFF0C\u4F60\u7684\u65B0\u6D88\u606F\u4F18\u5148\u5904\u7406\u4E2D\u2026`,
+    yes: `**${botName}** \u6B63\u5728\u5904\u7406\u4E0A\u4E00\u6761\u6D88\u606F\u3002
+\u26A1 **\u5DF2\u7ACB\u5373\u63D2\u961F**\uFF1A\u5F53\u524D\u4EFB\u52A1\u5DF2\u4E2D\u65AD\uFF0C\u4F60\u7684\u65B0\u6D88\u606F\u4F18\u5148\u5904\u7406\u4E2D\u2026`,
+    no: `**${botName}** \u6B63\u5728\u5904\u7406\u4E0A\u4E00\u6761\u6D88\u606F\u3002
+\u23F3 **\u5DF2\u6392\u961F**\uFF1A\u4F60\u7684\u65B0\u6D88\u606F\u5C06\u5728\u5F53\u524D\u4EFB\u52A1\u5B8C\u6210\u540E\u81EA\u52A8\u5904\u7406\u3002`,
+    cancel: `**${botName}** \u6B63\u5728\u5904\u7406\u4E0A\u4E00\u6761\u6D88\u606F\u3002
+\u{1F5D1} **\u5DF2\u53D6\u6D88\u8FD9\u6761\u6D88\u606F**\uFF1A\u5F53\u524D\u4EFB\u52A1\u7EE7\u7EED\u5904\u7406\uFF0C\u8BE5\u6D88\u606F\u4E0D\u4F1A\u518D\u6267\u884C\u3002`
+  };
+  const showButtons = status === "pending";
   return {
     schema: "2.0",
-    config: { wide_screen_mode: true, update_multi: true },
+    config: {
+      wide_screen_mode: true,
+      update_multi: true
+    },
     header: {
-      title: { tag: "plain_text", content: "\u26A1 \u662F\u5426\u63D2\u961F\uFF1F" },
+      title: {
+        tag: "plain_text",
+        content: status === "pending" ? "\u26A1 \u662F\u5426\u63D2\u961F\uFF1F" : "\u26A1 \u63D2\u961F"
+      },
       template: "orange"
     },
-    elements: [
-      {
-        tag: "div",
-        text: {
-          tag: "lark_md",
-          content: `**${botName}** \u6B63\u5728\u5904\u7406\u4E0A\u4E00\u6761\u6D88\u606F\u3002
-\u4F60\u7684\u65B0\u6D88\u606F\u5DF2\u6392\u5728\u961F\u5217\u6700\u524D\uFF0C\u53EF**\u63D2\u961F\u7ACB\u5373\u6253\u65AD**\u5F53\u524D\u4EFB\u52A1\uFF0C\u6216**\u7A0D\u540E\u5904\u7406**\uFF08\u7B49\u5F53\u524D\u4EFB\u52A1\u5B8C\u6210\uFF09\u3002`
-        }
-      },
-      {
-        tag: "action",
-        actions: [
-          {
-            tag: "button",
-            text: { tag: "plain_text", content: "\u26A1 \u7ACB\u5373\u63D2\u961F" },
-            type: "primary",
-            behaviors: [{ type: "callback", value: { callback_data: `interrupt:yes:${chatId}:${messageId}` } }]
-          },
-          {
-            tag: "button",
-            text: { tag: "plain_text", content: "\u7A0D\u540E\u5904\u7406" },
-            type: "default",
-            behaviors: [{ type: "callback", value: { callback_data: `interrupt:no:${chatId}:${messageId}` } }]
-          }
-        ]
-      }
-    ]
+    body: {
+      elements: [
+        {
+          tag: "markdown",
+          content: statusContent[status]
+        },
+        ...showButtons ? [{
+          tag: "column_set",
+          flex_mode: "flow",
+          horizontal_spacing: "8px",
+          horizontal_align: "left",
+          columns: buttons.map((b2) => ({
+            tag: "column",
+            width: "auto",
+            elements: [
+              {
+                tag: "button",
+                text: { tag: "plain_text", content: b2.text },
+                type: b2.type,
+                behaviors: [
+                  {
+                    type: "callback",
+                    value: { callback_data: b2.callbackData }
+                  }
+                ]
+              }
+            ]
+          }))
+        }] : []
+      ]
+    }
   };
 }
 
@@ -110963,18 +110996,85 @@ ${history}
 }
 async function maybeOfferInterrupt(ctx, binding, inbound) {
   const sessionId = binding.codepilotSessionId || binding.sdkSessionId;
-  if (!sessionId || !isSessionBusy(sessionId)) return false;
+  const busy = !!sessionId && isSessionBusy(sessionId);
+  rtLog(`[maybeOfferInterrupt] chat=${inbound.address.chatId} sessionId=${sessionId || "(none)"} busy=${busy} codepilot=${binding.codepilotSessionId || "(none)"} sdk=${binding.sdkSessionId || "(none)"}`);
+  console.log(
+    `[inbound-handler] maybeOfferInterrupt chat=${inbound.address.chatId} sessionId=${sessionId || "(none)"} busy=${busy} codepilot=${binding.codepilotSessionId || "(none)"} sdk=${binding.sdkSessionId || "(none)"}`
+  );
+  if (!sessionId || !busy) {
+    rtLog(`[maybeOfferInterrupt] NOT busy (sessionId=${sessionId || "(none)"}), skip interrupt card`);
+    return false;
+  }
   ctx.enqueue(inbound);
   try {
-    await ctx.sendInteractiveCard(inbound.address, buildInterruptCard({
+    const result = await ctx.sendInteractiveCard(inbound.address, buildInterruptCard({
       chatId: inbound.address.chatId,
       messageId: inbound.messageId,
       botName: ctx.label
     }));
+    rtLog(`[maybeOfferInterrupt] interrupt card sent: messageId=${result.messageId} openId=${result.openMessageId || "(none)"}`);
+    setInterruptCardMessageId(inbound.messageId, result.messageId);
+    scheduleAutoInterrupt(ctx, sessionId, inbound, result.messageId);
   } catch (e2) {
+    rtLog(`[maybeOfferInterrupt] send interrupt card FAILED: ${e2}`);
     console.warn("[feishu-adapter] send interrupt card failed:", e2);
   }
   return true;
+}
+var autoInterruptTimers = /* @__PURE__ */ new Map();
+var AUTO_INTERRUPT_MS = parseInt(process.env.CTI_AUTO_INTERRUPT_MS || "10000", 10);
+var interruptCardMessageIds = /* @__PURE__ */ new Map();
+function getInterruptCardMessageId(messageId) {
+  return interruptCardMessageIds.get(messageId);
+}
+function setInterruptCardMessageId(messageId, cardMessageId) {
+  interruptCardMessageIds.set(messageId, cardMessageId);
+}
+function deleteInterruptCardMessageId(messageId) {
+  interruptCardMessageIds.delete(messageId);
+}
+function scheduleAutoInterrupt(ctx, sessionId, inbound, cardMessageId) {
+  const chatId = inbound.address.chatId;
+  const existing = autoInterruptTimers.get(chatId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(async () => {
+    autoInterruptTimers.delete(chatId);
+    if (!isSessionBusy(sessionId)) {
+      rtLog(`[autoInterrupt] chat=${chatId} session=${sessionId.slice(0, 8)} no longer busy, skip auto interrupt`);
+      return;
+    }
+    const interrupted = interruptActiveTask(sessionId);
+    rtLog(`[autoInterrupt] chat=${chatId} session=${sessionId.slice(0, 8)} auto interrupt after ${AUTO_INTERRUPT_MS}ms, interrupted=${interrupted}`);
+    if (interrupted) {
+      try {
+        await ctx.patchInteractiveCard(cardMessageId, buildInterruptCard({
+          chatId,
+          messageId: inbound.messageId,
+          botName: ctx.label,
+          status: "auto"
+        }));
+        rtLog(`[autoInterrupt] interrupt card updated to auto status: ${cardMessageId}`);
+      } catch (e2) {
+        rtLog(`[autoInterrupt] update interrupt card failed: ${e2}`);
+        console.warn("[feishu-adapter] auto interrupt card patch failed:", e2);
+      }
+      try {
+        await ctx.sendAsPost(inbound.address, `\u23F1\uFE0F ${AUTO_INTERRUPT_MS / 1e3}s \u672A\u64CD\u4F5C\uFF0C\u5DF2\u81EA\u52A8\u63D2\u961F\uFF1A\u5F53\u524D\u4EFB\u52A1\u5DF2\u4E2D\u65AD\uFF0C\u4F60\u7684\u65B0\u6D88\u606F\u4F18\u5148\u5904\u7406\u4E2D\u2026`, inbound.messageId);
+      } catch (e2) {
+        console.warn("[feishu-adapter] auto interrupt feedback failed:", e2);
+      }
+    }
+  }, AUTO_INTERRUPT_MS);
+  autoInterruptTimers.set(chatId, timer);
+  rtLog(`[autoInterrupt] chat=${chatId} session=${sessionId.slice(0, 8)} auto interrupt scheduled in ${AUTO_INTERRUPT_MS}ms`);
+}
+function cancelAutoInterrupt(chatId) {
+  const existing = autoInterruptTimers.get(chatId);
+  if (existing) {
+    clearTimeout(existing);
+    autoInterruptTimers.delete(chatId);
+    rtLog(`[autoInterrupt] chat=${chatId} auto interrupt cancelled (user chose \u7A0D\u540E\u5904\u7406)`);
+  }
 }
 async function handleGroupMessage(ctx, _sender, inbound) {
   const store = ctx.getStore();
@@ -111671,6 +111771,16 @@ async function handleClaudePlanExitCardAction(ctx, event, callbackData) {
 }
 
 // src/feishu/handlers/session-handler.ts
+import fs9 from "node:fs";
+var DEBUG_LOG2 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog2(msg) {
+  const time = (/* @__PURE__ */ new Date()).toISOString();
+  try {
+    fs9.appendFileSync(DEBUG_LOG2, `[${time}] ${msg}
+`, "utf-8");
+  } catch {
+  }
+}
 async function handleCreateSessionCommand(ctx, sender, inbound, runtime) {
   try {
     await ctx.ensureRuntimeAvailable(runtime);
@@ -111831,7 +111941,9 @@ async function handleResumeCardAction(ctx, event, callbackData) {
 }
 async function handleInterruptCardAction(ctx, event, callbackData) {
   const [, action, chatId, messageId] = callbackData.split(":");
-  if (action !== "yes" && action !== "no") {
+  rtLog2(`[handleInterruptCardAction] action=${action} chatId=${chatId} messageId=${messageId}`);
+  console.log(`[session-handler] handleInterruptCardAction action=${action} chatId=${chatId} messageId=${messageId}`);
+  if (action !== "yes" && action !== "no" && action !== "cancel") {
     return { toast: { type: "warning", content: "Unsupported action" } };
   }
   if (!chatId) {
@@ -111846,7 +111958,21 @@ async function handleInterruptCardAction(ctx, event, callbackData) {
     channelInstanceId: ctx.profileId,
     chatId
   };
+  if (action === "cancel") {
+    cancelAutoInterrupt(chatId);
+    await patchInterruptCardStatus(ctx, messageId, chatId, "cancel");
+    const removed = ctx.cancelInboundMessage(messageId);
+    rtLog2(`[handleInterruptCardAction] cancel messageId=${messageId} removed=${removed}`);
+    try {
+      await ctx.sendAsPost(address, removed ? "\u{1F5D1} \u5DF2\u64A4\u56DE\u8FD9\u6761\u6D88\u606F\uFF0C\u5F53\u524D\u4EFB\u52A1\u7EE7\u7EED\u5904\u7406\u3002" : "\u{1F5D1} \u6D88\u606F\u5DF2\u4F5C\u5E9F\uFF08\u53EF\u80FD\u6B63\u5728\u5904\u7406\uFF09\uFF0C\u4E0D\u4F1A\u518D\u88AB\u6D88\u8D39\u3002", messageId);
+    } catch (e2) {
+      console.warn("[feishu-adapter] interrupt:cancel feedback failed:", e2);
+    }
+    return { toast: { type: "success", content: "\u5DF2\u53D6\u6D88\u8BE5\u6D88\u606F" } };
+  }
   if (action === "no") {
+    cancelAutoInterrupt(chatId);
+    await patchInterruptCardStatus(ctx, messageId, chatId, "no");
     try {
       await ctx.sendAsPost(address, "\u597D\u7684\uFF0C\u65B0\u6D88\u606F\u5DF2\u6392\u5165\u961F\u5217\uFF0C\u5F53\u524D\u4EFB\u52A1\u5B8C\u6210\u540E\u4F1A\u81EA\u52A8\u5904\u7406\u3002", messageId);
     } catch (e2) {
@@ -111861,6 +111987,7 @@ async function handleInterruptCardAction(ctx, event, callbackData) {
   const sessionId = binding.codepilotSessionId || binding.sdkSessionId;
   const wasBusy = !!sessionId && isSessionBusy(sessionId);
   const interrupted = sessionId ? interruptActiveTask(sessionId) : false;
+  await patchInterruptCardStatus(ctx, messageId, chatId, "yes");
   try {
     if (wasBusy && interrupted) {
       await ctx.sendAsPost(address, "\u26A1 \u5DF2\u4E2D\u65AD\u5F53\u524D\u4EFB\u52A1\uFF0C\u4F60\u7684\u65B0\u6D88\u606F\u4F18\u5148\u5904\u7406\u4E2D\u2026", messageId);
@@ -111873,6 +112000,27 @@ async function handleInterruptCardAction(ctx, event, callbackData) {
     console.warn("[feishu-adapter] interrupt:yes feedback failed:", e2);
   }
   return { toast: { type: "success", content: wasBusy ? "\u5DF2\u63D2\u961F" : "\u65E0\u4EFB\u52A1\u53EF\u4E2D\u65AD" } };
+}
+async function patchInterruptCardStatus(ctx, messageId, chatId, status) {
+  const cardMessageId = getInterruptCardMessageId(messageId);
+  if (!cardMessageId) {
+    rtLog2(`[patchInterruptCard] no card mapping for messageId=${messageId}`);
+    return;
+  }
+  try {
+    await ctx.patchInteractiveCard(cardMessageId, buildInterruptCard({
+      chatId,
+      messageId,
+      botName: ctx.label,
+      status
+    }));
+    rtLog2(`[patchInterruptCard] card ${cardMessageId} -> status=${status}`);
+  } catch (e2) {
+    rtLog2(`[patchInterruptCard] failed: ${e2}`);
+    console.warn("[feishu-adapter] patch interrupt card failed:", e2);
+  } finally {
+    deleteInterruptCardMessageId(messageId);
+  }
 }
 async function replayNativeSessionHistory(ctx, address, runtime, items) {
   for (const item of items) {
@@ -112049,7 +112197,7 @@ async function handleStructuredInputCardAction(ctx, event, callbackData) {
 // src/feishu/lark-client.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { exec } from "node:child_process";
-import fs9 from "node:fs";
+import fs10 from "node:fs";
 var LarkClient = class {
   outboundMessageQueues = /* @__PURE__ */ new Map();
   lastOutboundMessageAt = /* @__PURE__ */ new Map();
@@ -112219,7 +112367,7 @@ var LarkClient = class {
     if (!this.client) {
       throw new Error("Feishu client not initialized");
     }
-    const image = fs9.readFileSync(filePath);
+    const image = fs10.readFileSync(filePath);
     const response = await this.client.im.image.create({
       data: {
         image_type: "message",
@@ -112862,11 +113010,11 @@ var PreviewService = class {
 };
 
 // src/feishu/adapter.ts
-var DEBUG_LOG2 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
-function rtLog2(msg) {
+var DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog3(msg) {
   const time = (/* @__PURE__ */ new Date()).toISOString();
   try {
-    fs10.appendFileSync(DEBUG_LOG2, `[${time}] ${msg}
+    fs11.appendFileSync(DEBUG_LOG3, `[${time}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -112893,6 +113041,8 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
   running = false;
   queue = [];
   waiters = [];
+  /** 用户通过插队卡"取消消息"按钮标记作废的消息 id（从队列移除 + 防止已入链的执行） */
+  cancelledMessageIds = /* @__PURE__ */ new Set();
   wsClient = null;
   chatQueues = /* @__PURE__ */ new Map();
   seenMessageIds = /* @__PURE__ */ new Map();
@@ -113000,6 +113150,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
       markSeenMessage: this.markSeenMessage.bind(this),
       enqueue: this.enqueue.bind(this),
       enqueueChatTask: this.enqueueChatTask.bind(this),
+      cancelInboundMessage: this.cancelInboundMessage.bind(this),
       ingestToMemoryTree: this.ingestToMemoryTree.bind(this),
       sendAsPost: this.sendAsPost.bind(this),
       sendAsInteractiveCard: this.sendAsInteractiveCard.bind(this),
@@ -113188,12 +113339,28 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
     return this.running;
   }
   consumeOne() {
-    const queued = this.queue.shift();
-    if (queued) return Promise.resolve(queued);
+    while (this.queue.length > 0) {
+      const queued = this.queue.shift();
+      if (queued && this.cancelledMessageIds.has(queued.messageId)) {
+        this.cancelledMessageIds.delete(queued.messageId);
+        continue;
+      }
+      if (queued) return Promise.resolve(queued);
+    }
     if (!this.running) return Promise.resolve(null);
     return new Promise((resolve2) => {
       this.waiters.push(resolve2);
     });
+  }
+  /** 取消一条已入队的消息（插队卡"取消消息"按钮）：从队列移除 + 标记作废 */
+  cancelInboundMessage(messageId) {
+    this.cancelledMessageIds.add(messageId);
+    const idx = this.queue.findIndex((m2) => m2.messageId === messageId);
+    if (idx !== -1) {
+      this.queue.splice(idx, 1);
+      return true;
+    }
+    return false;
   }
   validateConfig() {
     const store = this.tryGetStore();
@@ -113447,13 +113614,13 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
     return this.inboundImageService.downloadInboundImageAttachment(messageId, imageKey);
   }
   async downloadAndTranscribe(messageId, fileKey) {
-    rtLog2(`[VOICE-DEBUG] downloadAndTranscribe called with messageId=${messageId}, fileKey=${fileKey}`);
+    rtLog3(`[VOICE-DEBUG] downloadAndTranscribe called with messageId=${messageId}, fileKey=${fileKey}`);
     const client = this.getLarkClient().getClient();
     if (!client?.im?.messageResource?.get) {
-      rtLog2(`[VOICE-DEBUG] Feishu audio resource download capability unavailable`);
+      rtLog3(`[VOICE-DEBUG] Feishu audio resource download capability unavailable`);
       throw new Error("Feishu \u97F3\u9891\u8D44\u6E90\u4E0B\u8F7D\u80FD\u529B\u4E0D\u53EF\u7528");
     }
-    rtLog2(`[VOICE-DEBUG] Client and im.messageResource.get method available`);
+    rtLog3(`[VOICE-DEBUG] Client and im.messageResource.get method available`);
     const path24 = await import("node:path");
     const os16 = await import("node:os");
     const fsp = await import("node:fs/promises");
@@ -113461,7 +113628,7 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
     const tmpFile = path24.join(tmpDir, `${messageId}.opus`);
     const wavFile = path24.join(tmpDir, `asr_${messageId}.wav`);
     await fsp.mkdir(tmpDir, { recursive: true });
-    rtLog2(`[VOICE-DEBUG] Downloading audio resource from messageId=${messageId}, fileKey=${fileKey}`);
+    rtLog3(`[VOICE-DEBUG] Downloading audio resource from messageId=${messageId}, fileKey=${fileKey}`);
     const response = await client.im.messageResource.get({
       params: { type: "file" },
       // 音频文件用 file 类型
@@ -113470,35 +113637,35 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
         file_key: fileKey
       }
     });
-    rtLog2(`[VOICE-DEBUG] Download response received`);
+    rtLog3(`[VOICE-DEBUG] Download response received`);
     const stream = response.getReadableStream();
-    rtLog2(`[VOICE-DEBUG] Getting readable stream from response`);
+    rtLog3(`[VOICE-DEBUG] Getting readable stream from response`);
     const chunks = [];
     for await (const chunk of stream) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
-    rtLog2(`[VOICE-DEBUG] Stream read complete, total chunks: ${chunks.length}`);
+    rtLog3(`[VOICE-DEBUG] Stream read complete, total chunks: ${chunks.length}`);
     const buffer = Buffer.concat(chunks);
     await fsp.writeFile(tmpFile, buffer);
-    rtLog2(`[VOICE-DEBUG] Audio file written to ${tmpFile}`);
+    rtLog3(`[VOICE-DEBUG] Audio file written to ${tmpFile}`);
     const isWin2 = process.platform === "win32";
     const cleanup = async () => {
-      rtLog2(`[VOICE-DEBUG] Running cleanup: deleting ${tmpFile}, ${wavFile}`);
+      rtLog3(`[VOICE-DEBUG] Running cleanup: deleting ${tmpFile}, ${wavFile}`);
       await fsp.unlink(tmpFile).catch(() => {
       });
       await fsp.unlink(wavFile).catch(() => {
       });
-      rtLog2(`[VOICE-DEBUG] Cleanup completed`);
+      rtLog3(`[VOICE-DEBUG] Cleanup completed`);
     };
     try {
       let text;
       if (isWin2) {
-        rtLog2(`[VOICE-DEBUG] Starting Windows audio processing`);
+        rtLog3(`[VOICE-DEBUG] Starting Windows audio processing`);
         const { spawnSync } = await import("node:child_process");
         const ffmpeg = "C:\\Users\\oadan\\AppData\\Local\\Microsoft\\WinGet\\Links\\ffmpeg.exe";
         const sherpaBin = "C:\\D\\opt\\sherpa-onnx\\bin\\sherpa-onnx-offline.exe";
         const modelDir = "C:\\D\\opt\\sherpa-onnx\\models\\sensevoice-int8";
-        rtLog2(`[VOICE-DEBUG] Executing ffmpeg conversion`);
+        rtLog3(`[VOICE-DEBUG] Executing ffmpeg conversion`);
         const ffmpegResult = spawnSync(ffmpeg, ["-y", "-i", tmpFile, "-ar", "16000", "-ac", "1", "-f", "wav", wavFile], {
           windowsHide: true,
           timeout: 3e4,
@@ -113507,11 +113674,11 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
         if (ffmpegResult.error || ffmpegResult.status !== 0) {
           const errorMsg = ffmpegResult.error?.message || ffmpegResult.stderr?.toString() || "Unknown ffmpeg error";
           console.error("[feishu-adapter] ffmpeg conversion failed:", errorMsg);
-          rtLog2(`[VOICE-DEBUG] ffmpeg conversion failed: ${errorMsg}`);
+          rtLog3(`[VOICE-DEBUG] ffmpeg conversion failed: ${errorMsg}`);
           throw new Error("ffmpeg \u97F3\u9891\u8F6C\u6362\u5931\u8D25");
         }
-        rtLog2(`[VOICE-DEBUG] FFmpeg conversion completed`);
-        rtLog2(`[VOICE-DEBUG] Executing sherpa-onnx recognition via HTTP service`);
+        rtLog3(`[VOICE-DEBUG] FFmpeg conversion completed`);
+        rtLog3(`[VOICE-DEBUG] Executing sherpa-onnx recognition via HTTP service`);
         const startTime = Date.now();
         const http2 = await import("node:http");
         const postData = JSON.stringify({ audioPath: wavFile });
@@ -113547,11 +113714,11 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
           req.end();
         });
         const elapsed = ((Date.now() - startTime) / 1e3).toFixed(2);
-        rtLog2(`[VOICE-DEBUG] Sherpa-onnx recognition completed (${elapsed}s)`);
-        rtLog2(`[VOICE-DEBUG] Sherpa raw output: "${sherpaOutput.substring(0, 200)}"`);
+        rtLog3(`[VOICE-DEBUG] Sherpa-onnx recognition completed (${elapsed}s)`);
+        rtLog3(`[VOICE-DEBUG] Sherpa raw output: "${sherpaOutput.substring(0, 200)}"`);
         text = sherpaOutput;
         if (text) {
-          rtLog2(`[VOICE-DEBUG] Starting punctuation recovery`);
+          rtLog3(`[VOICE-DEBUG] Starting punctuation recovery`);
           const scriptDir = "C:\\Users\\oadan\\.openclaw\\workspace\\main\\skills\\voice-engine";
           const punctResult = spawnSync("node", [path24.join(scriptDir, "add-punctuation.mjs"), text], {
             windowsHide: true,
@@ -113562,12 +113729,12 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
           if (!punctResult.error && punctResult.status === 0 && punctResult.stdout) {
             text = punctResult.stdout.trim();
           }
-          rtLog2(`[VOICE-DEBUG] Punctuation recovery completed: "${text.substring(0, 50)}..."`);
+          rtLog3(`[VOICE-DEBUG] Punctuation recovery completed: "${text.substring(0, 50)}..."`);
         } else {
-          rtLog2(`[VOICE-DEBUG] No text extracted from sherpa output`);
+          rtLog3(`[VOICE-DEBUG] No text extracted from sherpa output`);
         }
       } else {
-        rtLog2(`[VOICE-DEBUG] Starting Linux audio processing`);
+        rtLog3(`[VOICE-DEBUG] Starting Linux audio processing`);
         const { execFileSync } = await import("node:child_process");
         const transcribeScript = "/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh";
         text = execFileSync("bash", [transcribeScript, tmpFile], {
@@ -113576,13 +113743,13 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
           stdio: ["ignore", "pipe", "pipe"],
           env: { ...process.env, LD_LIBRARY_PATH: "/sherpa-onnx/lib:" + (process.env.LD_LIBRARY_PATH || "") }
         }).trim();
-        rtLog2(`[VOICE-DEBUG] Linux audio processing completed: "${text.substring(0, 50)}..."`);
+        rtLog3(`[VOICE-DEBUG] Linux audio processing completed: "${text.substring(0, 50)}..."`);
       }
       await cleanup();
-      rtLog2(`[VOICE-DEBUG] downloadAndTranscribe completed successfully, returning text`);
+      rtLog3(`[VOICE-DEBUG] downloadAndTranscribe completed successfully, returning text`);
       return { text, noSpeech: !text.trim() };
     } catch (error) {
-      rtLog2(`[VOICE-DEBUG] downloadAndTranscribe caught error: ${error instanceof Error ? error.message : String(error)}`);
+      rtLog3(`[VOICE-DEBUG] downloadAndTranscribe caught error: ${error instanceof Error ? error.message : String(error)}`);
       await cleanup();
       throw error;
     }
@@ -114117,6 +114284,10 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
     return getBridgeContext().store;
   }
   enqueue(msg) {
+    if (this.cancelledMessageIds.has(msg.messageId)) {
+      this.cancelledMessageIds.delete(msg.messageId);
+      return;
+    }
     const waiter = this.waiters.shift();
     if (waiter) {
       waiter(msg);
@@ -114301,14 +114472,14 @@ var FeishuAdapter = class _FeishuAdapter extends BaseChannelAdapter {
 
 // src/providers/codex/codex-provider.ts
 import { exec as exec2 } from "node:child_process";
-import fs12 from "node:fs/promises";
+import fs13 from "node:fs/promises";
 import fsSync from "node:fs";
 import os6 from "node:os";
 import path11 from "node:path";
 
 // src/providers/codex/app-server-client.ts
 import { spawn as spawn2 } from "node:child_process";
-import fs11 from "node:fs";
+import fs12 from "node:fs";
 import os5 from "node:os";
 import path10 from "node:path";
 import readline from "node:readline";
@@ -114371,7 +114542,7 @@ function isProcessRunning(pid) {
 function readSavedPid() {
   const pidFile = resolvePidFile();
   try {
-    const content = fs11.readFileSync(pidFile, "utf8").trim();
+    const content = fs12.readFileSync(pidFile, "utf8").trim();
     const pid = parseInt(content, 10);
     if (pid > 0) return pid;
   } catch {
@@ -114382,8 +114553,8 @@ function savePid(pid) {
   const pidFile = resolvePidFile();
   const pidDir = path10.dirname(pidFile);
   try {
-    fs11.mkdirSync(pidDir, { recursive: true });
-    fs11.writeFileSync(pidFile, String(pid));
+    fs12.mkdirSync(pidDir, { recursive: true });
+    fs12.writeFileSync(pidFile, String(pid));
   } catch (error) {
     console.warn("[codex-app-server] Failed to save PID file:", error);
   }
@@ -115474,18 +115645,18 @@ var CodexProvider = class {
           }
         } else if (tool === "Read") {
           const filePath = String(toolArgs.path || toolArgs.file || "");
-          resultText = await fs12.readFile(filePath, "utf8");
+          resultText = await fs13.readFile(filePath, "utf8");
           success = true;
         } else if (tool === "Edit" || tool === "Write") {
           const filePath = String(toolArgs.path || toolArgs.file || "");
           const content = String(toolArgs.content || toolArgs.text || "");
-          await fs12.writeFile(filePath, content, "utf8");
+          await fs13.writeFile(filePath, content, "utf8");
           resultText = "Done";
           success = true;
         } else if (tool === "Glob") {
           const pattern = String(toolArgs.pattern || "");
           const searchPath = toolArgs.path ? String(toolArgs.path) : void 0;
-          const files = await fs12.readdir(searchPath || ".");
+          const files = await fs13.readdir(searchPath || ".");
           resultText = files.join("\n") || "(no files)";
           success = true;
         } else if (tool === "Grep") {
@@ -125253,7 +125424,7 @@ function Ph({ prompt: Q, options: $ }) {
 }
 
 // src/providers/claude/cli-support.ts
-import fs13 from "node:fs";
+import fs14 from "node:fs";
 import { execSync } from "node:child_process";
 var ENV_WHITELIST = /* @__PURE__ */ new Set([
   "PATH",
@@ -125393,13 +125564,13 @@ function preflightCheck(cliPath) {
 }
 function isExecutable(p2) {
   try {
-    fs13.accessSync(p2, fs13.constants.X_OK);
+    fs14.accessSync(p2, fs14.constants.X_OK);
     return true;
   } catch {
     return false;
   }
 }
-function resolveWindowsNpmClaudeCliShim(cliPath, pathExists = fs13.existsSync) {
+function resolveWindowsNpmClaudeCliShim(cliPath, pathExists = fs14.existsSync) {
   const normalized = cliPath.replace(/\\/g, "/");
   if (!/\/npm\/claude(\.cmd)?$/i.test(normalized)) {
     return cliPath;
@@ -125420,7 +125591,7 @@ function normalizeConfiguredClaudeCliPath(cliPath, platform = process.platform) 
   if (isWindowsStylePath(trimmed)) return void 0;
   return trimmed;
 }
-function parseWindowsWhereClaudeOutput(output, pathExists = fs13.existsSync) {
+function parseWindowsWhereClaudeOutput(output, pathExists = fs14.existsSync) {
   return output.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((candidate) => resolveWindowsNpmClaudeCliShim(candidate, pathExists));
 }
 function findAllInPath() {
@@ -130107,14 +130278,14 @@ function createOpenHumanProvider(config) {
 
 // src/providers/zcode/zcode-provider.ts
 import { spawn as spawn3 } from "node:child_process";
-import fs14 from "node:fs";
+import fs15 from "node:fs";
 import path12 from "node:path";
 function loadMcpServers() {
   const ctiHome = process.env.CTI_HOME || "";
   const configPath = path12.join(ctiHome, "mcpServers.json");
   try {
-    if (!fs14.existsSync(configPath)) return [];
-    const raw = JSON.parse(fs14.readFileSync(configPath, "utf-8"));
+    if (!fs15.existsSync(configPath)) return [];
+    const raw = JSON.parse(fs15.readFileSync(configPath, "utf-8"));
     return Object.entries(raw).map(([name, cfg]) => ({
       name,
       command: cfg.command,
@@ -130130,11 +130301,11 @@ function findSandboxDir(agent) {
   const base = "/opt/.zcode/v2/acp-config";
   const agentDir = path12.join(base, agent);
   try {
-    const entries = fs14.readdirSync(agentDir).filter((e2) => {
+    const entries = fs15.readdirSync(agentDir).filter((e2) => {
       const dir = path12.join(agentDir, e2);
-      if (!fs14.statSync(dir).isDirectory()) return false;
-      if (agent === "gemini") return fs14.existsSync(path12.join(dir, ".gemini", "settings.json"));
-      if (agent === "opencode") return fs14.existsSync(path12.join(dir, "opencode.json"));
+      if (!fs15.statSync(dir).isDirectory()) return false;
+      if (agent === "gemini") return fs15.existsSync(path12.join(dir, ".gemini", "settings.json"));
+      if (agent === "opencode") return fs15.existsSync(path12.join(dir, "opencode.json"));
       return true;
     }).sort().reverse();
     return entries.length > 0 ? path12.join(agentDir, entries[0]) : null;
@@ -130603,8 +130774,8 @@ ${prompt}`;
   loadSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (!fs14.existsSync(filePath)) return null;
-      const data = JSON.parse(fs14.readFileSync(filePath, "utf8"));
+      if (!fs15.existsSync(filePath)) return null;
+      const data = JSON.parse(fs15.readFileSync(filePath, "utf8"));
       if (data?.sessionId && data?.cwd) {
         console.log(`[zcode-provider] Session loaded from disk: ${data.sessionId} (was saved ${data.savedAt || "?"})`);
         return { sessionId: data.sessionId, cwd: data.cwd };
@@ -130617,10 +130788,10 @@ ${prompt}`;
   /** 保存 sessionId 到磁盘 */
   saveSession(cacheKey, sessionId, cwd) {
     try {
-      fs14.mkdirSync(_ZCodeProvider.SESSION_DIR, { recursive: true });
+      fs15.mkdirSync(_ZCodeProvider.SESSION_DIR, { recursive: true });
       const filePath = this.sessionFilePath(cacheKey);
       const data = { sessionId, cwd, savedAt: (/* @__PURE__ */ new Date()).toISOString(), agent: cacheKey.split(":").pop() };
-      fs14.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      fs15.writeFileSync(filePath, JSON.stringify(data, null, 2));
       console.log(`[zcode-provider] Session saved to disk: ${sessionId} \u2192 ${filePath}`);
     } catch (e2) {
       console.log(`[zcode-provider] Session save failed: ${e2}`);
@@ -130630,7 +130801,7 @@ ${prompt}`;
   removeSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (fs14.existsSync(filePath)) fs14.unlinkSync(filePath);
+      if (fs15.existsSync(filePath)) fs15.unlinkSync(filePath);
     } catch {
     }
   }
@@ -130710,13 +130881,13 @@ function createZCodeProvider(config) {
 
 // src/providers/mimo/mimo-provider.ts
 import { spawn as spawn4 } from "node:child_process";
-import fs15 from "node:fs";
+import fs16 from "node:fs";
 import os7 from "node:os";
 import path13 from "node:path";
-function rtLog3(msg) {
-  const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog4(msg) {
+  const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
   try {
-    fs15.appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    fs16.appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -130743,7 +130914,7 @@ function resolveMimoExecutable() {
       "C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\@mimo-ai\\cli\\node_modules\\@mimo-ai\\mimocode-windows-x64-baseline\\bin\\mimo.exe"
     ];
     for (const exe of candidates) {
-      if (fs15.existsSync(exe)) {
+      if (fs16.existsSync(exe)) {
         return { command: exe, args: [] };
       }
     }
@@ -130756,15 +130927,15 @@ function loadMemoryContent(agentName) {
   const agent = agentName || "mimo";
   try {
     const agentMemDir = `${memBase}/${agent}`;
-    if (fs15.existsSync(agentMemDir)) {
+    if (fs16.existsSync(agentMemDir)) {
       const memFile = agentMemDir + "/MEMORY.md";
-      if (fs15.existsSync(memFile)) {
-        parts2.push(fs15.readFileSync(memFile, "utf-8"));
+      if (fs16.existsSync(memFile)) {
+        parts2.push(fs16.readFileSync(memFile, "utf-8"));
       }
-      const files = fs15.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
+      const files = fs16.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
       for (const file of files) {
         const fp = agentMemDir + "/" + file;
-        const content = fs15.readFileSync(fp, "utf-8").trim();
+        const content = fs16.readFileSync(fp, "utf-8").trim();
         if (content) parts2.push(`
 === ${file} ===
 ${content}`);
@@ -130774,8 +130945,8 @@ ${content}`);
   }
   try {
     const sharedMemFile = `${memBase}/shared/MEMORY.md`;
-    if (fs15.existsSync(sharedMemFile)) {
-      const content = fs15.readFileSync(sharedMemFile, "utf-8").trim();
+    if (fs16.existsSync(sharedMemFile)) {
+      const content = fs16.readFileSync(sharedMemFile, "utf-8").trim();
       if (content) parts2.push(`
 === Shared Memory ===
 ${content}`);
@@ -130814,12 +130985,12 @@ var MiMoProvider = class _MiMoProvider {
   }
   async prepare() {
     if (process.platform === "win32") {
-      rtLog3(`[mimo-provider] prepare: Windows environment, skipping --version check`);
+      rtLog4(`[mimo-provider] prepare: Windows environment, skipping --version check`);
       return;
     }
     return new Promise((resolve2, reject) => {
       const { command, args } = resolveMimoExecutable();
-      rtLog3(`[mimo-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
+      rtLog4(`[mimo-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
       const child = spawn4(command, [...args, "--version"], {
         stdio: ["pipe", "pipe", "pipe"],
         env: buildSpawnEnv(),
@@ -130834,15 +131005,15 @@ var MiMoProvider = class _MiMoProvider {
         stderrBuf += chunk.toString();
       });
       child.on("close", (code) => {
-        rtLog3(`[mimo-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
+        rtLog4(`[mimo-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
         code === 0 ? resolve2() : reject(new Error(`mimo CLI not available (code=${code})`));
       });
       child.on("error", (error) => {
-        rtLog3(`[mimo-provider] prepare: spawn ERROR: ${error.message}`);
+        rtLog4(`[mimo-provider] prepare: spawn ERROR: ${error.message}`);
         reject(new Error(`Failed to spawn mimo: ${error.message}`));
       });
       setTimeout(() => {
-        rtLog3(`[mimo-provider] prepare: TIMEOUT (10s), killing process`);
+        rtLog4(`[mimo-provider] prepare: TIMEOUT (10s), killing process`);
         child.kill();
         reject(new Error("mimo prepare timeout (10s)"));
       }, 1e4);
@@ -130856,7 +131027,7 @@ var MiMoProvider = class _MiMoProvider {
           await self2.runAcp(controller, params2);
         } catch (e2) {
           console.error("[mimo-provider] streamChat error:", e2);
-          rtLog3(`[mimo-provider] streamChat CAUGHT ERROR: ${e2}`);
+          rtLog4(`[mimo-provider] streamChat CAUGHT ERROR: ${e2}`);
           emitCanonicalTurnEvent(controller, { type: "error", data: String(e2) });
           emitCanonicalTurnEvent(controller, { type: "done", data: "" });
           controller.close();
@@ -130882,13 +131053,13 @@ var MiMoProvider = class _MiMoProvider {
       return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params2.conversationHistory, params2.fromAudio);
     }
     const rawCwd = params2.workingDirectory || process.cwd();
-    const cwd = process.platform === "win32" && !fs15.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
-    rtLog3(`[mimo-provider] ACP spawn: bin=mimo cwd=${cwd}`);
+    const cwd = process.platform === "win32" && !fs16.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
+    rtLog4(`[mimo-provider] ACP spawn: bin=mimo cwd=${cwd}`);
     const configCwd2 = process.env.CTI_MIMO_ACP_CWD || cwd;
     const sessionNewCwd = process.platform === "win32" ? cwd : configCwd2;
     const saved = this.loadSavedSession(cacheKey);
     const { command, args } = resolveMimoExecutable();
-    rtLog3(`[mimo-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
+    rtLog4(`[mimo-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
     const env = buildSpawnEnv();
     const child = spawn4(command, [...args, "acp", "--hostname", "127.0.0.1", "--cwd", configCwd2], {
       cwd,
@@ -130896,22 +131067,22 @@ var MiMoProvider = class _MiMoProvider {
       windowsHide: true,
       env
     });
-    rtLog3(`[mimo-provider] ACP spawned successfully: pid=${child.pid}`);
+    rtLog4(`[mimo-provider] ACP spawned successfully: pid=${child.pid}`);
     child.stdout.on("data", (chunk) => {
-      rtLog3(`[mimo-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+      rtLog4(`[mimo-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
     });
     child.stderr.on("data", (chunk) => {
-      rtLog3(`[mimo-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+      rtLog4(`[mimo-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
     });
     child.on("error", (err) => {
-      rtLog3(`[mimo-provider] SPAWN ERROR: ${err}`);
+      rtLog4(`[mimo-provider] SPAWN ERROR: ${err}`);
     });
     child.on("close", (code, signal) => {
-      rtLog3(`[mimo-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
+      rtLog4(`[mimo-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
-      if (text) rtLog3(`[mimo-provider] ACP stderr: ${text.slice(0, 500)}`);
+      if (text) rtLog4(`[mimo-provider] ACP stderr: ${text.slice(0, 500)}`);
     });
     emitCanonicalTurnEvent(controller, {
       type: "status",
@@ -131067,7 +131238,7 @@ var MiMoProvider = class _MiMoProvider {
         }
       }, 15e3);
     });
-    rtLog3(`[mimo-provider] runAcp cached = ${cached}`);
+    rtLog4(`[mimo-provider] runAcp cached = ${cached}`);
     if (!cached) {
       const err = spawnError2 || "Failed to initialize ACP session";
       console.error(`[mimo-provider] ACP init failed:`, err);
@@ -131265,7 +131436,7 @@ var MiMoProvider = class _MiMoProvider {
   }
   /** 发送 prompt 并等待响应 */
   sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, conversationHistory, fromAudio) {
-    rtLog3(`[mimo-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
+    rtLog4(`[mimo-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
     return new Promise((resolve2) => {
       const promptId = cached.nextId++;
       cached.currentPromptId = promptId;
@@ -131401,8 +131572,8 @@ ${fullPrompt}`;
   loadSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (!fs15.existsSync(filePath)) return null;
-      const data = JSON.parse(fs15.readFileSync(filePath, "utf8"));
+      if (!fs16.existsSync(filePath)) return null;
+      const data = JSON.parse(fs16.readFileSync(filePath, "utf8"));
       if (data?.sessionId && data?.cwd) {
         console.log(`[mimo-provider] Session loaded from disk: ${data.sessionId}`);
         return { sessionId: data.sessionId, cwd: data.cwd };
@@ -131414,10 +131585,10 @@ ${fullPrompt}`;
   }
   saveSession(cacheKey, sessionId, cwd) {
     try {
-      fs15.mkdirSync(_MiMoProvider.SESSION_DIR, { recursive: true });
+      fs16.mkdirSync(_MiMoProvider.SESSION_DIR, { recursive: true });
       const filePath = this.sessionFilePath(cacheKey);
       const data = { sessionId, cwd, savedAt: (/* @__PURE__ */ new Date()).toISOString() };
-      fs15.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      fs16.writeFileSync(filePath, JSON.stringify(data, null, 2));
       console.log(`[mimo-provider] Session saved: ${sessionId}`);
     } catch (e2) {
       console.log(`[mimo-provider] Session save failed: ${e2}`);
@@ -131426,7 +131597,7 @@ ${fullPrompt}`;
   removeSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (fs15.existsSync(filePath)) fs15.unlinkSync(filePath);
+      if (fs16.existsSync(filePath)) fs16.unlinkSync(filePath);
     } catch {
     }
   }
@@ -131459,13 +131630,13 @@ ${fullPrompt}`;
 
 // src/providers/opencode/opencode-provider.ts
 import { spawn as spawn5 } from "node:child_process";
-import fs16 from "node:fs";
+import fs17 from "node:fs";
 import os8 from "node:os";
 import path14 from "node:path";
-function rtLog4(msg) {
-  const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog5(msg) {
+  const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
   try {
-    fs16.appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    fs17.appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -131492,7 +131663,7 @@ function resolveOpencodeExecutable() {
       "C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\node_modules\\opencode-windows-x64-baseline\\bin\\opencode.exe"
     ];
     for (const exe of candidates) {
-      if (fs16.existsSync(exe)) {
+      if (fs17.existsSync(exe)) {
         return { command: exe, args: [] };
       }
     }
@@ -131505,15 +131676,15 @@ function loadMemoryContent2(agentName) {
   const agent = agentName || "mimo";
   try {
     const agentMemDir = `${memBase}/${agent}`;
-    if (fs16.existsSync(agentMemDir)) {
+    if (fs17.existsSync(agentMemDir)) {
       const memFile = agentMemDir + "/MEMORY.md";
-      if (fs16.existsSync(memFile)) {
-        parts2.push(fs16.readFileSync(memFile, "utf-8"));
+      if (fs17.existsSync(memFile)) {
+        parts2.push(fs17.readFileSync(memFile, "utf-8"));
       }
-      const files = fs16.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
+      const files = fs17.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
       for (const file of files) {
         const fp = agentMemDir + "/" + file;
-        const content = fs16.readFileSync(fp, "utf-8").trim();
+        const content = fs17.readFileSync(fp, "utf-8").trim();
         if (content) parts2.push(`
 === ${file} ===
 ${content}`);
@@ -131523,8 +131694,8 @@ ${content}`);
   }
   try {
     const sharedMemFile = `${memBase}/shared/MEMORY.md`;
-    if (fs16.existsSync(sharedMemFile)) {
-      const content = fs16.readFileSync(sharedMemFile, "utf-8").trim();
+    if (fs17.existsSync(sharedMemFile)) {
+      const content = fs17.readFileSync(sharedMemFile, "utf-8").trim();
       if (content) parts2.push(`
 === Shared Memory ===
 ${content}`);
@@ -131563,12 +131734,12 @@ var OpencodeProvider = class _OpencodeProvider {
   }
   async prepare() {
     if (process.platform === "win32") {
-      rtLog4(`[opencode-provider] prepare: Windows environment, skipping --version check`);
+      rtLog5(`[opencode-provider] prepare: Windows environment, skipping --version check`);
       return;
     }
     return new Promise((resolve2, reject) => {
       const { command, args } = resolveOpencodeExecutable();
-      rtLog4(`[opencode-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
+      rtLog5(`[opencode-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
       const child = spawn5(command, [...args, "--version"], {
         stdio: ["pipe", "pipe", "pipe"],
         env: buildSpawnEnv2(),
@@ -131583,15 +131754,15 @@ var OpencodeProvider = class _OpencodeProvider {
         stderrBuf += chunk.toString();
       });
       child.on("close", (code) => {
-        rtLog4(`[opencode-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
+        rtLog5(`[opencode-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
         code === 0 ? resolve2() : reject(new Error(`opencode CLI not available (code=${code})`));
       });
       child.on("error", (error) => {
-        rtLog4(`[opencode-provider] prepare: spawn ERROR: ${error.message}`);
+        rtLog5(`[opencode-provider] prepare: spawn ERROR: ${error.message}`);
         reject(new Error(`Failed to spawn opencode: ${error.message}`));
       });
       setTimeout(() => {
-        rtLog4(`[opencode-provider] prepare: TIMEOUT (10s), killing process`);
+        rtLog5(`[opencode-provider] prepare: TIMEOUT (10s), killing process`);
         child.kill();
         reject(new Error("mimo prepare timeout (10s)"));
       }, 1e4);
@@ -131605,7 +131776,7 @@ var OpencodeProvider = class _OpencodeProvider {
           await self2.runAcp(controller, params2);
         } catch (e2) {
           console.error("[opencode-provider] streamChat error:", e2);
-          rtLog4(`[opencode-provider] streamChat CAUGHT ERROR: ${e2}`);
+          rtLog5(`[opencode-provider] streamChat CAUGHT ERROR: ${e2}`);
           emitCanonicalTurnEvent(controller, { type: "error", data: String(e2) });
           emitCanonicalTurnEvent(controller, { type: "done", data: "" });
           controller.close();
@@ -131631,13 +131802,13 @@ var OpencodeProvider = class _OpencodeProvider {
       return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params2.conversationHistory, params2.fromAudio);
     }
     const rawCwd = params2.workingDirectory || process.cwd();
-    const cwd = process.platform === "win32" && !fs16.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
-    rtLog4(`[opencode-provider] ACP spawn: bin=opencode cwd=${cwd}`);
+    const cwd = process.platform === "win32" && !fs17.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
+    rtLog5(`[opencode-provider] ACP spawn: bin=opencode cwd=${cwd}`);
     const configCwd2 = process.env.CTI_OPENCODE_ACP_CWD || cwd;
     const sessionNewCwd = process.platform === "win32" ? cwd : configCwd2;
     const saved = this.loadSavedSession(cacheKey);
     const { command, args } = resolveOpencodeExecutable();
-    rtLog4(`[opencode-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
+    rtLog5(`[opencode-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
     const env = buildSpawnEnv2();
     const child = spawn5(command, [...args, "acp", "--hostname", "127.0.0.1", "--cwd", configCwd2], {
       cwd,
@@ -131645,22 +131816,22 @@ var OpencodeProvider = class _OpencodeProvider {
       windowsHide: true,
       env
     });
-    rtLog4(`[opencode-provider] ACP spawned successfully: pid=${child.pid}`);
+    rtLog5(`[opencode-provider] ACP spawned successfully: pid=${child.pid}`);
     child.stdout.on("data", (chunk) => {
-      rtLog4(`[opencode-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+      rtLog5(`[opencode-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
     });
     child.stderr.on("data", (chunk) => {
-      rtLog4(`[opencode-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+      rtLog5(`[opencode-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
     });
     child.on("error", (err) => {
-      rtLog4(`[opencode-provider] SPAWN ERROR: ${err}`);
+      rtLog5(`[opencode-provider] SPAWN ERROR: ${err}`);
     });
     child.on("close", (code, signal) => {
-      rtLog4(`[opencode-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
+      rtLog5(`[opencode-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
-      if (text) rtLog4(`[opencode-provider] ACP stderr: ${text.slice(0, 500)}`);
+      if (text) rtLog5(`[opencode-provider] ACP stderr: ${text.slice(0, 500)}`);
     });
     emitCanonicalTurnEvent(controller, {
       type: "status",
@@ -131816,7 +131987,7 @@ var OpencodeProvider = class _OpencodeProvider {
         }
       }, 15e3);
     });
-    rtLog4(`[opencode-provider] runAcp cached = ${cached}`);
+    rtLog5(`[opencode-provider] runAcp cached = ${cached}`);
     if (!cached) {
       const err = spawnError2 || "Failed to initialize ACP session";
       console.error(`[opencode-provider] ACP init failed:`, err);
@@ -132014,7 +132185,7 @@ var OpencodeProvider = class _OpencodeProvider {
   }
   /** 发送 prompt 并等待响应 */
   sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, conversationHistory, fromAudio) {
-    rtLog4(`[opencode-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
+    rtLog5(`[opencode-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
     return new Promise((resolve2) => {
       const promptId = cached.nextId++;
       cached.currentPromptId = promptId;
@@ -132150,8 +132321,8 @@ ${fullPrompt}`;
   loadSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (!fs16.existsSync(filePath)) return null;
-      const data = JSON.parse(fs16.readFileSync(filePath, "utf8"));
+      if (!fs17.existsSync(filePath)) return null;
+      const data = JSON.parse(fs17.readFileSync(filePath, "utf8"));
       if (data?.sessionId && data?.cwd) {
         console.log(`[opencode-provider] Session loaded from disk: ${data.sessionId}`);
         return { sessionId: data.sessionId, cwd: data.cwd };
@@ -132163,10 +132334,10 @@ ${fullPrompt}`;
   }
   saveSession(cacheKey, sessionId, cwd) {
     try {
-      fs16.mkdirSync(_OpencodeProvider.SESSION_DIR, { recursive: true });
+      fs17.mkdirSync(_OpencodeProvider.SESSION_DIR, { recursive: true });
       const filePath = this.sessionFilePath(cacheKey);
       const data = { sessionId, cwd, savedAt: (/* @__PURE__ */ new Date()).toISOString() };
-      fs16.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      fs17.writeFileSync(filePath, JSON.stringify(data, null, 2));
       console.log(`[opencode-provider] Session saved: ${sessionId}`);
     } catch (e2) {
       console.log(`[opencode-provider] Session save failed: ${e2}`);
@@ -132175,7 +132346,7 @@ ${fullPrompt}`;
   removeSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (fs16.existsSync(filePath)) fs16.unlinkSync(filePath);
+      if (fs17.existsSync(filePath)) fs17.unlinkSync(filePath);
     } catch {
     }
   }
@@ -132208,13 +132379,13 @@ ${fullPrompt}`;
 
 // src/providers/reasonix/reasonix-provider.ts
 import { spawn as spawn6 } from "node:child_process";
-import fs17 from "node:fs";
+import fs18 from "node:fs";
 import os9 from "node:os";
 import path15 from "node:path";
-function rtLog5(msg) {
-  const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog6(msg) {
+  const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
   try {
-    fs17.appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    fs18.appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -132239,7 +132410,7 @@ function buildSpawnEnv3() {
 }
 function resolveReasonixExecutable() {
   const command = "C:\\Users\\oadan\\AppData\\Local\\Programs\\Reasonix\\reasonix-cli.exe";
-  if (!fs17.existsSync(command)) {
+  if (!fs18.existsSync(command)) {
     console.warn(`[reasonix-provider] reasonix-cli.exe not found at ${command}, spawn may fail`);
   }
   return { command, args: ["acp"] };
@@ -132250,15 +132421,15 @@ function loadMemoryContent3(agentName) {
   const agent = agentName || "reasonix";
   try {
     const agentMemDir = `${memBase}/${agent}`;
-    if (fs17.existsSync(agentMemDir)) {
+    if (fs18.existsSync(agentMemDir)) {
       const memFile = agentMemDir + "/MEMORY.md";
-      if (fs17.existsSync(memFile)) {
-        parts2.push(fs17.readFileSync(memFile, "utf-8"));
+      if (fs18.existsSync(memFile)) {
+        parts2.push(fs18.readFileSync(memFile, "utf-8"));
       }
-      const files = fs17.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
+      const files = fs18.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
       for (const file of files) {
         const fp = agentMemDir + "/" + file;
-        const content = fs17.readFileSync(fp, "utf-8").trim();
+        const content = fs18.readFileSync(fp, "utf-8").trim();
         if (content) parts2.push(`
 === ${file} ===
 ${content}`);
@@ -132268,8 +132439,8 @@ ${content}`);
   }
   try {
     const sharedMemFile = `${memBase}/shared/MEMORY.md`;
-    if (fs17.existsSync(sharedMemFile)) {
-      const content = fs17.readFileSync(sharedMemFile, "utf-8").trim();
+    if (fs18.existsSync(sharedMemFile)) {
+      const content = fs18.readFileSync(sharedMemFile, "utf-8").trim();
       if (content) parts2.push(`
 === Shared Memory ===
 ${content}`);
@@ -132289,7 +132460,13 @@ var ReasonixProvider = class _ReasonixProvider {
   cleanupTimer = null;
   static IDLE_TIMEOUT_MS = parseInt(process.env.CTI_REASONIX_IDLE_TIMEOUT_MS || "900000");
   // 默认 15 分钟
-  static SESSION_DIR = path15.join(os9.homedir(), ".reasonix", "sessions");
+  // reasonix-cli 真实 session 持久化目录（~/.reasonix/sessions 是错误位置，从未写入成功）
+  // 对齐 reasonix-cli：%APPDATA%/reasonix/sessions（Windows）/ ~/.config/reasonix/sessions（Linux）
+  static SESSION_DIR = path15.join(
+    process.platform === "win32" ? process.env.APPDATA || path15.join(os9.homedir(), "AppData", "Roaming") : path15.join(os9.homedir(), ".config"),
+    "reasonix",
+    "sessions"
+  );
   constructor() {
     this.startCleanupTimer();
   }
@@ -132308,12 +132485,12 @@ var ReasonixProvider = class _ReasonixProvider {
   }
   async prepare() {
     if (process.platform === "win32") {
-      rtLog5(`[reasonix-provider] prepare: Windows environment, skipping --version check`);
+      rtLog6(`[reasonix-provider] prepare: Windows environment, skipping --version check`);
       return;
     }
     return new Promise((resolve2, reject) => {
       const { command, args } = resolveReasonixExecutable();
-      rtLog5(`[reasonix-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
+      rtLog6(`[reasonix-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
       const child = spawn6(command, [...args, "--version"], {
         stdio: ["pipe", "pipe", "pipe"],
         env: buildSpawnEnv3(),
@@ -132328,15 +132505,15 @@ var ReasonixProvider = class _ReasonixProvider {
         stderrBuf += chunk.toString();
       });
       child.on("close", (code) => {
-        rtLog5(`[reasonix-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
+        rtLog6(`[reasonix-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
         code === 0 ? resolve2() : reject(new Error(`reasonix CLI not available (code=${code})`));
       });
       child.on("error", (error) => {
-        rtLog5(`[reasonix-provider] prepare: spawn ERROR: ${error.message}`);
+        rtLog6(`[reasonix-provider] prepare: spawn ERROR: ${error.message}`);
         reject(new Error(`Failed to spawn reasonix: ${error.message}`));
       });
       setTimeout(() => {
-        rtLog5(`[reasonix-provider] prepare: TIMEOUT (10s), killing process`);
+        rtLog6(`[reasonix-provider] prepare: TIMEOUT (10s), killing process`);
         child.kill();
         reject(new Error("reasonix prepare timeout (10s)"));
       }, 1e4);
@@ -132350,7 +132527,7 @@ var ReasonixProvider = class _ReasonixProvider {
           await self2.runAcp(controller, params2);
         } catch (e2) {
           console.error("[reasonix-provider] streamChat error:", e2);
-          rtLog5(`[reasonix-provider] streamChat CAUGHT ERROR: ${e2}`);
+          rtLog6(`[reasonix-provider] streamChat CAUGHT ERROR: ${e2}`);
           emitCanonicalTurnEvent(controller, { type: "error", data: String(e2) });
           emitCanonicalTurnEvent(controller, { type: "done", data: "" });
           controller.close();
@@ -132376,13 +132553,13 @@ var ReasonixProvider = class _ReasonixProvider {
       return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params2.conversationHistory, params2.fromAudio);
     }
     const rawCwd = params2.workingDirectory || process.cwd();
-    const cwd = process.platform === "win32" && !fs17.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
-    rtLog5(`[reasonix-provider] ACP spawn: bin=reasonix cwd=${cwd}`);
+    const cwd = process.platform === "win32" && !fs18.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
+    rtLog6(`[reasonix-provider] ACP spawn: bin=reasonix cwd=${cwd}`);
     const configCwd2 = process.env.CTI_REASONIX_ACP_CWD || cwd;
     const sessionNewCwd = process.platform === "win32" ? cwd : configCwd2;
     const saved = this.loadSavedSession(cacheKey);
     const { command, args } = resolveReasonixExecutable();
-    rtLog5(`[reasonix-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
+    rtLog6(`[reasonix-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
     const env = buildSpawnEnv3();
     const child = spawn6(command, [...args], {
       cwd: configCwd2,
@@ -132390,22 +132567,22 @@ var ReasonixProvider = class _ReasonixProvider {
       windowsHide: true,
       env
     });
-    rtLog5(`[reasonix-provider] ACP spawned successfully: pid=${child.pid}`);
+    rtLog6(`[reasonix-provider] ACP spawned successfully: pid=${child.pid}`);
     child.stdout.on("data", (chunk) => {
-      rtLog5(`[reasonix-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+      rtLog6(`[reasonix-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
     });
     child.stderr.on("data", (chunk) => {
-      rtLog5(`[reasonix-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+      rtLog6(`[reasonix-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
     });
     child.on("error", (err) => {
-      rtLog5(`[reasonix-provider] SPAWN ERROR: ${err}`);
+      rtLog6(`[reasonix-provider] SPAWN ERROR: ${err}`);
     });
     child.on("close", (code, signal) => {
-      rtLog5(`[reasonix-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
+      rtLog6(`[reasonix-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
-      if (text) rtLog5(`[reasonix-provider] ACP stderr: ${text.slice(0, 500)}`);
+      if (text) rtLog6(`[reasonix-provider] ACP stderr: ${text.slice(0, 500)}`);
     });
     emitCanonicalTurnEvent(controller, {
       type: "status",
@@ -132563,7 +132740,7 @@ var ReasonixProvider = class _ReasonixProvider {
         }
       }, 15e3);
     });
-    rtLog5(`[reasonix-provider] runAcp cached = ${cached}`);
+    rtLog6(`[reasonix-provider] runAcp cached = ${cached}`);
     if (!cached) {
       const err = spawnError2 || "Failed to initialize ACP session";
       console.error(`[reasonix-provider] ACP init failed:`, err);
@@ -132762,7 +132939,7 @@ var ReasonixProvider = class _ReasonixProvider {
   }
   /** 发送 prompt 并等待响应 */
   sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, conversationHistory, fromAudio) {
-    rtLog5(`[reasonix-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
+    rtLog6(`[reasonix-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
     return new Promise((resolve2) => {
       const promptId = cached.nextId++;
       cached.currentPromptId = promptId;
@@ -132912,8 +133089,8 @@ ${fullPrompt}`;
   loadSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (!fs17.existsSync(filePath)) return null;
-      const data = JSON.parse(fs17.readFileSync(filePath, "utf8"));
+      if (!fs18.existsSync(filePath)) return null;
+      const data = JSON.parse(fs18.readFileSync(filePath, "utf8"));
       if (data?.sessionId && data?.cwd) {
         console.log(`[reasonix-provider] Session loaded from disk: ${data.sessionId}`);
         return { sessionId: data.sessionId, cwd: data.cwd };
@@ -132925,10 +133102,10 @@ ${fullPrompt}`;
   }
   saveSession(cacheKey, sessionId, cwd) {
     try {
-      fs17.mkdirSync(_ReasonixProvider.SESSION_DIR, { recursive: true });
+      fs18.mkdirSync(_ReasonixProvider.SESSION_DIR, { recursive: true });
       const filePath = this.sessionFilePath(cacheKey);
       const data = { sessionId, cwd, savedAt: (/* @__PURE__ */ new Date()).toISOString() };
-      fs17.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      fs18.writeFileSync(filePath, JSON.stringify(data, null, 2));
       console.log(`[reasonix-provider] Session saved: ${sessionId}`);
     } catch (e2) {
       console.log(`[reasonix-provider] Session save failed: ${e2}`);
@@ -132937,7 +133114,7 @@ ${fullPrompt}`;
   removeSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (fs17.existsSync(filePath)) fs17.unlinkSync(filePath);
+      if (fs18.existsSync(filePath)) fs18.unlinkSync(filePath);
     } catch {
     }
   }
@@ -132970,13 +133147,13 @@ ${fullPrompt}`;
 
 // src/providers/openclaw/openclaw-provider.ts
 import { spawn as spawn7 } from "node:child_process";
-import fs18 from "node:fs";
+import fs19 from "node:fs";
 import os10 from "node:os";
 import path16 from "node:path";
-function rtLog6(msg) {
-  const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog7(msg) {
+  const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
   try {
-    fs18.appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    fs19.appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -133003,7 +133180,7 @@ function buildSpawnEnv4() {
 }
 function resolveOpenClawExecutable() {
   const command = "C:\\Users\\oadan\\AppData\\Roaming\\npm\\openclaw.exe";
-  if (!fs18.existsSync(command)) {
+  if (!fs19.existsSync(command)) {
     console.warn(`[openclaw-provider] openclaw.exe not found at ${command}, spawn may fail`);
   }
   return { command, args: ["acp"] };
@@ -133014,15 +133191,15 @@ function loadMemoryContent4(agentName) {
   const agent = agentName || "openclaw";
   try {
     const agentMemDir = `${memBase}/${agent}`;
-    if (fs18.existsSync(agentMemDir)) {
+    if (fs19.existsSync(agentMemDir)) {
       const memFile = agentMemDir + "/MEMORY.md";
-      if (fs18.existsSync(memFile)) {
-        parts2.push(fs18.readFileSync(memFile, "utf-8"));
+      if (fs19.existsSync(memFile)) {
+        parts2.push(fs19.readFileSync(memFile, "utf-8"));
       }
-      const files = fs18.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
+      const files = fs19.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
       for (const file of files) {
         const fp = agentMemDir + "/" + file;
-        const content = fs18.readFileSync(fp, "utf-8").trim();
+        const content = fs19.readFileSync(fp, "utf-8").trim();
         if (content) parts2.push(`
 === ${file} ===
 ${content}`);
@@ -133032,8 +133209,8 @@ ${content}`);
   }
   try {
     const sharedMemFile = `${memBase}/shared/MEMORY.md`;
-    if (fs18.existsSync(sharedMemFile)) {
-      const content = fs18.readFileSync(sharedMemFile, "utf-8").trim();
+    if (fs19.existsSync(sharedMemFile)) {
+      const content = fs19.readFileSync(sharedMemFile, "utf-8").trim();
       if (content) parts2.push(`
 === Shared Memory ===
 ${content}`);
@@ -133072,12 +133249,12 @@ var OpenClawProvider = class _OpenClawProvider {
   }
   async prepare() {
     if (process.platform === "win32") {
-      rtLog6(`[openclaw-provider] prepare: Windows environment, skipping --version check`);
+      rtLog7(`[openclaw-provider] prepare: Windows environment, skipping --version check`);
       return;
     }
     return new Promise((resolve2, reject) => {
       const { command, args } = resolveOpenClawExecutable();
-      rtLog6(`[openclaw-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
+      rtLog7(`[openclaw-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
       const child = spawn7(command, [...args, "--version"], {
         stdio: ["pipe", "pipe", "pipe"],
         env: buildSpawnEnv4(),
@@ -133092,15 +133269,15 @@ var OpenClawProvider = class _OpenClawProvider {
         stderrBuf += chunk.toString();
       });
       child.on("close", (code) => {
-        rtLog6(`[openclaw-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
+        rtLog7(`[openclaw-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
         code === 0 ? resolve2() : reject(new Error(`reasonix CLI not available (code=${code})`));
       });
       child.on("error", (error) => {
-        rtLog6(`[openclaw-provider] prepare: spawn ERROR: ${error.message}`);
+        rtLog7(`[openclaw-provider] prepare: spawn ERROR: ${error.message}`);
         reject(new Error(`Failed to spawn reasonix: ${error.message}`));
       });
       setTimeout(() => {
-        rtLog6(`[openclaw-provider] prepare: TIMEOUT (10s), killing process`);
+        rtLog7(`[openclaw-provider] prepare: TIMEOUT (10s), killing process`);
         child.kill();
         reject(new Error("reasonix prepare timeout (10s)"));
       }, 1e4);
@@ -133114,7 +133291,7 @@ var OpenClawProvider = class _OpenClawProvider {
           await self2.runAcp(controller, params2);
         } catch (e2) {
           console.error("[openclaw-provider] streamChat error:", e2);
-          rtLog6(`[openclaw-provider] streamChat CAUGHT ERROR: ${e2}`);
+          rtLog7(`[openclaw-provider] streamChat CAUGHT ERROR: ${e2}`);
           emitCanonicalTurnEvent(controller, { type: "error", data: String(e2) });
           emitCanonicalTurnEvent(controller, { type: "done", data: "" });
           controller.close();
@@ -133140,14 +133317,14 @@ var OpenClawProvider = class _OpenClawProvider {
       return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params2.conversationHistory, params2.fromAudio);
     }
     const rawCwd = params2.workingDirectory || process.cwd();
-    const cwd = process.platform === "win32" && !fs18.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
-    rtLog6(`[openclaw-provider] ACP spawn: bin=openclaw cwd=${cwd}`);
+    const cwd = process.platform === "win32" && !fs19.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
+    rtLog7(`[openclaw-provider] ACP spawn: bin=openclaw cwd=${cwd}`);
     console.log(`[openclaw-provider] runAcp: sdkSessionId=${sdkSessionId || "(empty)"} cacheKey=${cacheKey}`);
     const configCwd2 = process.env.CTI_OPENCLAW_ACP_CWD || cwd;
     const sessionNewCwd = process.platform === "win32" ? cwd : configCwd2;
     const saved = this.loadSavedSession(cacheKey);
     const { command, args } = resolveOpenClawExecutable();
-    rtLog6(`[openclaw-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
+    rtLog7(`[openclaw-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
     const env = buildSpawnEnv4();
     const child = spawn7(command, [...args], {
       cwd: configCwd2,
@@ -133155,25 +133332,25 @@ var OpenClawProvider = class _OpenClawProvider {
       windowsHide: true,
       env
     });
-    rtLog6(`[openclaw-provider] ACP spawned successfully: pid=${child.pid}`);
+    rtLog7(`[openclaw-provider] ACP spawned successfully: pid=${child.pid}`);
     child.stdout.on("data", (chunk) => {
-      rtLog6(`[openclaw-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+      rtLog7(`[openclaw-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
     });
     child.stderr.on("data", (chunk) => {
-      rtLog6(`[openclaw-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
+      rtLog7(`[openclaw-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString("utf-8")}"`);
     });
     child.on("error", (err) => {
-      rtLog6(`[openclaw-provider] SPAWN ERROR: ${err}`);
+      rtLog7(`[openclaw-provider] SPAWN ERROR: ${err}`);
     });
     child.on("close", (code, signal) => {
-      rtLog6(`[openclaw-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
+      rtLog7(`[openclaw-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
     });
     let spawnError2 = "";
     let acpStderrTail = "";
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
       if (text) {
-        rtLog6(`[openclaw-provider] ACP stderr: ${text.slice(0, 500)}`);
+        rtLog7(`[openclaw-provider] ACP stderr: ${text.slice(0, 500)}`);
         acpStderrTail = text.slice(0, 400);
       }
     });
@@ -133334,7 +133511,7 @@ var OpenClawProvider = class _OpenClawProvider {
         }
       }, 6e4);
     });
-    rtLog6(`[openclaw-provider] runAcp cached = ${cached}`);
+    rtLog7(`[openclaw-provider] runAcp cached = ${cached}`);
     if (!cached) {
       const err = spawnError2 || acpStderrTail || "Failed to initialize ACP session";
       console.error(`[openclaw-provider] ACP init failed:`, err);
@@ -133532,7 +133709,7 @@ var OpenClawProvider = class _OpenClawProvider {
   }
   /** 发送 prompt 并等待响应 */
   sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, conversationHistory, fromAudio) {
-    rtLog6(`[openclaw-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
+    rtLog7(`[openclaw-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
     return new Promise((resolve2) => {
       const promptId = cached.nextId++;
       cached.currentPromptId = promptId;
@@ -133668,9 +133845,9 @@ ${fullPrompt}`;
   loadSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      console.log(`[openclaw-provider] loadSavedSession: key=${cacheKey} path=${filePath} exists=${fs18.existsSync(filePath)}`);
-      if (!fs18.existsSync(filePath)) return null;
-      const data = JSON.parse(fs18.readFileSync(filePath, "utf8"));
+      console.log(`[openclaw-provider] loadSavedSession: key=${cacheKey} path=${filePath} exists=${fs19.existsSync(filePath)}`);
+      if (!fs19.existsSync(filePath)) return null;
+      const data = JSON.parse(fs19.readFileSync(filePath, "utf8"));
       if (data?.sessionId && data?.cwd) {
         console.log(`[openclaw-provider] Session loaded from disk: ${data.sessionId}`);
         return { sessionId: data.sessionId, cwd: data.cwd };
@@ -133682,13 +133859,13 @@ ${fullPrompt}`;
   }
   saveSession(cacheKey, sessionId, cwd) {
     try {
-      fs18.mkdirSync(_OpenClawProvider.SESSION_DIR, { recursive: true });
+      fs19.mkdirSync(_OpenClawProvider.SESSION_DIR, { recursive: true });
       const data = { sessionId, cwd, savedAt: (/* @__PURE__ */ new Date()).toISOString() };
       const keys = /* @__PURE__ */ new Set([cacheKey, sessionId]);
       console.log(`[openclaw-provider] saveSession: cacheKey=${cacheKey} sessionId=${sessionId} dir=${_OpenClawProvider.SESSION_DIR}`);
       for (const key of keys) {
         const filePath = this.sessionFilePath(key);
-        fs18.writeFileSync(filePath, JSON.stringify(data, null, 2));
+        fs19.writeFileSync(filePath, JSON.stringify(data, null, 2));
       }
       console.log(`[openclaw-provider] Session saved: ${sessionId}`);
     } catch (e2) {
@@ -133698,7 +133875,7 @@ ${fullPrompt}`;
   removeSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (fs18.existsSync(filePath)) fs18.unlinkSync(filePath);
+      if (fs19.existsSync(filePath)) fs19.unlinkSync(filePath);
     } catch {
     }
   }
@@ -133731,14 +133908,14 @@ ${fullPrompt}`;
 
 // src/providers/gemini/gemini-app-server-client.ts
 import { spawn as spawn8 } from "node:child_process";
-import fs19 from "node:fs";
+import fs20 from "node:fs";
 import os11 from "node:os";
 import path17 from "node:path";
 import readline2 from "node:readline";
-function rtLog7(msg) {
-  const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog8(msg) {
+  const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
   try {
-    fs19.appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    fs20.appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -133775,7 +133952,7 @@ function isProcessRunning2(pid) {
 function readSavedPid2() {
   const pidFile = resolvePidFile2();
   try {
-    const content = fs19.readFileSync(pidFile, "utf8").trim();
+    const content = fs20.readFileSync(pidFile, "utf8").trim();
     const pid = parseInt(content, 10);
     if (pid > 0) return pid;
   } catch {
@@ -133786,8 +133963,8 @@ function savePid2(pid) {
   const pidFile = resolvePidFile2();
   const pidDir = path17.dirname(pidFile);
   try {
-    fs19.mkdirSync(pidDir, { recursive: true });
-    fs19.writeFileSync(pidFile, String(pid));
+    fs20.mkdirSync(pidDir, { recursive: true });
+    fs20.writeFileSync(pidFile, String(pid));
   } catch (error) {
     console.warn("[gemini-app-server] Failed to save PID file:", error);
   }
@@ -133919,7 +134096,7 @@ var GeminiAppServerClient = class {
       if (elapsed < delay) {
         const waitMs = delay - elapsed;
         console.log(`[gemini-app-server] Backoff: waiting ${Math.round(waitMs / 1e3)}s before restart (retry #${this.retryCount})`);
-        rtLog7(`[gemini-app-server] Backoff: waiting ${waitMs}ms (retry #${this.retryCount})`);
+        rtLog8(`[gemini-app-server] Backoff: waiting ${waitMs}ms (retry #${this.retryCount})`);
         await new Promise((resolve2) => setTimeout(resolve2, waitMs));
       }
     }
@@ -133929,7 +134106,7 @@ var GeminiAppServerClient = class {
     if (process.platform === "win32") {
       const npmGlobalRoot = path17.join(os11.homedir(), "AppData", "Roaming", "npm");
       const geminiJsPath = path17.join(npmGlobalRoot, "node_modules", "@google", "gemini-cli", "bundle", "gemini.js");
-      if (fs19.existsSync(geminiJsPath)) {
+      if (fs20.existsSync(geminiJsPath)) {
         command = process.execPath;
         spawnArgs = [geminiJsPath, ...this.acpArgs];
         console.log(`[gemini-app-server] Windows: spawning node directly: ${command} ${spawnArgs.join(" ")}`);
@@ -133957,18 +134134,18 @@ var GeminiAppServerClient = class {
         ...this.extraEnv
       }
     });
-    rtLog7(`[gemini-app-server] ACP spawn: command=${command} args=${JSON.stringify(spawnArgs)} pid=${proc.pid}`);
+    rtLog8(`[gemini-app-server] ACP spawn: command=${command} args=${JSON.stringify(spawnArgs)} pid=${proc.pid}`);
     this.proc = proc;
     proc.stdout.on("data", (chunk) => {
-      rtLog7(`[gemini-app-server] stdout RAW: ${chunk.length} bytes -> "${chunk.toString("utf-8").substring(0, 200)}"`);
+      rtLog8(`[gemini-app-server] stdout RAW: ${chunk.length} bytes -> "${chunk.toString("utf-8").substring(0, 200)}"`);
     });
     proc.once("error", (error) => {
-      rtLog7(`[gemini-app-server] spawn ERROR: ${error.message}`);
+      rtLog8(`[gemini-app-server] spawn ERROR: ${error.message}`);
       this.failAllPending(error instanceof Error ? error : new Error(String(error)));
     });
     proc.once("exit", (code, signal) => {
       const suffix = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
-      rtLog7(`[gemini-app-server] process EXIT: ${suffix}`);
+      rtLog8(`[gemini-app-server] process EXIT: ${suffix}`);
       this.failAllPending(new Error(`[gemini-app-server] Process exited with ${suffix}`));
       this.proc = null;
       this.startPromise = null;
@@ -133977,28 +134154,28 @@ var GeminiAppServerClient = class {
     });
     const rl = readline2.createInterface({ input: proc.stdout });
     rl.on("line", (line) => {
-      rtLog7(`[gemini-app-server] stdout LINE: ${line.substring(0, 150)}`);
+      rtLog8(`[gemini-app-server] stdout LINE: ${line.substring(0, 150)}`);
       this.handleLine(line);
     });
     proc.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
       if (text && !text.includes("YOLO mode is enabled") && !text.includes("MCP issues detected")) {
-        rtLog7(`[gemini-app-server] stderr: ${text.substring(0, 300)}`);
+        rtLog8(`[gemini-app-server] stderr: ${text.substring(0, 300)}`);
         console.warn(`[gemini-app-server][stderr] ${text}`);
       }
     });
-    rtLog7(`[gemini-app-server] calling initialize...`);
+    rtLog8(`[gemini-app-server] calling initialize...`);
     let initDone = false;
     const initTimeout = setTimeout(() => {
       if (!initDone) {
-        rtLog7(`[gemini-app-server] initialize TIMEOUT (30s), killing process`);
+        rtLog8(`[gemini-app-server] initialize TIMEOUT (30s), killing process`);
         proc.kill();
       }
     }, 3e4);
     await this.callInternal("initialize", buildInitializeParams2());
     initDone = true;
     clearTimeout(initTimeout);
-    rtLog7(`[gemini-app-server] initialize OK`);
+    rtLog8(`[gemini-app-server] initialize OK`);
     this.retryCount = 0;
     this.lastExitTime = 0;
     try {
@@ -134035,7 +134212,7 @@ var GeminiAppServerClient = class {
       return;
     }
     if (parsed.method === "session/request_permission" && "id" in parsed) {
-      rtLog7(`[gemini-app-server] AUTO-APPROVE session/request_permission id=${parsed.id}`);
+      rtLog8(`[gemini-app-server] AUTO-APPROVE session/request_permission id=${parsed.id}`);
       try {
         const params2 = parsed.params;
         const firstOption = params2?.options?.[0]?.optionId || "proceed_always";
@@ -134045,7 +134222,7 @@ var GeminiAppServerClient = class {
           result: { optionId: firstOption }
         });
       } catch (e2) {
-        rtLog7(`[gemini-app-server] auto-approve failed: ${e2}`);
+        rtLog8(`[gemini-app-server] auto-approve failed: ${e2}`);
       }
       return;
     }
@@ -134072,13 +134249,13 @@ var GeminiAppServerClient = class {
 };
 
 // src/providers/gemini/gemini-provider.ts
-import * as fs20 from "fs";
+import * as fs21 from "fs";
 import * as path18 from "path";
 import * as os12 from "os";
-function rtLog8(msg) {
-  const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "gemini"}.log`;
+function rtLog9(msg) {
+  const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "gemini"}.log`;
   try {
-    fs20.appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    fs21.appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -134116,8 +134293,8 @@ var GeminiProvider = class {
   readModelFromSettings() {
     try {
       const settingsPath = path18.join(os12.homedir(), ".gemini", "settings.json");
-      if (fs20.existsSync(settingsPath)) {
-        const settings = JSON.parse(fs20.readFileSync(settingsPath, "utf-8"));
+      if (fs21.existsSync(settingsPath)) {
+        const settings = JSON.parse(fs21.readFileSync(settingsPath, "utf-8"));
         return settings.model?.name;
       }
     } catch (e2) {
@@ -134180,9 +134357,9 @@ var GeminiProvider = class {
           if (message.method === "fs/read_text_file") {
             const reqParams = message.params;
             const filePath = reqParams?.path ? String(reqParams.path) : "";
-            rtLog8(`[gemini-provider] Handling fs/read_text_file request: id=${message.id} path=${filePath}`);
+            rtLog9(`[gemini-provider] Handling fs/read_text_file request: id=${message.id} path=${filePath}`);
             try {
-              const content2 = fs20.readFileSync(filePath, "utf-8");
+              const content2 = fs21.readFileSync(filePath, "utf-8");
               client.respond(message.id, { content: content2 }).catch((err) => {
                 console.error("[gemini-provider] Error responding to fs/read_text_file:", err);
               });
@@ -134191,7 +134368,7 @@ var GeminiProvider = class {
               });
             }
           } else {
-            rtLog8(`[gemini-provider] Unhandled server request: id=${message.id} method=${message.method}`);
+            rtLog9(`[gemini-provider] Unhandled server request: id=${message.id} method=${message.method}`);
             client.respondError(message.id, -32601, `Method not supported: ${message.method}`).catch(() => {
             });
           }
@@ -134355,14 +134532,14 @@ function createGeminiProvider(config) {
 
 // src/providers/hermes/hermes-app-server-client.ts
 import { spawn as spawn9 } from "node:child_process";
-import fs21 from "node:fs";
+import fs22 from "node:fs";
 import os13 from "node:os";
 import path19 from "node:path";
 import readline3 from "node:readline";
-function rtLog9(msg) {
-  const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog10(msg) {
+  const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
   try {
-    fs21.appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    fs22.appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -134402,7 +134579,7 @@ function isProcessRunning3(pid) {
 function readSavedPid3() {
   const pidFile = resolvePidFile3();
   try {
-    const content = fs21.readFileSync(pidFile, "utf8").trim();
+    const content = fs22.readFileSync(pidFile, "utf8").trim();
     const pid = parseInt(content, 10);
     if (pid > 0) return pid;
   } catch {
@@ -134413,8 +134590,8 @@ function savePid3(pid) {
   const pidFile = resolvePidFile3();
   const pidDir = path19.dirname(pidFile);
   try {
-    fs21.mkdirSync(pidDir, { recursive: true });
-    fs21.writeFileSync(pidFile, String(pid));
+    fs22.mkdirSync(pidDir, { recursive: true });
+    fs22.writeFileSync(pidFile, String(pid));
   } catch (error) {
     console.warn("[hermes-app-server] Failed to save PID file:", error);
   }
@@ -134524,7 +134701,7 @@ var HermesAppServerClient = class {
   }
   async bootstrap() {
     const args = [...this.acpArgs];
-    rtLog9(`[hermes-app-server] bootstrap: spawning "${this.executable}" args=${JSON.stringify(args)}`);
+    rtLog10(`[hermes-app-server] bootstrap: spawning "${this.executable}" args=${JSON.stringify(args)}`);
     const proc = spawn9(this.executable, args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -134543,51 +134720,51 @@ var HermesAppServerClient = class {
       },
       windowsHide: true
     });
-    rtLog9(`[hermes-app-server] spawned HERMES_HOME=${resolveHermesHome()} OPENAI_BASE_URL=...:4000`);
+    rtLog10(`[hermes-app-server] spawned HERMES_HOME=${resolveHermesHome()} OPENAI_BASE_URL=...:4000`);
     this.proc = proc;
     proc.once("error", (error) => {
-      rtLog9(`[hermes-app-server] spawn ERROR: ${error.message}`);
+      rtLog10(`[hermes-app-server] spawn ERROR: ${error.message}`);
       this.failAllPending(error instanceof Error ? error : new Error(String(error)));
     });
     proc.once("exit", (code, signal) => {
       const suffix = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
-      rtLog9(`[hermes-app-server] process EXIT: ${suffix}`);
+      rtLog10(`[hermes-app-server] process EXIT: ${suffix}`);
       this.failAllPending(new Error(`[hermes-app-server] Process exited with ${suffix}`));
       this.proc = null;
       this.startPromise = null;
     });
     let stderrLog = "";
     proc.stdout.on("data", (chunk) => {
-      rtLog9(`[hermes-app-server] stdout: received ${chunk.length} bytes`);
+      rtLog10(`[hermes-app-server] stdout: received ${chunk.length} bytes`);
     });
     proc.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
       stderrLog += text;
       if (text) {
-        rtLog9(`[hermes-app-server] stderr: ${text}`);
+        rtLog10(`[hermes-app-server] stderr: ${text}`);
         console.warn(`[hermes-app-server][stderr] ${text}`);
       }
     });
     const rl = readline3.createInterface({ input: proc.stdout });
     rl.on("line", (line) => {
-      rtLog9(`[hermes-app-server] stdout LINE: ${line.substring(0, 100)}`);
+      rtLog10(`[hermes-app-server] stdout LINE: ${line.substring(0, 100)}`);
       this.handleLine(line);
     });
-    rtLog9(`[hermes-app-server] calling initialize...`);
+    rtLog10(`[hermes-app-server] calling initialize...`);
     let initDone = false;
     const timeoutId = setTimeout(() => {
       if (!initDone) {
-        rtLog9(`[hermes-app-server] initialize TIMEOUT (30s), killing process`);
+        rtLog10(`[hermes-app-server] initialize TIMEOUT (30s), killing process`);
         proc.kill();
       }
     }, 3e4);
     await this.callInternal("initialize", buildInitializeParams3());
     initDone = true;
     clearTimeout(timeoutId);
-    rtLog9(`[hermes-app-server] initialize OK`);
+    rtLog10(`[hermes-app-server] initialize OK`);
     if (proc.pid) {
       savePid3(proc.pid);
-      rtLog9(`[hermes-app-server] Started with PID ${proc.pid}`);
+      rtLog10(`[hermes-app-server] Started with PID ${proc.pid}`);
     }
   }
   handleLine(line) {
@@ -134636,11 +134813,11 @@ var HermesAppServerClient = class {
 };
 
 // src/providers/hermes/hermes-provider.ts
-import fs22 from "node:fs";
-function rtLog10(msg) {
-  const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+import fs23 from "node:fs";
+function rtLog11(msg) {
+  const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
   try {
-    fs22.appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    fs23.appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -134722,9 +134899,9 @@ var HermesProvider = class {
           });
           sessionId = savedSessionId;
           console.log(`[hermes-provider] Session ${sessionId} resumed`);
-          rtLog10(`[hermes-provider] Session ${sessionId} resumed`);
+          rtLog11(`[hermes-provider] Session ${sessionId} resumed`);
         } catch {
-          rtLog10(`[hermes-provider] Resume failed for ${savedSessionId}, creating new session`);
+          rtLog11(`[hermes-provider] Resume failed for ${savedSessionId}, creating new session`);
           const newSession = await client.call("session/new", {
             cwd: params2.workingDirectory || this.workingDirectory,
             mcpServers: [],
@@ -134746,21 +134923,21 @@ var HermesProvider = class {
       }
       try {
         await client.call("session/set_mode", { sessionId, modeId: "dont_ask" });
-        rtLog10(`[hermes-provider] Set mode to dont_ask for session ${sessionId}`);
+        rtLog11(`[hermes-provider] Set mode to dont_ask for session ${sessionId}`);
       } catch (modeErr) {
-        rtLog10(`[hermes-provider] Failed to set mode: ${modeErr}`);
+        rtLog11(`[hermes-provider] Failed to set mode: ${modeErr}`);
       }
       let accumulatedThinking = "";
       unsubscribe = client.subscribe((message) => {
         if (extractSessionId2(message) !== sessionId) return;
         if (message.kind === "request") {
-          rtLog10(`[hermes-provider] REQUEST id=${message.id} method=${message.method}`);
+          rtLog11(`[hermes-provider] REQUEST id=${message.id} method=${message.method}`);
           if (message.method && message.id !== void 0) {
             client.respond(message.id, {
               outcome: { outcome: "selected", option_id: "allow_once" }
             }).catch(() => {
             });
-            rtLog10(`[hermes-provider] Auto-approved request: ${message.method} id=${message.id}`);
+            rtLog11(`[hermes-provider] Auto-approved request: ${message.method} id=${message.id}`);
           }
           return;
         }
@@ -134916,13 +135093,13 @@ function createHermesProvider(config) {
 
 // src/providers/openakita/openakita-provider.ts
 import { spawn as spawn10 } from "node:child_process";
-import fs23 from "node:fs";
+import fs24 from "node:fs";
 import os14 from "node:os";
 import path20 from "node:path";
-function rtLog11(msg) {
-  const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
+function rtLog12(msg) {
+  const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || "unknown"}.log`;
   try {
-    fs23.appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+    fs24.appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
   } catch {
   }
@@ -134955,7 +135132,7 @@ function buildSpawnEnv5() {
 }
 function resolveOpenAkitaExecutable() {
   const server2 = "C:\\D\\opt\\agents-to-im\\scripts\\openakita-acp-server.py";
-  if (!fs23.existsSync(server2)) {
+  if (!fs24.existsSync(server2)) {
     console.warn(`[openakita-provider] acp server not found at ${server2}, spawn may fail`);
   }
   return { command: "C:\\D\\opt\\openakita\\venv\\Scripts\\python.exe", args: [server2] };
@@ -134966,15 +135143,15 @@ function loadMemoryContent5(agentName) {
   const agent = agentName || "openakita";
   try {
     const agentMemDir = `${memBase}/${agent}`;
-    if (fs23.existsSync(agentMemDir)) {
+    if (fs24.existsSync(agentMemDir)) {
       const memFile = agentMemDir + "/MEMORY.md";
-      if (fs23.existsSync(memFile)) {
-        parts2.push(fs23.readFileSync(memFile, "utf-8"));
+      if (fs24.existsSync(memFile)) {
+        parts2.push(fs24.readFileSync(memFile, "utf-8"));
       }
-      const files = fs23.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
+      const files = fs24.readdirSync(agentMemDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
       for (const file of files) {
         const fp = agentMemDir + "/" + file;
-        const content = fs23.readFileSync(fp, "utf-8").trim();
+        const content = fs24.readFileSync(fp, "utf-8").trim();
         if (content) parts2.push(`
 === ${file} ===
 ${content}`);
@@ -134984,8 +135161,8 @@ ${content}`);
   }
   try {
     const sharedMemFile = `${memBase}/shared/MEMORY.md`;
-    if (fs23.existsSync(sharedMemFile)) {
-      const content = fs23.readFileSync(sharedMemFile, "utf-8").trim();
+    if (fs24.existsSync(sharedMemFile)) {
+      const content = fs24.readFileSync(sharedMemFile, "utf-8").trim();
       if (content) parts2.push(`
 === Shared Memory ===
 ${content}`);
@@ -135026,7 +135203,7 @@ var OpenAkitaProvider = class _OpenAkitaProvider {
   }
   async prepare() {
     if (process.platform === "win32") {
-      rtLog11(`[openakita-provider] prepare: Windows environment, skipping --version check`);
+      rtLog12(`[openakita-provider] prepare: Windows environment, skipping --version check`);
       return;
     }
     return new Promise((resolve2, reject) => {
@@ -135089,12 +135266,12 @@ var OpenAkitaProvider = class _OpenAkitaProvider {
       return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params2.conversationHistory, params2.fromAudio);
     }
     const rawCwd = params2.workingDirectory || process.cwd();
-    const cwd = process.platform === "win32" && !fs23.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
+    const cwd = process.platform === "win32" && !fs24.existsSync(rawCwd) ? process.env.USERPROFILE || "C:\\Users\\oadan" : rawCwd;
     const configCwd2 = process.env.CTI_OPENAKITA_ACP_CWD || this.workspace;
     const sessionNewCwd = process.platform === "win32" ? cwd : configCwd2;
     const saved = this.loadSavedSession(cacheKey);
     const { command, args } = resolveOpenAkitaExecutable();
-    rtLog11(`[openakita-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
+    rtLog12(`[openakita-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
     const env = buildSpawnEnv5();
     const child = spawn10(command, args, {
       cwd: this.workspace,
@@ -135102,10 +135279,10 @@ var OpenAkitaProvider = class _OpenAkitaProvider {
       windowsHide: true,
       env
     });
-    rtLog11(`[openakita-provider] ACP spawned successfully: pid=${child.pid}`);
+    rtLog12(`[openakita-provider] ACP spawned successfully: pid=${child.pid}`);
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString().trim();
-      if (text) rtLog11(`[openakita-provider] ACP stderr: ${text.slice(0, 500)}`);
+      if (text) rtLog12(`[openakita-provider] ACP stderr: ${text.slice(0, 500)}`);
     });
     emitCanonicalTurnEvent(controller, {
       type: "status",
@@ -135447,7 +135624,7 @@ var OpenAkitaProvider = class _OpenAkitaProvider {
   }
   /** 发送 prompt 并等待响应 */
   sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, conversationHistory, fromAudio) {
-    rtLog11(`[openakita-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}`);
+    rtLog12(`[openakita-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}`);
     return new Promise((resolve2) => {
       const promptId = cached.nextId++;
       cached.currentPromptId = promptId;
@@ -135581,8 +135758,8 @@ ${fullPrompt}`;
   loadSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (!fs23.existsSync(filePath)) return null;
-      const data = JSON.parse(fs23.readFileSync(filePath, "utf8"));
+      if (!fs24.existsSync(filePath)) return null;
+      const data = JSON.parse(fs24.readFileSync(filePath, "utf8"));
       if (data?.sessionId && data?.cwd) {
         console.log(`[openakita-provider] Session loaded from disk: ${data.sessionId}`);
         return { sessionId: data.sessionId, cwd: data.cwd };
@@ -135594,10 +135771,10 @@ ${fullPrompt}`;
   }
   saveSession(cacheKey, sessionId, cwd) {
     try {
-      fs23.mkdirSync(_OpenAkitaProvider.SESSION_DIR, { recursive: true });
+      fs24.mkdirSync(_OpenAkitaProvider.SESSION_DIR, { recursive: true });
       const filePath = this.sessionFilePath(cacheKey);
       const data = { sessionId, cwd, savedAt: (/* @__PURE__ */ new Date()).toISOString() };
-      fs23.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      fs24.writeFileSync(filePath, JSON.stringify(data, null, 2));
       console.log(`[openakita-provider] Session saved: ${sessionId}`);
     } catch (e2) {
       console.log(`[openakita-provider] Session save failed: ${e2}`);
@@ -135606,7 +135783,7 @@ ${fullPrompt}`;
   removeSavedSession(cacheKey) {
     try {
       const filePath = this.sessionFilePath(cacheKey);
-      if (fs23.existsSync(filePath)) fs23.unlinkSync(filePath);
+      if (fs24.existsSync(filePath)) fs24.unlinkSync(filePath);
     } catch {
     }
   }
@@ -136278,23 +136455,23 @@ var MultiplexLLMProvider = class {
 };
 
 // src/infra/store.ts
-import fs24 from "node:fs";
+import fs25 from "node:fs";
 import path21 from "node:path";
 import crypto2 from "node:crypto";
 var BOT_NAME = process.env.CTI_BOT || "";
 var DATA_DIR = path21.join(CTI_HOME2, "data", BOT_NAME || ".");
 var MESSAGES_DIR = path21.join(DATA_DIR, "messages");
 function ensureDir(dir) {
-  fs24.mkdirSync(dir, { recursive: true });
+  fs25.mkdirSync(dir, { recursive: true });
 }
 function atomicWrite(filePath, data) {
   const tmp = filePath + ".tmp";
-  fs24.writeFileSync(tmp, data, "utf-8");
-  fs24.renameSync(tmp, filePath);
+  fs25.writeFileSync(tmp, data, "utf-8");
+  fs25.renameSync(tmp, filePath);
 }
 function readJson(filePath, fallback) {
   try {
-    const raw = fs24.readFileSync(filePath, "utf-8");
+    const raw = fs25.readFileSync(filePath, "utf-8");
     return JSON.parse(raw);
   } catch {
     return fallback;
@@ -136689,9 +136866,9 @@ var JsonFileStore = class {
   }
   // ── Session Locking ──
   rtLog(msg) {
-    const DEBUG_LOG3 = `C:\\D\\opt\\agents-to-im\\debug_realtime_locks_${process.env.CTI_BOT || "unknown"}.log`;
+    const DEBUG_LOG4 = `C:\\D\\opt\\agents-to-im\\debug_realtime_locks_${process.env.CTI_BOT || "unknown"}.log`;
     try {
-      __require("fs").appendFileSync(DEBUG_LOG3, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+      __require("fs").appendFileSync(DEBUG_LOG4, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `, "utf-8");
     } catch {
     }
@@ -137106,7 +137283,7 @@ var JsonFileStore = class {
 };
 
 // src/config/logger.ts
-import fs25 from "node:fs";
+import fs26 from "node:fs";
 import path22 from "node:path";
 var MASK_PATTERNS = [
   /(?:token|secret|password|api_key)["']?\s*[:=]\s*["']?([^\s"',]+)/gi,
@@ -137130,7 +137307,7 @@ var MAX_LOG_SIZE = 10 * 1024 * 1024;
 var MAX_ROTATED = 3;
 var logStream = null;
 function openLogStream() {
-  return fs25.createWriteStream(LOG_PATH, { flags: "a" });
+  return fs26.createWriteStream(LOG_PATH, { flags: "a" });
 }
 function formatLogTimestamp(date) {
   const pad = (value2, width = 2) => String(value2).padStart(width, "0");
@@ -137150,7 +137327,7 @@ function formatLogTimestamp(date) {
 }
 function rotateIfNeeded() {
   try {
-    const stat = fs25.statSync(LOG_PATH);
+    const stat = fs26.statSync(LOG_PATH);
     if (stat.size < MAX_LOG_SIZE) return;
   } catch {
     return;
@@ -137160,17 +137337,17 @@ function rotateIfNeeded() {
     logStream = null;
   }
   const path32 = `${LOG_PATH}.${MAX_ROTATED}`;
-  if (fs25.existsSync(path32)) fs25.unlinkSync(path32);
+  if (fs26.existsSync(path32)) fs26.unlinkSync(path32);
   for (let i2 = MAX_ROTATED - 1; i2 >= 1; i2--) {
     const src = `${LOG_PATH}.${i2}`;
     const dst = `${LOG_PATH}.${i2 + 1}`;
-    if (fs25.existsSync(src)) fs25.renameSync(src, dst);
+    if (fs26.existsSync(src)) fs26.renameSync(src, dst);
   }
-  fs25.renameSync(LOG_PATH, `${LOG_PATH}.1`);
+  fs26.renameSync(LOG_PATH, `${LOG_PATH}.1`);
   logStream = openLogStream();
 }
 function setupLogger() {
-  fs25.mkdirSync(LOG_DIR, { recursive: true });
+  fs26.mkdirSync(LOG_DIR, { recursive: true });
   logStream = openLogStream();
   const write = (level, args) => {
     const timestamp = formatLogTimestamp(/* @__PURE__ */ new Date());
@@ -137485,16 +137662,16 @@ var BOT_NAME2 = process.env.CTI_BOT || "";
 var STATUS_FILE = path23.join(RUNTIME_DIR, BOT_NAME2 ? "status-" + BOT_NAME2 + ".json" : "status.json");
 var PID_FILE = path23.join(RUNTIME_DIR, BOT_NAME2 ? "bridge-" + BOT_NAME2 + ".pid" : "bridge.pid");
 function writeStatus(info) {
-  fs26.mkdirSync(RUNTIME_DIR, { recursive: true });
+  fs27.mkdirSync(RUNTIME_DIR, { recursive: true });
   let existing = {};
   try {
-    existing = JSON.parse(fs26.readFileSync(STATUS_FILE, "utf-8"));
+    existing = JSON.parse(fs27.readFileSync(STATUS_FILE, "utf-8"));
   } catch {
   }
   const merged = { ...existing, ...info };
   const tmp = STATUS_FILE + ".tmp";
-  fs26.writeFileSync(tmp, JSON.stringify(merged, null, 2), "utf-8");
-  fs26.renameSync(tmp, STATUS_FILE);
+  fs27.writeFileSync(tmp, JSON.stringify(merged, null, 2), "utf-8");
+  fs27.renameSync(tmp, STATUS_FILE);
 }
 function generateMcpConfigs(config) {
   const mcpServers = {};
@@ -137505,7 +137682,7 @@ function generateMcpConfigs(config) {
   if (mcpUrls.length === 0) {
     try {
       const envPath = path23.join(CTI_HOME2, "config.env");
-      const envContent = fs26.readFileSync(envPath, "utf-8");
+      const envContent = fs27.readFileSync(envPath, "utf-8");
       for (const line of envContent.split("\n")) {
         const t = line.trim();
         if (!t || t.startsWith("#")) continue;
@@ -137531,8 +137708,8 @@ function generateMcpConfigs(config) {
       claudeMcp.mcpServers[name] = { type: "http", url: cfg.url };
     }
     const mcpPath = path23.join(os15.homedir(), ".claude", "mcp.json");
-    fs26.mkdirSync(path23.dirname(mcpPath), { recursive: true });
-    fs26.writeFileSync(mcpPath, JSON.stringify(claudeMcp, null, 2));
+    fs27.mkdirSync(path23.dirname(mcpPath), { recursive: true });
+    fs27.writeFileSync(mcpPath, JSON.stringify(claudeMcp, null, 2));
   } catch (err) {
     console.warn("[agents-to-im] Failed to write Claude MCP config:", err);
   }
@@ -137543,16 +137720,16 @@ function generateMcpConfigs(config) {
   for (const configPath of mimocodePaths) {
     try {
       let config2 = {};
-      if (fs26.existsSync(configPath)) {
-        config2 = JSON.parse(fs26.readFileSync(configPath, "utf-8"));
+      if (fs27.existsSync(configPath)) {
+        config2 = JSON.parse(fs27.readFileSync(configPath, "utf-8"));
       }
       const mcp = {};
       for (const [name, cfg] of Object.entries(mcpServers)) {
         mcp[name] = { type: "remote", url: cfg.url };
       }
       config2.mcp = mcp;
-      fs26.mkdirSync(path23.dirname(configPath), { recursive: true });
-      fs26.writeFileSync(configPath, JSON.stringify(config2, null, 2));
+      fs27.mkdirSync(path23.dirname(configPath), { recursive: true });
+      fs27.writeFileSync(configPath, JSON.stringify(config2, null, 2));
       console.log(`[agents-to-im] Updated MCP config: ${configPath}`);
     } catch (err) {
       console.warn(`[agents-to-im] Failed to write MCP config to ${configPath}:`, err);
@@ -137561,8 +137738,8 @@ function generateMcpConfigs(config) {
   try {
     const geminiSettingsPath = path23.join(os15.homedir(), ".gemini", "settings.json");
     let settings = {};
-    if (fs26.existsSync(geminiSettingsPath)) {
-      settings = JSON.parse(fs26.readFileSync(geminiSettingsPath, "utf-8"));
+    if (fs27.existsSync(geminiSettingsPath)) {
+      settings = JSON.parse(fs27.readFileSync(geminiSettingsPath, "utf-8"));
     }
     const existingMcp = typeof settings.mcpServers === "object" && settings.mcpServers ? settings.mcpServers : {};
     for (const [name, cfg] of Object.entries(mcpServers)) {
@@ -137572,7 +137749,7 @@ function generateMcpConfigs(config) {
     let geminiModelGroup = "gemini-model";
     try {
       const envPath2 = path23.join(CTI_HOME2, "config.env");
-      const envContent2 = fs26.readFileSync(envPath2, "utf-8");
+      const envContent2 = fs27.readFileSync(envPath2, "utf-8");
       for (const line of envContent2.split("\n")) {
         const t = line.trim();
         if (!t || t.startsWith("#")) continue;
@@ -137589,8 +137766,8 @@ function generateMcpConfigs(config) {
     } catch {
     }
     settings.model = { name: geminiModelGroup };
-    fs26.mkdirSync(path23.dirname(geminiSettingsPath), { recursive: true });
-    fs26.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2));
+    fs27.mkdirSync(path23.dirname(geminiSettingsPath), { recursive: true });
+    fs27.writeFileSync(geminiSettingsPath, JSON.stringify(settings, null, 2));
     console.log(`[agents-to-im] Updated Gemini CLI config (model=${geminiModelGroup}): ${geminiSettingsPath}`);
   } catch (err) {
     console.warn("[agents-to-im] Failed to write Gemini CLI MCP config:", err);
@@ -137677,8 +137854,8 @@ async function main() {
     permissions: gateway,
     lifecycle: {
       onBridgeStart: () => {
-        fs26.mkdirSync(RUNTIME_DIR, { recursive: true });
-        fs26.writeFileSync(PID_FILE, String(process.pid), "utf-8");
+        fs27.mkdirSync(RUNTIME_DIR, { recursive: true });
+        fs27.writeFileSync(PID_FILE, String(process.pid), "utf-8");
         writeStatus({
           running: true,
           pid: process.pid,

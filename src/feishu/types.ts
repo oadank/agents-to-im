@@ -192,6 +192,8 @@ export interface AdapterContext {
   markSeenMessage(messageId: string): boolean;
   enqueue(msg: InboundMessage): void;
   enqueueChatTask(chatId: string, task: () => Promise<void>): Promise<void>;
+  /** 取消一条已入队的消息（插队卡"取消消息"按钮） */
+  cancelInboundMessage(messageId: string): boolean;
   /** Ingest message to OpenHuman memory_tree for semantic search. */
   ingestToMemoryTree(chatId: string, senderId: string, text: string, messageId: string): Promise<void>;
   sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string, forceBotToken?: boolean): Promise<SendResult>;

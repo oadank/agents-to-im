@@ -170,7 +170,15 @@ export class ReasonixProvider implements LLMProvider {
   private acpCache = new Map<string, CachedAcpSession>();
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private static IDLE_TIMEOUT_MS = parseInt(process.env.CTI_REASONIX_IDLE_TIMEOUT_MS || '900000'); // 默认 15 分钟
-  private static SESSION_DIR = path.join(os.homedir(), '.reasonix', 'sessions');
+  // reasonix-cli 真实 session 持久化目录（~/.reasonix/sessions 是错误位置，从未写入成功）
+  // 对齐 reasonix-cli：%APPDATA%/reasonix/sessions（Windows）/ ~/.config/reasonix/sessions（Linux）
+  private static SESSION_DIR = path.join(
+    process.platform === 'win32'
+      ? (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'))
+      : path.join(os.homedir(), '.config'),
+    'reasonix',
+    'sessions',
+  );
 
   constructor() {
     this.startCleanupTimer();

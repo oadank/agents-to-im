@@ -1,6 +1,8 @@
 import { getBridgeContext } from '../../bridge/context.js';
 import { validateMode } from '../../bridge/security/validators.js';
 import { interruptActiveTask, isSessionBusy } from '../../bridge/bridge-manager.js';
+import { cancelAutoInterrupt, getInterruptCardMessageId, deleteInterruptCardMessageId } from './inbound-handler.js';
+import { buildInterruptCard } from '../cards/index.js';
 import {
   buildResumeSessionCard,
   buildStatusCard,
@@ -23,6 +25,16 @@ import { buildReplayMessageText, splitReplayText } from '../cards/index.js';
 import type { ChannelBinding } from '../../bridge/types.js';
 import { appendLocalCommandExchange } from '../../bridge/local-command-history.js';
 import type { MultiplexLLMProvider } from '../../providers/multiplex.js';
+import fs from 'node:fs';
+
+// 实时日志：绕过 PM2 stdout 缓冲，直接写硬盘（与 inbound-handler 一致）
+const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'unknown'}.log`;
+function rtLog(msg: string): void {
+  const time = new Date().toISOString();
+  try {
+    fs.appendFileSync(DEBUG_LOG, `[${time}] ${msg}\n`, 'utf-8');
+  } catch {}
+}
 
 export async function handleCreateSessionCommand(
   ctx: AdapterContext,
@@ -216,7 +228,9 @@ export async function handleInterruptCardAction(
   callbackData: string,
 ): Promise<CardActionResult> {
   const [, action, chatId, messageId] = callbackData.split(':');
-  if (action !== 'yes' && action !== 'no') {
+  rtLog(`[handleInterruptCardAction] action=${action} chatId=${chatId} messageId=${messageId}`);
+  console.log(`[session-handler] handleInterruptCardAction action=${action} chatId=${chatId} messageId=${messageId}`);
+  if (action !== 'yes' && action !== 'no' && action !== 'cancel') {
     return { toast: { type: 'warning', content: 'Unsupported action' } };
   }
   if (!chatId) {
@@ -232,8 +246,26 @@ export async function handleInterruptCardAction(
     chatId,
   };
 
+  if (action === 'cancel') {
+    // 取消消息：撤回这条消息（从队列移除 + 标记作废），不打断当前任务
+    cancelAutoInterrupt(chatId);
+    await patchInterruptCardStatus(ctx, messageId, chatId, 'cancel');
+    const removed = ctx.cancelInboundMessage(messageId);
+    rtLog(`[handleInterruptCardAction] cancel messageId=${messageId} removed=${removed}`);
+    try {
+      await ctx.sendAsPost(address, removed
+        ? '🗑 已撤回这条消息，当前任务继续处理。'
+        : '🗑 消息已作废（可能正在处理），不会再被消费。', messageId);
+    } catch (e) {
+      console.warn('[feishu-adapter] interrupt:cancel feedback failed:', e);
+    }
+    return { toast: { type: 'success', content: '已取消该消息' } };
+  }
+
   if (action === 'no') {
-    // 稍后处理：新消息已排入队列，当前任务完成后自动执行
+    // 稍后处理：新消息已排入队列，当前任务完成后自动执行；取消自动插队定时器
+    cancelAutoInterrupt(chatId);
+    await patchInterruptCardStatus(ctx, messageId, chatId, 'no');
     try {
       await ctx.sendAsPost(address, '好的，新消息已排入队列，当前任务完成后会自动处理。', messageId);
     } catch (e) {
@@ -250,6 +282,7 @@ export async function handleInterruptCardAction(
   const sessionId = binding.codepilotSessionId || binding.sdkSessionId;
   const wasBusy = !!sessionId && isSessionBusy(sessionId);
   const interrupted = sessionId ? interruptActiveTask(sessionId) : false;
+  await patchInterruptCardStatus(ctx, messageId, chatId, 'yes');
   try {
     if (wasBusy && interrupted) {
       await ctx.sendAsPost(address, '⚡ 已中断当前任务，你的新消息优先处理中…', messageId);
@@ -262,6 +295,34 @@ export async function handleInterruptCardAction(
     console.warn('[feishu-adapter] interrupt:yes feedback failed:', e);
   }
   return { toast: { type: 'success', content: wasBusy ? '已插队' : '无任务可中断' } };
+}
+
+/** 按钮点击后把插队卡片 patch 成对应处理状态（去掉按钮，避免重复点击） */
+async function patchInterruptCardStatus(
+  ctx: AdapterContext,
+  messageId: string,
+  chatId: string,
+  status: 'yes' | 'no' | 'cancel',
+): Promise<void> {
+  const cardMessageId = getInterruptCardMessageId(messageId);
+  if (!cardMessageId) {
+    rtLog(`[patchInterruptCard] no card mapping for messageId=${messageId}`);
+    return;
+  }
+  try {
+    await ctx.patchInteractiveCard(cardMessageId, buildInterruptCard({
+      chatId,
+      messageId,
+      botName: ctx.label,
+      status,
+    }));
+    rtLog(`[patchInterruptCard] card ${cardMessageId} -> status=${status}`);
+  } catch (e) {
+    rtLog(`[patchInterruptCard] failed: ${e}`);
+    console.warn('[feishu-adapter] patch interrupt card failed:', e);
+  } finally {
+    deleteInterruptCardMessageId(messageId);
+  }
 }
 
 export async function replayNativeSessionHistory(

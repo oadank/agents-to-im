@@ -558,18 +558,103 @@ async function maybeOfferInterrupt(
   inbound: InboundMessage,
 ): Promise<boolean> {
   const sessionId = binding.codepilotSessionId || binding.sdkSessionId;
-  if (!sessionId || !isSessionBusy(sessionId)) return false;
+  const busy = !!sessionId && isSessionBusy(sessionId);
+  rtLog(`[maybeOfferInterrupt] chat=${inbound.address.chatId} sessionId=${sessionId || '(none)'} busy=${busy} ` +
+    `codepilot=${binding.codepilotSessionId || '(none)'} sdk=${binding.sdkSessionId || '(none)'}`);
+  console.log(
+    `[inbound-handler] maybeOfferInterrupt chat=${inbound.address.chatId} sessionId=${sessionId || '(none)'} busy=${busy} ` +
+    `codepilot=${binding.codepilotSessionId || '(none)'} sdk=${binding.sdkSessionId || '(none)'}`,
+  );
+  if (!sessionId || !busy) {
+    rtLog(`[maybeOfferInterrupt] NOT busy (sessionId=${sessionId || '(none)'}), skip interrupt card`);
+    return false;
+  }
   ctx.enqueue(inbound); // 先入队，点"立即插队"后 abort 当前任务，队列随即消费到它
   try {
-    await ctx.sendInteractiveCard(inbound.address, buildInterruptCard({
+    const result = await ctx.sendInteractiveCard(inbound.address, buildInterruptCard({
       chatId: inbound.address.chatId,
       messageId: inbound.messageId,
       botName: ctx.label,
     }));
+    rtLog(`[maybeOfferInterrupt] interrupt card sent: messageId=${result.messageId} openId=${result.openMessageId || '(none)'}`);
+    setInterruptCardMessageId(inbound.messageId, result.messageId);
+    // 自动插队：卡片弹出后 N 秒未操作，自动执行"立即插队"（默认 10s，可用 CTI_AUTO_INTERRUPT_MS 覆盖）
+    scheduleAutoInterrupt(ctx, sessionId, inbound, result.messageId);
   } catch (e) {
+    rtLog(`[maybeOfferInterrupt] send interrupt card FAILED: ${e}`);
     console.warn('[feishu-adapter] send interrupt card failed:', e);
   }
   return true;
+}
+
+// ── 自动插队（卡片弹出后 N 秒未操作自动执行"立即插队"）──
+// key = chatId，避免同一会话多条消息的定时器互相干扰；用户手动点"稍后处理"时取消。
+const autoInterruptTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const AUTO_INTERRUPT_MS = parseInt(process.env.CTI_AUTO_INTERRUPT_MS || '10000', 10);
+
+// 插队卡片 messageId 映射：原始消息 messageId → 插队卡片 messageId（用于按钮点击后 patch 卡片状态）
+const interruptCardMessageIds = new Map<string, string>();
+export function getInterruptCardMessageId(messageId: string): string | undefined {
+  return interruptCardMessageIds.get(messageId);
+}
+export function setInterruptCardMessageId(messageId: string, cardMessageId: string): void {
+  interruptCardMessageIds.set(messageId, cardMessageId);
+}
+export function deleteInterruptCardMessageId(messageId: string): void {
+  interruptCardMessageIds.delete(messageId);
+}
+
+function scheduleAutoInterrupt(
+  ctx: AdapterContext,
+  sessionId: string,
+  inbound: InboundMessage,
+  cardMessageId: string,
+): void {
+  const chatId = inbound.address.chatId;
+  const existing = autoInterruptTimers.get(chatId);
+  if (existing) clearTimeout(existing); // 只保留最新一条消息的自动插队
+  const timer = setTimeout(async () => {
+    autoInterruptTimers.delete(chatId);
+    // 到点时若任务已不忙（自己完成/已被打断），什么都不做
+    if (!isSessionBusy(sessionId)) {
+      rtLog(`[autoInterrupt] chat=${chatId} session=${sessionId.slice(0, 8)} no longer busy, skip auto interrupt`);
+      return;
+    }
+    const interrupted = interruptActiveTask(sessionId);
+    rtLog(`[autoInterrupt] chat=${chatId} session=${sessionId.slice(0, 8)} auto interrupt after ${AUTO_INTERRUPT_MS}ms, interrupted=${interrupted}`);
+    if (interrupted) {
+      // 更新插队卡片为"已自动插队"状态（去掉按钮）
+      try {
+        await ctx.patchInteractiveCard(cardMessageId, buildInterruptCard({
+          chatId,
+          messageId: inbound.messageId,
+          botName: ctx.label,
+          status: 'auto',
+        }));
+        rtLog(`[autoInterrupt] interrupt card updated to auto status: ${cardMessageId}`);
+      } catch (e) {
+        rtLog(`[autoInterrupt] update interrupt card failed: ${e}`);
+        console.warn('[feishu-adapter] auto interrupt card patch failed:', e);
+      }
+      try {
+        await ctx.sendAsPost(inbound.address, `⏱️ ${AUTO_INTERRUPT_MS / 1000}s 未操作，已自动插队：当前任务已中断，你的新消息优先处理中…`, inbound.messageId);
+      } catch (e) {
+        console.warn('[feishu-adapter] auto interrupt feedback failed:', e);
+      }
+    }
+  }, AUTO_INTERRUPT_MS);
+  autoInterruptTimers.set(chatId, timer);
+  rtLog(`[autoInterrupt] chat=${chatId} session=${sessionId.slice(0, 8)} auto interrupt scheduled in ${AUTO_INTERRUPT_MS}ms`);
+}
+
+/** 用户手动点了"稍后处理"（interrupt:no）时取消自动插队 */
+export function cancelAutoInterrupt(chatId: string): void {
+  const existing = autoInterruptTimers.get(chatId);
+  if (existing) {
+    clearTimeout(existing);
+    autoInterruptTimers.delete(chatId);
+    rtLog(`[autoInterrupt] chat=${chatId} auto interrupt cancelled (user chose 稍后处理)`);
+  }
 }
 
 export async function handleGroupMessage(

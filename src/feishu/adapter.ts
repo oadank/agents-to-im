@@ -165,6 +165,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
   private running = false;
   private queue: InboundMessage[] = [];
   private waiters: Array<(msg: InboundMessage | null) => void> = [];
+  /** 用户通过插队卡"取消消息"按钮标记作废的消息 id（从队列移除 + 防止已入链的执行） */
+  private cancelledMessageIds = new Set<string>();
   private wsClient: lark.WSClient | null = null;
   private chatQueues = new Map<string, Promise<void>>();
   private seenMessageIds = new Map<string, number>();
@@ -304,6 +306,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       markSeenMessage: this.markSeenMessage.bind(this),
       enqueue: this.enqueue.bind(this),
       enqueueChatTask: this.enqueueChatTask.bind(this),
+      cancelInboundMessage: this.cancelInboundMessage.bind(this),
       ingestToMemoryTree: this.ingestToMemoryTree.bind(this),
       sendAsPost: this.sendAsPost.bind(this),
       sendAsInteractiveCard: this.sendAsInteractiveCard.bind(this),
@@ -511,12 +514,30 @@ export class FeishuAdapter extends BaseChannelAdapter {
   }
 
   consumeOne(): Promise<InboundMessage | null> {
-    const queued = this.queue.shift();
-    if (queued) return Promise.resolve(queued);
+    // 跳过已被"取消消息"按钮标记作废的消息
+    while (this.queue.length > 0) {
+      const queued = this.queue.shift();
+      if (queued && this.cancelledMessageIds.has(queued.messageId)) {
+        this.cancelledMessageIds.delete(queued.messageId);
+        continue;
+      }
+      if (queued) return Promise.resolve(queued);
+    }
     if (!this.running) return Promise.resolve(null);
     return new Promise<InboundMessage | null>((resolve) => {
       this.waiters.push(resolve);
     });
+  }
+
+  /** 取消一条已入队的消息（插队卡"取消消息"按钮）：从队列移除 + 标记作废 */
+  cancelInboundMessage(messageId: string): boolean {
+    this.cancelledMessageIds.add(messageId);
+    const idx = this.queue.findIndex((m) => m.messageId === messageId);
+    if (idx !== -1) {
+      this.queue.splice(idx, 1);
+      return true;
+    }
+    return false; // 不在待处理队列（可能已入 chatQueues 串行链），靠标记在消费时拦截
   }
 
   validateConfig(): string | null {
@@ -1706,6 +1727,11 @@ export class FeishuAdapter extends BaseChannelAdapter {
   }
 
   private enqueue(msg: InboundMessage): void {
+    // 已被"取消消息"按钮标记作废的消息直接丢弃
+    if (this.cancelledMessageIds.has(msg.messageId)) {
+      this.cancelledMessageIds.delete(msg.messageId);
+      return;
+    }
     const waiter = this.waiters.shift();
     if (waiter) {
       waiter(msg);

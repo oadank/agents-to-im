@@ -1,8 +1,8 @@
 /**
- * MiMo Provider — ACP 协议接入真正的 MiMo Code CLI
+ * Opencode Provider — ACP 协议接入真正的 Opencode Code CLI
  *
- * 通过 ACP (Agent Client Protocol) 与 `mimo acp` 进程通信，
- * 获得完整的 MiMo Code 能力：
+ * 通过 ACP (Agent Client Protocol) 与 `opencode acp` 进程通信，
+ * 获得完整的 Opencode Code 能力：
  * - 内置工具（Read/Write/Bash/Glob 等）
  * - MCP 服务器支持（agentmemory 等）
  * - 原生记忆系统
@@ -47,11 +47,11 @@ function buildSpawnEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function resolveMimoExecutable(): { command: string; args: string[] } {
+function resolveOpencodeExecutable(): { command: string; args: string[] } {
   if (process.platform === 'win32') {
     const candidates = [
-      'C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\@mimo-ai\\cli\\node_modules\\@mimo-ai\\mimocode-windows-x64\\bin\\mimo.exe',
-      'C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\@mimo-ai\\cli\\node_modules\\@mimo-ai\\mimocode-windows-x64-baseline\\bin\\mimo.exe',
+      'C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\node_modules\\opencode-windows-x64\\bin\\opencode.exe',
+      'C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\node_modules\\opencode-windows-x64-baseline\\bin\\opencode.exe',
     ];
     for (const exe of candidates) {
       if (fs.existsSync(exe)) {
@@ -59,23 +59,23 @@ function resolveMimoExecutable(): { command: string; args: string[] } {
       }
     }
   }
-  return { command: 'mimo', args: [] };
+  return { command: 'opencode', args: [] };
 }
 
-// ── MiMo MCP 配置加载 ──
+// ── Opencode MCP 配置加载 ──
 
-interface MiMoMcpServer {
+interface OpencodeMcpServer {
   name: string;
   url: string;
   type: string;
 }
 
-/** 从 mimocode.json 加载 MiMo 的 MCP 服务器配置 */
-function loadMiMoMcpServers(): MiMoMcpServer[] {
-  const configDir = process.env.CTI_MIMO_ACP_CWD || '';
+/** 从 opencode.json 加载 Opencode 的 MCP 服务器配置 */
+function loadOpencodeMcpServers(): OpencodeMcpServer[] {
+  const configDir = process.env.CTI_OPENCODE_ACP_CWD || '';
   const configPath = configDir
-    ? path.join(configDir, '.mimocode/config/mimocode.json')
-    : path.join(os.homedir(), '.mimocode', 'config', 'mimocode.json');
+    ? path.join(configDir, '.config/opencode/opencode.json')
+    : path.join(os.homedir(), '.mimocode', 'config', 'opencode.json');
   try {
     if (!fs.existsSync(configPath)) return [];
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -86,7 +86,7 @@ function loadMiMoMcpServers(): MiMoMcpServer[] {
       type: cfg.type || 'remote',
     }));
   } catch (err) {
-    console.warn(`[mimo-provider] 加载 mimocode.json 失败:`, err);
+    console.warn(`[opencode-provider] 加载 opencode.json 失败:`, err);
     return [];
   }
 }
@@ -130,8 +130,8 @@ function loadMemoryContent(agentName?: string): string {
 
 function getMemoryContent(agentName?: string): string {
   const memory = loadMemoryContent(agentName);
-  if (memory) console.log(`[mimo-provider] Memory loaded (${memory.length} chars, agent=${agentName || 'mimo'})`);
-  else console.log('[mimo-provider] No memory loaded');
+  if (memory) console.log(`[opencode-provider] Memory loaded (${memory.length} chars, agent=${agentName || 'mimo'})`);
+  else console.log('[opencode-provider] No memory loaded');
   return memory;
 }
 
@@ -162,12 +162,12 @@ interface CachedAcpSession {
   pendingRetryAbortController: AbortController | undefined;
 }
 
-// ── MiMoProvider ──
+// ── OpencodeProvider ──
 
-export class MiMoProvider implements LLMProvider {
+export class OpencodeProvider implements LLMProvider {
   private acpCache = new Map<string, CachedAcpSession>();
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
-  private static IDLE_TIMEOUT_MS = parseInt(process.env.CTI_MIMO_IDLE_TIMEOUT_MS || '900000'); // 默认 15 分钟
+  private static IDLE_TIMEOUT_MS = parseInt(process.env.CTI_OPENCODE_IDLE_TIMEOUT_MS || '900000'); // 默认 15 分钟
   private static SESSION_DIR = path.join(os.homedir(), '.mimocode', 'sessions');
 
   constructor() {
@@ -177,7 +177,7 @@ export class MiMoProvider implements LLMProvider {
   /** 清除 ACP 会话缓存，下次请求时会重启 mimo 进程（用于 /new 时重新读取配置） */
   clearCache(): void {
     for (const [key, cached] of this.acpCache) {
-      console.log(`[mimo-provider] Clear cache: ${cached.sessionId}`);
+      console.log(`[opencode-provider] Clear cache: ${cached.sessionId}`);
       this.saveSession(key, cached.sessionId, cached.cwd);
       cached.alive = false;
       try { cached.child.kill('SIGTERM'); } catch {}
@@ -186,15 +186,15 @@ export class MiMoProvider implements LLMProvider {
   }
 
   async prepare(): Promise<void> {
-    // Windows NSSM环境下 --version 会挂死（mimo.exe可能有网络/配置初始化），直接跳过版本检查
-    // 手动测试确认 mimo.exe acp 可用
+    // Windows NSSM环境下 --version 会挂死（opencode.exe可能有网络/配置初始化），直接跳过版本检查
+    // 手动测试确认 opencode.exe acp 可用
     if (process.platform === 'win32') {
-      rtLog(`[mimo-provider] prepare: Windows environment, skipping --version check`);
+      rtLog(`[opencode-provider] prepare: Windows environment, skipping --version check`);
       return;
     }
     return new Promise<void>((resolve, reject) => {
-      const { command, args } = resolveMimoExecutable();
-      rtLog(`[mimo-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
+      const { command, args } = resolveOpencodeExecutable();
+      rtLog(`[opencode-provider] prepare: spawning "${command}" with args: ${JSON.stringify(args)}`);
       const child = spawn(command, [...args, '--version'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: buildSpawnEnv(),
@@ -205,15 +205,15 @@ export class MiMoProvider implements LLMProvider {
       child.stdout?.on('data', (chunk) => { stdoutBuf += chunk.toString(); });
       child.stderr?.on('data', (chunk) => { stderrBuf += chunk.toString(); });
       child.on('close', (code) => {
-        rtLog(`[mimo-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
-        code === 0 ? resolve() : reject(new Error(`mimo CLI not available (code=${code})`));
+        rtLog(`[opencode-provider] prepare: process closed, code=${code}, stdout="${stdoutBuf.trim()}", stderr="${stderrBuf.trim()}"`);
+        code === 0 ? resolve() : reject(new Error(`opencode CLI not available (code=${code})`));
       });
       child.on('error', (error) => {
-        rtLog(`[mimo-provider] prepare: spawn ERROR: ${error.message}`);
-        reject(new Error(`Failed to spawn mimo: ${error.message}`));
+        rtLog(`[opencode-provider] prepare: spawn ERROR: ${error.message}`);
+        reject(new Error(`Failed to spawn opencode: ${error.message}`));
       });
       setTimeout(() => {
-        rtLog(`[mimo-provider] prepare: TIMEOUT (10s), killing process`);
+        rtLog(`[opencode-provider] prepare: TIMEOUT (10s), killing process`);
         child.kill();
         reject(new Error('mimo prepare timeout (10s)'));
       }, 10000);
@@ -227,8 +227,8 @@ export class MiMoProvider implements LLMProvider {
         try {
           await self.runAcp(controller, params);
         } catch (e) {
-          console.error('[mimo-provider] streamChat error:', e);
-          rtLog(`[mimo-provider] streamChat CAUGHT ERROR: ${e}`);
+          console.error('[opencode-provider] streamChat error:', e);
+          rtLog(`[opencode-provider] streamChat CAUGHT ERROR: ${e}`);
           emitCanonicalTurnEvent(controller, { type: 'error', data: String(e) });
           emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
           controller.close();
@@ -238,7 +238,7 @@ export class MiMoProvider implements LLMProvider {
   }
 
   /**
-   * 通过 ACP 协议与 mimo acp 进程交互
+   * 通过 ACP 协议与 opencode acp 进程交互
    * 支持进程缓存：首次 spawn 并缓存，后续消息复用同一 session
    */
   private async runAcp(
@@ -251,7 +251,7 @@ export class MiMoProvider implements LLMProvider {
 
     if (existing && existing.alive) {
       existing.lastUsed = Date.now();
-      console.log(`[mimo-provider] ACP reuse session: ${existing.sessionId}`);
+      console.log(`[opencode-provider] ACP reuse session: ${existing.sessionId}`);
       emitCanonicalTurnEvent(controller, {
         type: 'status', data: { session_id: sdkSessionId || '' },
       });
@@ -265,41 +265,41 @@ export class MiMoProvider implements LLMProvider {
       ? (process.env.USERPROFILE || 'C:\\Users\\oadan')
       : rawCwd;
 
-    rtLog(`[mimo-provider] ACP spawn: bin=mimo cwd=${cwd}`);
-    const configCwd = process.env.CTI_MIMO_ACP_CWD || cwd;
+    rtLog(`[opencode-provider] ACP spawn: bin=opencode cwd=${cwd}`);
+    const configCwd = process.env.CTI_OPENCODE_ACP_CWD || cwd;
     // session/new 必须传绝对路径，否则 mimo 的信任列表检查可能不匹配
     const sessionNewCwd = process.platform === 'win32' ? cwd : configCwd;
 
     const saved = this.loadSavedSession(cacheKey);
 
-    const { command, args } = resolveMimoExecutable();
-    rtLog(`[mimo-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
+    const { command, args } = resolveOpencodeExecutable();
+    rtLog(`[opencode-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
     const env = buildSpawnEnv();
     const child = spawn(command, [...args, 'acp', '--hostname', '127.0.0.1', '--cwd', configCwd], {
       cwd, stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       env,
     });
-    rtLog(`[mimo-provider] ACP spawned successfully: pid=${child.pid}`);
+    rtLog(`[opencode-provider] ACP spawned successfully: pid=${child.pid}`);
 
     // 诊断日志：原始字节流监控
     child.stdout.on('data', (chunk: Buffer) => {
-      rtLog(`[mimo-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString('utf-8')}"`);
+      rtLog(`[opencode-provider] RAW STDOUT: ${chunk.length} bytes -> "${chunk.toString('utf-8')}"`);
     });
     child.stderr.on('data', (chunk: Buffer) => {
-      rtLog(`[mimo-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString('utf-8')}"`);
+      rtLog(`[opencode-provider] RAW STDERR: ${chunk.length} bytes -> "${chunk.toString('utf-8')}"`);
     });
     child.on('error', (err) => {
-      rtLog(`[mimo-provider] SPAWN ERROR: ${err}`);
+      rtLog(`[opencode-provider] SPAWN ERROR: ${err}`);
     });
     child.on('close', (code, signal) => {
-      rtLog(`[mimo-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
+      rtLog(`[opencode-provider] PROCESS CLOSED: code=${code} signal=${signal}`);
     });
 
     // 必须读 stderr，否则管道满了进程卡死
     child.stderr!.on('data', (chunk: Buffer) => {
       const text = chunk.toString().trim();
-      if (text) rtLog(`[mimo-provider] ACP stderr: ${text.slice(0, 500)}`);
+      if (text) rtLog(`[opencode-provider] ACP stderr: ${text.slice(0, 500)}`);
     });
 
     emitCanonicalTurnEvent(controller, {
@@ -322,11 +322,11 @@ export class MiMoProvider implements LLMProvider {
 
       const done = (c: CachedAcpSession | null) => {
         if (resolved) {
-          console.warn(`[mimo-provider] done 被二次触发！当前值 sessionId=${c?.sessionId} alive=${c?.alive}`);
+          console.warn(`[opencode-provider] done 被二次触发！当前值 sessionId=${c?.sessionId} alive=${c?.alive}`);
           return;
         }
         resolved = true;
-        console.log(`[mimo-provider] done 触发，resolve 值 sessionId=${c?.sessionId} alive=${c?.alive}`);
+        console.log(`[opencode-provider] done 触发，resolve 值 sessionId=${c?.sessionId} alive=${c?.alive}`);
         resolve(c);
       };
 
@@ -346,7 +346,7 @@ export class MiMoProvider implements LLMProvider {
 
         child.on('close', (code) => {
           cached.alive = false;
-          console.log(`[mimo-provider] ACP process exited code=${code}`);
+          console.log(`[opencode-provider] ACP process exited code=${code}`);
           this.acpCache.delete(cacheKey);
         });
 
@@ -357,12 +357,12 @@ export class MiMoProvider implements LLMProvider {
         return cached;
       };
 
-      // session/new 的 cwd 参数在 Windows 上不能用绝对路径（mimo.exe 内部 bug），
+      // session/new 的 cwd 参数在 Windows 上不能用绝对路径（opencode.exe 内部 bug），
       // 用 '.' 让它使用 --cwd 参数指定的目录即可
       const sessionNewCwd = process.platform === 'win32' ? '.' : cwd;
 
       const fallbackToNew = () => {
-        console.log(`[mimo-provider] Resume failed, falling back to session/new`);
+        console.log(`[opencode-provider] Resume failed, falling back to session/new`);
         this.removeSavedSession(cacheKey);
         resumeAttempted = true;
         sessionId2 = 99;
@@ -374,13 +374,13 @@ export class MiMoProvider implements LLMProvider {
 
       child.on('error', (err) => {
         spawnError = err.message; // writes outer-scope var
-        console.error(`[mimo-provider] ACP spawn error: ${err.message}`);
+        console.error(`[opencode-provider] ACP spawn error: ${err.message}`);
         done(null);
       });
 
       child.on('close', (code) => {
         if (!sessionDone) {
-          console.error(`[mimo-provider] ACP exited during init code=${code}`);
+          console.error(`[opencode-provider] ACP exited during init code=${code}`);
           done(null);
         }
       });
@@ -397,9 +397,9 @@ export class MiMoProvider implements LLMProvider {
             const id = msg.id as number | undefined;
 
             if (id === initId && msg.result) {
-              console.log(`[mimo-provider] ACP initialized`);
+              console.log(`[opencode-provider] ACP initialized`);
               if (saved) {
-                console.log(`[mimo-provider] Attempting session/load: ${saved.sessionId}`);
+                console.log(`[opencode-provider] Attempting session/load: ${saved.sessionId}`);
                 child.stdin!.write(JSON.stringify({
                   jsonrpc: '2.0', id: sessionId2, method: 'session/load',
                   params: { sessionId: saved.sessionId, cwd: sessionNewCwd, mcpServers: [] },
@@ -418,20 +418,20 @@ export class MiMoProvider implements LLMProvider {
               sessionId = (r.sessionId as string) || (saved ? saved.sessionId : undefined) || '';
               sessionDone = true;
               const action = resumeAttempted || saved ? 'loaded' : 'new';
-              console.log(`[mimo-provider] ACP session (${action}): ${sessionId}`);
+              console.log(`[opencode-provider] ACP session (${action}): ${sessionId}`);
               const cached = createCacheEntry(sessionId);
               done(cached);
               continue;
             }
 
             if (id === sessionId2 && msg.error && !resumeAttempted && saved) {
-              console.log(`[mimo-provider] session/load failed: ${JSON.stringify(msg.error)}`);
+              console.log(`[opencode-provider] session/load failed: ${JSON.stringify(msg.error)}`);
               fallbackToNew();
               continue;
             }
 
             if (id != null && (id === initId || id === sessionId2) && msg.error) {
-              console.error(`[mimo-provider] ACP init error:`, JSON.stringify(msg.error));
+              console.error(`[opencode-provider] ACP init error:`, JSON.stringify(msg.error));
               done(null);
               continue;
             }
@@ -443,17 +443,17 @@ export class MiMoProvider implements LLMProvider {
         jsonrpc: '2.0', id: initId, method: 'initialize',
         params: {
           protocolVersion: 1, capabilities: {},
-          clientInfo: { name: 'feishu-mimo', version: '1.0' },
+          clientInfo: { name: 'feishu-opencode', version: '1.0' },
         },
       }) + '\n');
 
       setTimeout(() => { if (!sessionDone) { child.kill('SIGTERM'); done(null); } }, 15_000);
     });
 
-    rtLog(`[mimo-provider] runAcp cached = ${cached}`);
+    rtLog(`[opencode-provider] runAcp cached = ${cached}`);
     if (!cached) {
       const err = spawnError || 'Failed to initialize ACP session';
-      console.error(`[mimo-provider] ACP init failed:`, err);
+      console.error(`[opencode-provider] ACP init failed:`, err);
       emitCanonicalTurnEvent(controller, { type: 'error', data: err });
       emitCanonicalTurnEvent(controller, { type: 'result', data: { session_id: sdkSessionId || '', is_error: true } });
       emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
@@ -485,12 +485,12 @@ export class MiMoProvider implements LLMProvider {
             const isSessionNotFound = errMsg.includes('Session not found') || errDetails.includes('Session not found');
             if (isSessionNotFound && cached.sessionRecoveryAttempts < 1) {
               cached.sessionRecoveryAttempts++;
-              console.log(`[mimo-provider] ACP Session not found, recreating (attempt ${cached.sessionRecoveryAttempts})`);
+              console.log(`[opencode-provider] ACP Session not found, recreating (attempt ${cached.sessionRecoveryAttempts})`);
               cached.pendingRetrySettle = cached.currentSettle;
               cached.currentSettle = null;
               const newSessionId = cached.nextId++;
               cached.currentPromptId = newSessionId;
-              // session/new cwd: on Windows must be relative ('.') to avoid mimo.exe path check bug
+              // session/new cwd: on Windows must be relative ('.') to avoid opencode.exe path check bug
               const recoverCwd = process.platform === 'win32' ? '.' : cached.cwd;
               cached.child.stdin!.write(JSON.stringify({
                 jsonrpc: '2.0', id: newSessionId, method: 'session/new',
@@ -500,7 +500,7 @@ export class MiMoProvider implements LLMProvider {
             }
             cached.currentSettle(`ACP error: ${errMsg}`);
           } else {
-            console.log(`[mimo-provider] ACP prompt done`);
+            console.log(`[opencode-provider] ACP prompt done`);
             cached.currentSettle();
           }
           continue;
@@ -510,7 +510,7 @@ export class MiMoProvider implements LLMProvider {
         if (msg.method === 'session/update') {
           if (!cached._firstUpdateLogged) {
             cached._firstUpdateLogged = true;
-            console.log(`[mimo-provider] ACP first update after ${Date.now() - promptSentAt}ms`);
+            console.log(`[opencode-provider] ACP first update after ${Date.now() - promptSentAt}ms`);
           }
           const update = msg.params?.update;
           const updateType = (update?.sessionUpdate as string) || 'unknown';
@@ -535,7 +535,7 @@ export class MiMoProvider implements LLMProvider {
                       type: 'activity_event',
                       data: {
                         kind: 'reasoning_activity',
-                        id: 'thinking:mimo',
+                        id: 'thinking:opencode',
                         status: 'running',
                         text: cached.currentThinking,
                       },
@@ -574,7 +574,7 @@ export class MiMoProvider implements LLMProvider {
                 type: 'activity_event',
                 data: {
                   kind: 'reasoning_activity',
-                  id: 'thinking:mimo',
+                  id: 'thinking:opencode',
                   status: 'running',
                   text: cached.currentThinking,
                 },
@@ -584,9 +584,9 @@ export class MiMoProvider implements LLMProvider {
           if (update?.sessionUpdate === 'tool_call') {
             const toolInfo = update.input ? `${update.title} ${JSON.stringify(update.input).slice(0, 100)}` : (update.title || '工具');
             const toolStatus = (update.status as string) || 'running';
-            const toolCallId = String((update as any).toolCallId || (update as any).callId || `mimo-tool:${update.title || 'tool'}:${Date.now()}`);
+            const toolCallId = String((update as any).toolCallId || (update as any).callId || `opencode-tool:${update.title || 'tool'}:${Date.now()}`);
             const toolName = String(update.title || 'tool');
-            console.log(`[mimo-provider] ACP tool_call: ${toolInfo} status=${toolStatus} id=${toolCallId}`);
+            console.log(`[opencode-provider] ACP tool_call: ${toolInfo} status=${toolStatus} id=${toolCallId}`);
             // 只发 activity_event，不改 tool_use/tool_result（避免破坏现有的 block 格式）
             if (cached.currentController) {
               emitCanonicalTurnEvent(cached.currentController, {
@@ -614,7 +614,7 @@ export class MiMoProvider implements LLMProvider {
             || options?.find(o => o.optionId === 'proceed_once')
             || options?.[0];
           const optionId = allowOption?.optionId || 'proceed_always';
-          console.log(`[mimo-provider] ACP auto-approve perm reqId=${msg.id} optionId=${optionId}`);
+          console.log(`[opencode-provider] ACP auto-approve perm reqId=${msg.id} optionId=${optionId}`);
           cached.child.stdin!.write(JSON.stringify({
             jsonrpc: '2.0', id: msg.id,
             result: { outcome: { outcome: 'selected', optionId } },
@@ -628,7 +628,7 @@ export class MiMoProvider implements LLMProvider {
         // Session recovery: new session + retry
         if (isResponse && cached.pendingRetryPrompt && cached.pendingRetrySettle && id != null && id === cached.currentPromptId) {
           if (msg.error) {
-            console.error(`[mimo-provider] ACP session recovery failed:`, JSON.stringify(msg.error));
+            console.error(`[opencode-provider] ACP session recovery failed:`, JSON.stringify(msg.error));
             cached.pendingRetrySettle(`ACP error: Session recovery failed: ${msg.error.message || JSON.stringify(msg.error)}`);
             cached.pendingRetryPrompt = null;
             cached.pendingRetrySettle = null;
@@ -637,7 +637,7 @@ export class MiMoProvider implements LLMProvider {
           }
           const r = msg.result as Record<string, unknown>;
           const newSessionId = r.sessionId as string;
-          console.log(`[mimo-provider] ACP session recovered: ${newSessionId}`);
+          console.log(`[opencode-provider] ACP session recovered: ${newSessionId}`);
           cached.sessionId = newSessionId;
           const retryPrompt = cached.pendingRetryPrompt!;
           const retrySettle = cached.pendingRetrySettle!;
@@ -674,7 +674,7 @@ export class MiMoProvider implements LLMProvider {
     conversationHistory?: StreamChatParams['conversationHistory'],
     fromAudio?: boolean,
   ): Promise<void> {
-    rtLog(`[mimo-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
+    rtLog(`[opencode-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
     return new Promise<void>((resolve) => {
       const promptId = cached.nextId++;
       cached.currentPromptId = promptId;
@@ -697,7 +697,7 @@ export class MiMoProvider implements LLMProvider {
       cached.pendingRetryAbortController = abortController;
 
       const abortHandler = () => {
-        console.log(`[mimo-provider] ACP abort: sending session/interrupt first`);
+        console.log(`[opencode-provider] ACP abort: sending session/interrupt first`);
         try {
           cached.child.stdin!.write(JSON.stringify({
             jsonrpc: '2.0', id: cached.nextId++, method: 'session/interrupt',
@@ -707,7 +707,7 @@ export class MiMoProvider implements LLMProvider {
         // 3秒后如果还在运行，强制杀进程
         setTimeout(() => {
           if (cached.alive) {
-            console.log(`[mimo-provider] ACP interrupt timeout, force killing`);
+            console.log(`[opencode-provider] ACP interrupt timeout, force killing`);
             try { cached.child.kill('SIGTERM'); } catch {}
           }
         }, 3000);
@@ -726,7 +726,7 @@ export class MiMoProvider implements LLMProvider {
         abortController?.signal.removeEventListener('abort', abortHandler);
 
         if (err) {
-          console.error(`[mimo-provider] ACP error:`, err);
+          console.error(`[opencode-provider] ACP error:`, err);
           emitCanonicalTurnEvent(controller, { type: 'error', data: err });
           cached.alive = false;
           try { cached.child.kill('SIGTERM'); } catch {}
@@ -765,10 +765,10 @@ export class MiMoProvider implements LLMProvider {
           .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
           .join('\n\n');
         fullPrompt = `[Previous conversation context]\n${historyBlock}\n\n[End of previous context]\n\n[Current message]\n${fullPrompt}`;
-        console.log(`[mimo-provider] ACP injecting ${recentHistory.length} history messages`);
+        console.log(`[opencode-provider] ACP injecting ${recentHistory.length} history messages`);
       }
 
-      console.log(`[mimo-provider] ACP prompt id=${promptId} session=${cached.sessionId}`);
+      console.log(`[opencode-provider] ACP prompt id=${promptId} session=${cached.sessionId}`);
       const promptSentAt = Date.now();
       cached.child.stdin!.write(JSON.stringify({
         jsonrpc: '2.0', id: promptId, method: 'session/prompt',
@@ -778,7 +778,7 @@ export class MiMoProvider implements LLMProvider {
         },
       }) + '\n');
 
-      const timeoutMs = parseInt(process.env.CTI_MIMO_TIMEOUT_MS || '300000', 10); // default 5 min (was 30 min)
+      const timeoutMs = parseInt(process.env.CTI_OPENCODE_TIMEOUT_MS || '300000', 10); // default 5 min (was 30 min)
       setTimeout(() => {
         if (cached.currentSettle) {
           cached.currentSettle(`ACP prompt timeout after ${timeoutMs / 1000}s`);
@@ -791,7 +791,7 @@ export class MiMoProvider implements LLMProvider {
 
   private sessionFilePath(cacheKey: string): string {
     const safe = cacheKey.replace(/[^a-zA-Z0-9_:-]/g, '_');
-    return path.join(MiMoProvider.SESSION_DIR, `${safe}.json`);
+    return path.join(OpencodeProvider.SESSION_DIR, `${safe}.json`);
   }
 
   private loadSavedSession(cacheKey: string): { sessionId: string; cwd: string } | null {
@@ -800,24 +800,24 @@ export class MiMoProvider implements LLMProvider {
       if (!fs.existsSync(filePath)) return null;
       const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
       if (data?.sessionId && data?.cwd) {
-        console.log(`[mimo-provider] Session loaded from disk: ${data.sessionId}`);
+        console.log(`[opencode-provider] Session loaded from disk: ${data.sessionId}`);
         return { sessionId: data.sessionId, cwd: data.cwd };
       }
     } catch (e) {
-      console.log(`[mimo-provider] Session load failed: ${e}`);
+      console.log(`[opencode-provider] Session load failed: ${e}`);
     }
     return null;
   }
 
   private saveSession(cacheKey: string, sessionId: string, cwd: string): void {
     try {
-      fs.mkdirSync(MiMoProvider.SESSION_DIR, { recursive: true });
+      fs.mkdirSync(OpencodeProvider.SESSION_DIR, { recursive: true });
       const filePath = this.sessionFilePath(cacheKey);
       const data = { sessionId, cwd, savedAt: new Date().toISOString() };
       fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-      console.log(`[mimo-provider] Session saved: ${sessionId}`);
+      console.log(`[opencode-provider] Session saved: ${sessionId}`);
     } catch (e) {
-      console.log(`[mimo-provider] Session save failed: ${e}`);
+      console.log(`[opencode-provider] Session save failed: ${e}`);
     }
   }
 
@@ -833,8 +833,8 @@ export class MiMoProvider implements LLMProvider {
     this.cleanupTimer = setInterval(() => {
       const now = Date.now();
       for (const [key, cached] of this.acpCache) {
-        if (now - cached.lastUsed > MiMoProvider.IDLE_TIMEOUT_MS) {
-          console.log(`[mimo-provider] ACP idle cleanup: ${cached.sessionId}`);
+        if (now - cached.lastUsed > OpencodeProvider.IDLE_TIMEOUT_MS) {
+          console.log(`[opencode-provider] ACP idle cleanup: ${cached.sessionId}`);
           this.saveSession(key, cached.sessionId, cached.cwd);
           // 通知等待中的 prompt，避免干等到超时
           if (cached.currentSettle) {
@@ -853,6 +853,6 @@ export class MiMoProvider implements LLMProvider {
   }
 }
 
-export function createMiMoProvider(): MiMoProvider {
-  return new MiMoProvider();
+export function createOpencodeProvider(): OpencodeProvider {
+  return new OpencodeProvider();
 }

@@ -130,6 +130,11 @@ export function interruptActiveTask(sessionId: string): boolean {
   return true;
 }
 
+/** 查询会话当前是否正在执行任务（用于插队卡片判定） */
+export function isSessionBusy(sessionId: string): boolean {
+  return getState().activeTasks.has(sessionId);
+}
+
 function hasPendingStopFeedback(sessionId: string): boolean {
   return getState().pendingStopFeedback.has(sessionId);
 }

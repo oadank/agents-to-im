@@ -17,3 +17,9 @@ pm2_*.log
 test_msg.json
 tsconfig.tsbuildinfo
 nssm.exe
+
+# 本地通讯录（含真实 open_id，勿提交）
+scripts/contacts.json
+
+# 团队运行数据（含真实 open_id/chat_id/UUID，勿提交）
+src/config/team-data.json

@@ -25,7 +25,7 @@ import { buildSubprocessEnv } from './cli-support.js';
 import type { PendingPermissions, PendingStructuredInputs } from './permission-gateway.js';
 
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
-import { LARK_CLI_INSTRUCTIONS } from '../../config/runtime-configs.js';
+import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
 
 
 // ── Memory injection disabled (use hook mechanism instead) ──
@@ -580,7 +580,7 @@ export class SDKLLMProvider implements LLMProvider {
               systemPrompt: {
                 type: 'preset',
                 preset: 'claude_code',
-                append: '1.先想再干 — 不确定就问，不要假设\n2.最简代码 — 能 50 行解决不要 200 行，不加未要求的功能\n3.手术刀式改动 — 只改必须改的，不碰相邻代码\n4.目标驱动 — 定义成功标准，循环验证\n\n' + LARK_CLI_INSTRUCTIONS,
+                append: buildAgentPersona() + '1.先想再干 — 不确定就问，不要假设\n2.最简代码 — 能 50 行解决不要 200 行，不加未要求的功能\n3.手术刀式改动 — 只改必须改的，不碰相邻代码\n4.目标驱动 — 定义成功标准，循环验证\n\n' + LARK_CLI_INSTRUCTIONS,
               },
               // Keep local CLI-managed config (for MCPs in `~/.claude.json`),
               // user auth/billing settings, and project overrides aligned with

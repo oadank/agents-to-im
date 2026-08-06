@@ -6,6 +6,9 @@ import { SDKLLMProvider } from './claude/sdk-provider.js';
 import { OpenHumanProvider, createOpenHumanProvider } from './openhuman/openhuman-provider.js';
 import { ZCodeProvider, createZCodeProvider } from './zcode/zcode-provider.js';
 import { MiMoProvider } from './mimo/mimo-provider.js';
+import { OpencodeProvider } from './opencode/opencode-provider.js';
+import { ReasonixProvider } from './reasonix/reasonix-provider.js';
+import { OpenClawProvider } from './openclaw/openclaw-provider.js';
 import { GeminiProvider, createGeminiProvider } from './gemini/gemini-provider.js';
 import { HermesProvider, createHermesProvider } from './hermes/hermes-provider.js';
 import { OpenAkitaProvider } from './openakita/openakita-provider.js';
@@ -17,6 +20,9 @@ import {
   OpenHumanRuntimeDriver,
   ZCodeRuntimeDriver,
   MiMoRuntimeDriver,
+  OpencodeRuntimeDriver,
+  ReasonixRuntimeDriver,
+  OpenClawRuntimeDriver,
   GeminiRuntimeDriver,
   HermesRuntimeDriver,
   OpenAkitaRuntimeDriver,
@@ -37,6 +43,9 @@ export class MultiplexLLMProvider implements LLMProvider {
   private openhumanProvider: OpenHumanProvider | null = null;
   private zcodeProvider: ZCodeProvider | null = null;
   private mimoProvider: MiMoProvider | null = null;
+  private opencodeProvider: OpencodeProvider | null = null;
+  private reasonixProvider: ReasonixProvider | null = null;
+  private openclawProvider: OpenClawProvider | null = null;
   private geminiProvider: GeminiProvider | null = null;
   private hermesProvider: HermesProvider | null = null;
   private openakitaProvider: OpenAkitaProvider | null = null;
@@ -45,6 +54,9 @@ export class MultiplexLLMProvider implements LLMProvider {
   private openhumanDriver: OpenHumanRuntimeDriver | null = null;
   private zcodeDriver: ZCodeRuntimeDriver | null = null;
   private mimoDriver: MiMoRuntimeDriver | null = null;
+  private opencodeDriver: OpencodeRuntimeDriver | null = null;
+  private reasonixDriver: ReasonixRuntimeDriver | null = null;
+  private openclawDriver: OpenClawRuntimeDriver | null = null;
   private geminiDriver: GeminiRuntimeDriver | null = null;
   private hermesDriver: HermesRuntimeDriver | null = null;
   private openakitaDriver: OpenAkitaRuntimeDriver | null = null;
@@ -138,6 +150,24 @@ export class MultiplexLLMProvider implements LLMProvider {
     return this.mimoProvider;
   }
 
+  private async getOpencodeProvider(): Promise<OpencodeProvider> {
+    if (this.opencodeProvider) return this.opencodeProvider;
+    this.opencodeProvider = new OpencodeProvider();
+    return this.opencodeProvider;
+  }
+
+  private async getReasonixProvider(): Promise<ReasonixProvider> {
+    if (this.reasonixProvider) return this.reasonixProvider;
+    this.reasonixProvider = new ReasonixProvider();
+    return this.reasonixProvider;
+  }
+
+  private async getOpenClawProvider(): Promise<OpenClawProvider> {
+    if (this.openclawProvider) return this.openclawProvider;
+    this.openclawProvider = new OpenClawProvider();
+    return this.openclawProvider;
+  }
+
   private async getGeminiProvider(): Promise<GeminiProvider> {
     if (this.geminiProvider) return this.geminiProvider;
     this.geminiProvider = createGeminiProvider();
@@ -161,6 +191,9 @@ export class MultiplexLLMProvider implements LLMProvider {
     if (runtime === 'openhuman') return this.getOpenHumanProvider();
     if (runtime === 'zcode') return this.getZCodeProvider();
     if (runtime === 'mimo') return this.getMiMoProvider();
+    if (runtime === 'opencode') return this.getOpencodeProvider();
+    if (runtime === 'reasonix') return this.getReasonixProvider();
+    if (runtime === 'openclaw') return this.getOpenClawProvider();
     if (runtime === 'gemini') return this.getGeminiProvider();
     if (runtime === 'hermes') return this.getHermesProvider();
     if (runtime === 'openakita') return this.getOpenAkitaProvider();
@@ -207,6 +240,36 @@ export class MultiplexLLMProvider implements LLMProvider {
         );
       }
       return this.mimoDriver;
+    }
+    if (runtime === 'opencode') {
+      if (!this.opencodeDriver) {
+        this.opencodeDriver = new OpencodeRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('opencode') as Promise<OpencodeProvider>,
+        );
+      }
+      return this.opencodeDriver;
+    }
+    if (runtime === 'reasonix') {
+      if (!this.reasonixDriver) {
+        this.reasonixDriver = new ReasonixRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('reasonix') as Promise<ReasonixProvider>,
+        );
+      }
+      return this.reasonixDriver;
+    }
+    if (runtime === 'openclaw') {
+      if (!this.openclawDriver) {
+        this.openclawDriver = new OpenClawRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('openclaw') as Promise<OpenClawProvider>,
+        );
+      }
+      return this.openclawDriver;
     }
     if (runtime === 'gemini') {
       if (!this.geminiDriver) {

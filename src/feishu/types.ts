@@ -226,6 +226,7 @@ export interface AdapterContext {
     runtime: RuntimeName,
   ): Promise<void>;
   handleResumeCardAction(event: StructuredActionEvent, callbackData: string): Promise<CardActionResult>;
+  handleInterruptCardAction(event: StructuredActionEvent, callbackData: string): Promise<CardActionResult>;
   handleResetCommand(address: ChannelAddress, replyToMessageId?: string): Promise<void>;
   handleModeCommand(bindingId: string, text: string, address: ChannelAddress, replyToMessageId?: string): Promise<void>;
   handlePlanCommand(bindingId: string, inbound: InboundMessage): Promise<void>;

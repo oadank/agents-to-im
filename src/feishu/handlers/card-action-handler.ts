@@ -113,6 +113,9 @@ export async function handleCardAction(
   if (callbackData.startsWith('plan:')) {
     return ctx.handlePlanCardAction(event, callbackData);
   }
+  if (callbackData.startsWith('interrupt:')) {
+    return ctx.handleInterruptCardAction(event, callbackData);
+  }
   return { toast: { type: 'warning', content: 'Unsupported action' } };
 }
 

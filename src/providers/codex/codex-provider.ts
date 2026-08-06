@@ -18,7 +18,7 @@ import {
   type PermissionResolution,
 } from '../claude/permission-gateway.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
-import { LARK_CLI_INSTRUCTIONS } from '../../config/runtime-configs.js';
+import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
 
 const MIME_EXT: Record<string, string> = {
   'image/png': '.png',
@@ -178,7 +178,7 @@ function buildCollaborationMode(
     settings: {
       model,
       reasoning_effort: null,
-      developer_instructions: LARK_CLI_INSTRUCTIONS,
+      developer_instructions: buildAgentPersona() + LARK_CLI_INSTRUCTIONS,
     },
   };
 }

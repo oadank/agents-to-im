@@ -10,6 +10,9 @@ import { SDKLLMProvider } from '../providers/claude/sdk-provider.js';
 import { OpenHumanProvider } from '../providers/openhuman/openhuman-provider.js';
 import { ZCodeProvider } from '../providers/zcode/zcode-provider.js';
 import { MiMoProvider } from '../providers/mimo/mimo-provider.js';
+import { OpencodeProvider } from '../providers/opencode/opencode-provider.js';
+import { ReasonixProvider } from '../providers/reasonix/reasonix-provider.js';
+import { OpenClawProvider } from '../providers/openclaw/openclaw-provider.js';
 import { GeminiProvider } from '../providers/gemini/gemini-provider.js';
 import { HermesProvider } from '../providers/hermes/hermes-provider.js';
 import { OpenAkitaProvider } from '../providers/openakita/openakita-provider.js';
@@ -211,6 +214,96 @@ export class MiMoRuntimeDriver extends BaseRuntimeDriver {
 
   async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
     // MiMo 不支持 session title 存储
+  }
+}
+
+export class OpencodeRuntimeDriver extends BaseRuntimeDriver {
+  readonly runtime = 'opencode' as const;
+
+  constructor(
+    store: JsonFileStore,
+    config: Config,
+    private readonly providerLoader: () => Promise<OpencodeProvider>,
+  ) {
+    super(store, config, 'opencode');
+  }
+
+  async prepare(): Promise<void> {
+    const provider = await this.providerLoader();
+    await provider.prepare();
+  }
+
+  async streamTurn(params: StreamChatParams): Promise<ReadableStream<string>> {
+    const provider = await this.providerLoader();
+    return provider.streamChat(params);
+  }
+
+  async readSessionTitle(_sessionId: string): Promise<string | null> {
+    return null;
+  }
+
+  async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
+    // Opencode 不支持 session title 存储
+  }
+}
+
+export class OpenClawRuntimeDriver extends BaseRuntimeDriver {
+  readonly runtime = 'openclaw' as const;
+
+  constructor(
+    store: JsonFileStore,
+    config: Config,
+    private readonly providerLoader: () => Promise<OpenClawProvider>,
+  ) {
+    super(store, config, 'openclaw');
+  }
+
+  async prepare(): Promise<void> {
+    const provider = await this.providerLoader();
+    await provider.prepare();
+  }
+
+  async streamTurn(params: StreamChatParams): Promise<ReadableStream<string>> {
+    const provider = await this.providerLoader();
+    return provider.streamChat(params);
+  }
+
+  async readSessionTitle(_sessionId: string): Promise<string | null> {
+    return null;
+  }
+
+  async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
+    // OpenClaw 不支持 session title 存储
+  }
+}
+
+export class ReasonixRuntimeDriver extends BaseRuntimeDriver {
+  readonly runtime = 'reasonix' as const;
+
+  constructor(
+    store: JsonFileStore,
+    config: Config,
+    private readonly providerLoader: () => Promise<ReasonixProvider>,
+  ) {
+    super(store, config, 'reasonix');
+  }
+
+  async prepare(): Promise<void> {
+    const provider = await this.providerLoader();
+    await provider.prepare();
+  }
+
+  async streamTurn(params: StreamChatParams): Promise<ReadableStream<string>> {
+    const provider = await this.providerLoader();
+    return provider.streamChat(params);
+  }
+
+  async readSessionTitle(_sessionId: string): Promise<string | null> {
+    return null;
+  }
+
+  async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
+    // Reasonix 不支持 session title 存储
   }
 }
 

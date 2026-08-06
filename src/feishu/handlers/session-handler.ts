@@ -1,5 +1,6 @@
 import { getBridgeContext } from '../../bridge/context.js';
 import { validateMode } from '../../bridge/security/validators.js';
+import { interruptActiveTask, isSessionBusy } from '../../bridge/bridge-manager.js';
 import {
   buildResumeSessionCard,
   buildStatusCard,
@@ -202,6 +203,65 @@ export async function handleResumeCardAction(
       },
     };
   }
+}
+
+/**
+ * 插队卡片回调：interrupt:yes/<no>:<chatId>:<messageId>
+ * - yes：立即中断当前任务（abort activeTasks 里的 AbortController），队列随即消费新消息
+ * - no：新消息已在队列（busy 时已 enqueue），等当前任务完成自动处理
+ */
+export async function handleInterruptCardAction(
+  ctx: AdapterContext,
+  event: StructuredActionEvent,
+  callbackData: string,
+): Promise<CardActionResult> {
+  const [, action, chatId, messageId] = callbackData.split(':');
+  if (action !== 'yes' && action !== 'no') {
+    return { toast: { type: 'warning', content: 'Unsupported action' } };
+  }
+  if (!chatId) {
+    return { toast: { type: 'warning', content: '参数缺失' } };
+  }
+  const sender = ctx.extractActionSenderIdentity(event);
+  if (!sender) {
+    return { toast: { type: 'warning', content: '无法识别当前操作人' } };
+  }
+  const address: ChannelAddress = {
+    channelType: ctx.channelType,
+    channelInstanceId: ctx.profileId,
+    chatId,
+  };
+
+  if (action === 'no') {
+    // 稍后处理：新消息已排入队列，当前任务完成后自动执行
+    try {
+      await ctx.sendAsPost(address, '好的，新消息已排入队列，当前任务完成后会自动处理。', messageId);
+    } catch (e) {
+      console.warn('[feishu-adapter] interrupt:no feedback failed:', e);
+    }
+    return { toast: { type: 'success', content: '已排队，稍后处理' } };
+  }
+
+  // yes：立即插队 —— 中断当前任务，队列随即消费队首的新消息
+  const binding = ctx.getStore().getChannelBinding(ctx.channelType, chatId, ctx.profileId);
+  if (!binding) {
+    return { toast: { type: 'warning', content: '当前会话未绑定' } };
+  }
+  const sessionId = binding.codepilotSessionId || binding.sdkSessionId;
+  const wasBusy = !!sessionId && isSessionBusy(sessionId);
+  const interrupted = sessionId ? interruptActiveTask(sessionId) : false;
+  try {
+    if (wasBusy && interrupted) {
+      await ctx.sendAsPost(address, '⚡ 已中断当前任务，你的新消息优先处理中…', messageId);
+    } else if (!wasBusy) {
+      await ctx.sendAsPost(address, '当前没有正在运行的任务，新消息将直接处理。', messageId);
+    } else {
+      await ctx.sendAsPost(address, '⚠️ 中断信号已发出（任务可能已进入收尾阶段）。', messageId);
+    }
+  } catch (e) {
+    console.warn('[feishu-adapter] interrupt:yes feedback failed:', e);
+  }
+  return { toast: { type: 'success', content: wasBusy ? '已插队' : '无任务可中断' } };
 }
 
 export async function replayNativeSessionHistory(

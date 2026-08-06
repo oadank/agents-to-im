@@ -13,14 +13,16 @@ export interface FeishuProfileConfig {
   showToolCallCards?: boolean;
   oauthRedirectUri?: string;
   enableUserMode?: boolean;
-  /** 是否在消息底部显示分割线（Agent/Model/Provider 信息） */
+  /** 鏄惁鍦ㄦ秷鎭簳閮ㄦ樉绀哄垎鍓茬嚎锛圓gent/Model/Provider 淇℃伅锛?*/
   showAgentDivider?: boolean;
-  /** Agent 名称（如 feishu-mimo），用于分割线显示 */
+  /** Agent 鍚嶇О锛堝 feishu-mimo锛夛紝鐢ㄤ簬鍒嗗壊绾挎樉绀?*/
   agentName?: string;
-  /** 模型组名（如 MiMo-OpenAI, codex-model, MiMogo），用于分割线显示 */
+  /** 妯″瀷缁勫悕锛堝 MiMo-OpenAI, codex-model, MiMogo锛夛紝鐢ㄤ簬鍒嗗壊绾挎樉绀?*/
   modelGroup?: string;
-  /** 服务商名（如 LiteLLM, Volcengine），用于分割线显示 */
+  /** 鏈嶅姟鍟嗗悕锛堝 LiteLLM, Volcengine锛夛紝鐢ㄤ簬鍒嗗壊绾挎樉绀?*/
   modelProvider?: string;
+  /** Bot 鍦ㄧ兢閲岀殑 open_id锛坾ser 瑙嗘暟锛夛紝鐢ㄤ簬 mentions 鍖归厤锛涗笉閰嶅垯閫氳繃 API 鑾峰彇 */
+  botOpenId?: string;
 }
 
 export interface CompactConfig {
@@ -34,20 +36,20 @@ export interface CompactConfig {
 
 export interface Config {
   defaultWorkDir: string;
-  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' | 'hermes' | 'openakita';
+  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'openclaw' | 'gemini' | 'hermes' | 'openakita' | 'opencode';
   feishu: FeishuProfileConfig;
-  /** 多 bot 配置列表（新格式） */
+  /** 澶?bot 閰嶇疆鍒楄〃锛堟柊鏍煎紡锛?*/
   bots?: BotConfig[];
   claudeCliExecutable?: string;
   compact: CompactConfig;
 }
 
-/** 单个 bot 的完整配置 */
+/** 鍗曚釜 bot 鐨勫畬鏁撮厤缃?*/
 export interface BotConfig {
   name: string;
   appId: string;
   appSecret: string;
-  runtime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' | 'hermes' | 'openakita';
+  runtime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'openclaw' | 'gemini' | 'hermes' | 'openakita' | 'opencode';
   agentName?: string;
   modelGroup?: string;
   modelProvider?: string;
@@ -128,7 +130,7 @@ function loadCompactConfig(env: Map<string, string>): CompactConfig {
 }
 
 function parseBotConfigs(env: Map<string, string>): BotConfig[] {
-  // 单 bot 模式：CTI_BOT 环境变量优先（用于分进程部署）
+  // 鍗?bot 妯″紡锛欳TI_BOT 鐜鍙橀噺浼樺厛锛堢敤浜庡垎杩涚▼閮ㄧ讲锛?
   const singleBot = process.env.CTI_BOT;
   if (singleBot) {
     const name = singleBot.trim().toLowerCase();
@@ -146,7 +148,10 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
         : runtimeStr === 'openhuman' ? 'openhuman'
           : runtimeStr === 'zcode' ? 'zcode'
             : runtimeStr === 'mimo' ? 'mimo'
-              : runtimeStr === 'gemini' ? 'gemini'
+              : runtimeStr === 'opencode' ? 'opencode'
+              : runtimeStr === 'reasonix' ? 'reasonix'
+            : runtimeStr === 'openclaw' ? 'openclaw'
+                : runtimeStr === 'gemini' ? 'gemini'
                 : runtimeStr === 'hermes' ? 'hermes'
                   : runtimeStr === 'openakita' ? 'openakita'
                     : 'claude';
@@ -160,6 +165,7 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
       agentName: env.get(`${prefix}AGENT_NAME`) || `feishu-${name}`,
       modelGroup: env.get(`${prefix}MODEL_GROUP`) || undefined,
       modelProvider: env.get(`${prefix}MODEL_PROVIDER`) || undefined,
+      botOpenId: env.get(`${prefix}BOT_OPEN_ID`) || undefined,
       domain: env.get(`${prefix}DOMAIN`) === 'lark' ? 'lark' : undefined,
       allowedUsers: splitCsv(env.get(`${prefix}ALLOWED_USERS`) || env.get('CTI_FEISHU_ALLOWED_USERS')),
       showToolCallCards: parseBoolean(env.get(`${prefix}SHOW_TOOL_CALL_CARDS`)) ?? false,
@@ -169,7 +175,7 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
     }];
   }
 
-  // 多 bot 模式（原有逻辑，兼容单进程部署）
+  // 澶?bot 妯″紡锛堝師鏈夐€昏緫锛屽吋瀹瑰崟杩涚▼閮ㄧ讲锛?
   const botsStr = env.get('CTI_BOTS');
   if (!botsStr) return [];
 
@@ -191,7 +197,10 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
         : runtimeStr === 'openhuman' ? 'openhuman'
           : runtimeStr === 'zcode' ? 'zcode'
             : runtimeStr === 'mimo' ? 'mimo'
-              : runtimeStr === 'gemini' ? 'gemini'
+              : runtimeStr === 'opencode' ? 'opencode'
+              : runtimeStr === 'reasonix' ? 'reasonix'
+            : runtimeStr === 'openclaw' ? 'openclaw'
+                : runtimeStr === 'gemini' ? 'gemini'
                 : runtimeStr === 'hermes' ? 'hermes'
                   : runtimeStr === 'openakita' ? 'openakita'
                     : 'claude';
@@ -204,6 +213,7 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
       agentName: env.get(`${prefix}AGENT_NAME`) || `feishu-${name}`,
       modelGroup: env.get(`${prefix}MODEL_GROUP`) || undefined,
       modelProvider: env.get(`${prefix}MODEL_PROVIDER`) || undefined,
+      botOpenId: env.get(`${prefix}BOT_OPEN_ID`) || undefined,
       domain: env.get(`${prefix}DOMAIN`) === 'lark' ? 'lark' : undefined,
       allowedUsers: splitCsv(env.get(`${prefix}ALLOWED_USERS`) || env.get('CTI_FEISHU_ALLOWED_USERS')),
       showToolCallCards: parseBoolean(env.get(`${prefix}SHOW_TOOL_CALL_CARDS`)) ?? false,
@@ -222,16 +232,19 @@ export function loadConfig(): Config {
     const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
     env = parseEnvFile(content);
   } catch {
-    // Config file doesn't exist yet — use defaults.
+    // Config file doesn't exist yet 鈥?use defaults.
   }
 
   const runtimeStr = env.get('CTI_DEFAULT_RUNTIME') || 'claude';
-  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'gemini' | 'hermes' | 'openakita' =
+  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'openclaw' | 'gemini' | 'hermes' | 'openakita' | 'opencode' =
     runtimeStr === 'codex' ? 'codex'
       : runtimeStr === 'openhuman' ? 'openhuman'
         : runtimeStr === 'zcode' ? 'zcode'
           : runtimeStr === 'mimo' ? 'mimo'
-            : runtimeStr === 'gemini' ? 'gemini'
+            : runtimeStr === 'opencode' ? 'opencode'
+            : runtimeStr === 'reasonix' ? 'reasonix'
+            : runtimeStr === 'openclaw' ? 'openclaw'
+              : runtimeStr === 'gemini' ? 'gemini'
               : runtimeStr === 'hermes' ? 'hermes'
                 : runtimeStr === 'openakita' ? 'openakita'
                   : 'claude';

@@ -566,6 +566,7 @@ function runChild(
       stdio: 'inherit',
       cwd: options?.cwd,
       env: options?.env || process.env,
+      windowsHide: true,
     });
     child.once('error', reject);
     child.once('exit', (code) => {

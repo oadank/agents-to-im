@@ -21,7 +21,7 @@
 import { HermesAppServerClient, type HermesServerMessage } from './hermes-app-server-client.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
-import { LARK_CLI_INSTRUCTIONS } from '../../config/runtime-configs.js';
+import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
 import fs from 'node:fs';
 
 function rtLog(msg: string): void {
@@ -410,10 +410,10 @@ export class HermesProvider implements LLMProvider {
         .join('\n\n');
       parts.push({
         type: 'text',
-        text: `${LARK_CLI_INSTRUCTIONS}\n以下是之前的对话历史，请继续对话：\n\n${historyText}\n\n---\n用户最新消息：\n${audioPrefix}${params.prompt}`,
+        text: `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n以下是之前的对话历史，请继续对话：\n\n${historyText}\n\n---\n用户最新消息：\n${audioPrefix}${params.prompt}`,
       });
     } else {
-      parts.push({ type: 'text', text: `${LARK_CLI_INSTRUCTIONS}\n${audioPrefix}${params.prompt}` });
+      parts.push({ type: 'text', text: `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n${audioPrefix}${params.prompt}` });
     }
 
     return parts;

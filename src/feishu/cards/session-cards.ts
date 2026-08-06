@@ -519,3 +519,46 @@ export function buildReplayMessageText(
 }
 
 export { getClaudeModeSuffix, getClaudeModeTitle };
+
+/** 插队确认卡片：bot 正在处理上一条消息时，询问用户是否插队 */
+export function buildInterruptCard(opts: {
+  chatId: string;
+  messageId: string;
+  botName: string;
+}): Record<string, unknown> {
+  const { chatId, messageId, botName } = opts;
+  return {
+    schema: '2.0',
+    config: { wide_screen_mode: true, update_multi: true },
+    header: {
+      title: { tag: 'plain_text', content: '⚡ 是否插队？' },
+      template: 'orange',
+    },
+    elements: [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `**${botName}** 正在处理上一条消息。\n你的新消息已排在队列最前，可**插队立即打断**当前任务，或**稍后处理**（等当前任务完成）。`,
+        },
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '⚡ 立即插队' },
+            type: 'primary',
+            behaviors: [{ type: 'callback', value: { callback_data: `interrupt:yes:${chatId}:${messageId}` } }],
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '稍后处理' },
+            type: 'default',
+            behaviors: [{ type: 'callback', value: { callback_data: `interrupt:no:${chatId}:${messageId}` } }],
+          },
+        ],
+      },
+    ],
+  };
+}

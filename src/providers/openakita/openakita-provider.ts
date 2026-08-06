@@ -1,93 +1,192 @@
 /**
- * OpenAkita Provider — CLI 单任务模式桥接
+ * OpenAkita Provider — ACP 协议接入 OpenAkita
  *
- * 调用 openakita.exe run "<task>" 执行单次任务，解析其 NDJSON 事件流输出。
- * 复用 C:\D\opt\openakita\multica-wrapper\openakita_wrapper.py 的调用逻辑。
+ * 通过 ACP (Agent Client Protocol) 与 openakita-acp-server.py 进程通信，
+ * 获得流式思考/工具层事件（替代旧的 CLI run 单任务模式，解决"卡在 ⏳ 处理中"）。
  *
- * OpenAkita 交互模式有 asyncio 事件循环 bug（Executor shutdown），
- * 因此这里只用 run 单任务模式，由 agents-to-im 负责会话管理和消息桥接。
+ * ACP 协议：JSON-RPC 2.0 over stdin/stdout（换行分隔）
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
-import { LARK_CLI_INSTRUCTIONS } from '../../config/runtime-configs.js';
 
-/** 实时调试日志 */
-const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_openakita.log`;
+// 实时日志：绕过 NSSM stdout 缓冲
 function rtLog(msg: string): void {
-  const time = new Date().toISOString();
+  const DEBUG_LOG = `C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'unknown'}.log`;
   try {
-    fs.appendFileSync(DEBUG_LOG, `[${time}] ${msg}\n`, 'utf-8');
+    fs.appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`, 'utf-8');
   } catch {}
 }
 
-export interface OpenAkitaConfig {
-  executable?: string;
-  workspace?: string;
-}
-
-/** OpenAkita 可执行文件路径 */
-function resolveExecutable(): string {
-  return (
-    process.env.CTI_OPENAKITA_EXE ||
-    'C:\\D\\opt\\openakita\\venv\\Scripts\\openakita.exe'
-  );
-}
-
-/** OpenAkita workspace 目录 */
-function resolveWorkspace(): string {
-  return (
+/**
+ * 在 Windows 上，NSSM 服务环境的 PATH/ComSpec/SystemRoot 可能不完整，
+ * 导致 CreateProcess 找不到 node.exe 或 cmd.exe。
+ * 此函数确保 spawn 的 env 包含最少必需的系统变量。
+ */
+function buildSpawnEnv(): NodeJS.ProcessEnv {
+  if (process.platform !== 'win32') return { ...process.env };
+  // 继承父进程 PATH（含用户配置）并补充关键系统目录
+  const parentPath = process.env.PATH ? process.env.PATH.split(';').filter(Boolean) : [];
+  const workspace =
     process.env.CTI_OPENAKITA_WORKSPACE ||
-    'C:\\Users\\oadan\\.openakita\\workspaces\\default'
-  );
+    path.join(os.homedir(), '.openakita', 'workspaces', 'default');
+  return {
+    ...process.env,
+    ComSpec: process.env.ComSpec || 'C:\\WINDOWS\\system32\\cmd.exe',
+    SystemRoot: process.env.SystemRoot || 'C:\\WINDOWS',
+    PATH: [
+      ...parentPath,
+      'C:\\WINDOWS\\system32',
+      'C:\\WINDOWS',
+      'C:\\WINDOWS\\System32\\Wbem',
+      'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0',
+      'C:\\Program Files\\nodejs',
+      'C:\\Users\\oadan\\AppData\\Roaming\\npm',
+    ].join(';'),
+    // openakita ACP server 环境
+    OPENAKITA_ACP_WORKSPACE: workspace,
+    LLM_ENDPOINTS_CONFIG: path.join(workspace, 'data', 'llm_endpoints.json'),
+    OPENAKITA_AUTO_CONFIRM: '1',
+    PYTHONUNBUFFERED: '1',
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONUTF8: '1',
+  };
 }
 
-interface OpenAkitaNdjsonEvent {
-  type?: string;
-  sessionID?: string;
-  part?: {
-    id?: string;
-    type?: string;
-    text?: string;
-    delta?: string;
-  };
-  properties?: {
-    part?: {
-      id?: string;
-      sessionID?: string;
-      messageID?: string;
-      type?: string;
-      text?: string;
-    };
-    delta?: string;
-    status?: { type?: string };
-    info?: { id?: string };
-  };
-  delta?: string;
+function resolveOpenAkitaExecutable(): { command: string; args: string[] } {
+  const server = 'C:\\D\\opt\\agents-to-im\\scripts\\openakita-acp-server.py';
+  if (!fs.existsSync(server)) {
+    console.warn(`[openakita-provider] acp server not found at ${server}, spawn may fail`);
+  }
+  return { command: 'C:\\D\\opt\\openakita\\venv\\Scripts\\python.exe', args: [server] };
 }
+
+// ── 记忆注入 ──
+
+function loadMemoryContent(agentName?: string): string {
+  const parts: string[] = [];
+  const memBase = process.env.CTI_AGENTS_MEMORY || path.join(os.homedir(), 'agents-memory');
+  const agent = agentName || 'openakita';
+
+  try {
+    const agentMemDir = `${memBase}/${agent}`;
+    if (fs.existsSync(agentMemDir)) {
+      const memFile = agentMemDir + '/MEMORY.md';
+      if (fs.existsSync(memFile)) {
+        parts.push(fs.readFileSync(memFile, 'utf-8'));
+      }
+      const files = fs.readdirSync(agentMemDir).filter(f => f.endsWith('.md') && f !== 'MEMORY.md');
+      for (const file of files) {
+        const fp = agentMemDir + '/' + file;
+        const content = fs.readFileSync(fp, 'utf-8').trim();
+        if (content) parts.push(`\n=== ${file} ===\n${content}`);
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const sharedMemFile = `${memBase}/shared/MEMORY.md`;
+    if (fs.existsSync(sharedMemFile)) {
+      const content = fs.readFileSync(sharedMemFile, 'utf-8').trim();
+      if (content) parts.push(`\n=== Shared Memory ===\n${content}`);
+    }
+  } catch { /* ignore */ }
+
+  return parts.join('\n---\n');
+}
+
+function getMemoryContent(agentName?: string): string {
+  const memory = loadMemoryContent(agentName);
+  if (memory) console.log(`[openakita-provider] Memory loaded (${memory.length} chars, agent=${agentName || 'openakita'})`);
+  else console.log('[openakita-provider] No memory loaded');
+  return memory;
+}
+
+// ── ACP 会话缓存 ──
+
+interface CachedAcpSession {
+  child: ChildProcess;
+  sessionId: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  lineBuf: string;
+  lastUsed: number;
+  currentSettle: ((err?: string) => void) | null;
+  currentController: ReadableStreamDefaultController<string> | null;
+  currentText: string;
+  currentThinking: string;
+  _inThinking: boolean;
+  _textEmitted: boolean;
+  _firstUpdateLogged: boolean;
+  nextId: number;
+  currentPromptId: number;
+  alive: boolean;
+  sessionRecoveryAttempts: number;
+  pendingRetryPrompt: string | null;
+  pendingRetrySettle: ((err?: string) => void) | null;
+  pendingRetryController: ReadableStreamDefaultController<string> | null;
+  pendingRetrySdkSessionId: string | undefined;
+  pendingRetryAbortController: AbortController | undefined;
+}
+
+// ── OpenAkitaProvider ──
 
 export class OpenAkitaProvider implements LLMProvider {
-  private executable: string;
+  private acpCache = new Map<string, CachedAcpSession>();
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private static IDLE_TIMEOUT_MS = parseInt(process.env.CTI_OPENAKITA_IDLE_TIMEOUT_MS || '900000', 10); // 默认 15 分钟
+  private static SESSION_DIR = path.join(os.homedir(), '.openakita', 'sessions');
   private workspace: string;
 
-  constructor(config?: OpenAkitaConfig) {
-    this.executable = config?.executable || resolveExecutable();
-    this.workspace = config?.workspace || resolveWorkspace();
+  constructor(config?: { workspace?: string }) {
+    this.workspace =
+      config?.workspace ||
+      process.env.CTI_OPENAKITA_WORKSPACE ||
+      path.join(os.homedir(), '.openakita', 'workspaces', 'default');
+    this.startCleanupTimer();
+  }
+
+  /** 清除 ACP 会话缓存，下次请求时会重启 openakita 进程（用于 /new 时重新读取配置） */
+  clearCache(): void {
+    for (const [key, cached] of this.acpCache) {
+      console.log(`[openakita-provider] Clear cache: ${cached.sessionId}`);
+      this.saveSession(key, cached.sessionId, cached.cwd);
+      cached.alive = false;
+      try { cached.child.kill('SIGTERM'); } catch {}
+      this.acpCache.delete(key);
+    }
   }
 
   async prepare(): Promise<void> {
-    if (!fs.existsSync(this.executable)) {
-      throw new Error(`OpenAkita executable not found: ${this.executable}`);
+    // Windows 下跳过版本检查（openakita 初始化慢）
+    if (process.platform === 'win32') {
+      rtLog(`[openakita-provider] prepare: Windows environment, skipping --version check`);
+      return;
     }
-    if (!fs.existsSync(this.workspace)) {
-      rtLog(`[openakita-provider] prepare: workspace missing, creating ${this.workspace}`);
-      fs.mkdirSync(this.workspace, { recursive: true });
-    }
-    rtLog(`[openakita-provider] prepare OK: exe=${this.executable}`);
+    return new Promise<void>((resolve, reject) => {
+      const { command, args } = resolveOpenAkitaExecutable();
+      const child = spawn(command, [...args, '--version'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: buildSpawnEnv(),
+        windowsHide: true,
+      });
+      let stdoutBuf = '';
+      let stderrBuf = '';
+      child.stdout?.on('data', (chunk) => { stdoutBuf += chunk.toString(); });
+      child.stderr?.on('data', (chunk) => { stderrBuf += chunk.toString(); });
+      child.on('close', (code) => {
+        code === 0 ? resolve() : reject(new Error(`openakita acp server not available (code=${code})`));
+      });
+      child.on('error', (error) => {
+        reject(new Error(`Failed to spawn openakita acp server: ${error.message}`));
+      });
+      setTimeout(() => { child.kill(); reject(new Error('openakita prepare timeout (10s)')); }, 10000);
+    });
   }
 
   streamChat(params: StreamChatParams): ReadableStream<string> {
@@ -95,16 +194,10 @@ export class OpenAkitaProvider implements LLMProvider {
     return new ReadableStream<string>({
       async start(controller) {
         try {
-          await self.runTask(controller, params);
-          // 正常完成：必须发 done 事件并 close stream，否则 conversation-engine
-          // 的 reader 永远等不到结束，会话锁不释放，后续消息全部被 "busy" 挡掉
-          emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
-          controller.close();
+          await self.runAcp(controller, params);
         } catch (e) {
-          const message = e instanceof Error ? e.message : String(e);
           console.error('[openakita-provider] streamChat error:', e);
-          rtLog(`[openakita-provider] streamChat CAUGHT ERROR: ${message}`);
-          emitCanonicalTurnEvent(controller, { type: 'error', data: message });
+          emitCanonicalTurnEvent(controller, { type: 'error', data: String(e) });
           emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
           controller.close();
         }
@@ -112,483 +205,564 @@ export class OpenAkitaProvider implements LLMProvider {
     });
   }
 
-  /** 执行一次 OpenAkita run 任务 */
-  private runTask(
+  /**
+   * 通过 ACP 协议与 openakita acp server 交互
+   * 支持进程缓存：首次 spawn 并缓存，后续消息复用同一 session
+   */
+  private async runAcp(
     controller: ReadableStreamDefaultController<string>,
     params: StreamChatParams,
   ): Promise<void> {
-    return new Promise<void>((resolvePromise, rejectPromise) => {
-      // 构造任务 prompt：注入 lark-cli 指令 + 用户消息
-      const userPrompt = params.prompt || '';
-      const task = `${LARK_CLI_INSTRUCTIONS}\n\n用户消息：\n${userPrompt}`;
+    const { prompt, sdkSessionId, abortController } = params;
+    const cacheKey = sdkSessionId || 'default';
+    const existing = this.acpCache.get(cacheKey);
 
-      const rawCwd = params.workingDirectory || process.cwd();
-      const cwd = process.platform === 'win32' && !fs.existsSync(rawCwd)
-        ? (process.env.USERPROFILE || 'C:\\Users\\oadan')
-        : rawCwd;
-
-      rtLog(`[openakita-provider] runTask: exe=${this.executable} cwd=${cwd}`);
-      rtLog(`[openakita-provider] task length=${task.length}`);
-      this.thinkingLines = [];
-      this.lastSentBoxLen = 0;
-
-      // 构造命令参数，复用 wrapper 的调用方式
-      const args = ['--auto-confirm'];
-      if (cwd && fs.existsSync(cwd)) {
-        args.push('--cwd', cwd);
-      }
-      args.push('run', task);
-
-      const env: NodeJS.ProcessEnv = {
-        ...process.env,
-        // 关键：Python 进程管道输出默认块缓冲，必须无缓冲才能实时流式
-        PYTHONUNBUFFERED: '1',
-        PYTHONIOENCODING: 'utf-8',
-        PYTHONUTF8: '1',
-        OPENAKITA_WORKSPACE: this.workspace,
-      };
-
-      const child = spawn(this.executable, args, {
-        cwd: this.workspace,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-        env,
+    if (existing && existing.alive) {
+      existing.lastUsed = Date.now();
+      console.log(`[openakita-provider] ACP reuse session: ${existing.sessionId}`);
+      emitCanonicalTurnEvent(controller, {
+        type: 'status', data: { session_id: sdkSessionId || '' },
       });
+      return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio);
+    }
 
-      let settled = false;
-      let stdoutBuf = '';
-      let stderrBuf = '';
+    // 新建 session
+    const rawCwd = params.workingDirectory || process.cwd();
+    const cwd = process.platform === 'win32' && !fs.existsSync(rawCwd)
+      ? (process.env.USERPROFILE || 'C:\\Users\\oadan')
+      : rawCwd;
+    const configCwd = process.env.CTI_OPENAKITA_ACP_CWD || this.workspace;
+    const sessionNewCwd = process.platform === 'win32' ? cwd : configCwd;
+
+    const saved = this.loadSavedSession(cacheKey);
+
+    const { command, args } = resolveOpenAkitaExecutable();
+    rtLog(`[openakita-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
+    const env = buildSpawnEnv();
+    const child = spawn(command, args, {
+      cwd: this.workspace, stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      env,
+    });
+    rtLog(`[openakita-provider] ACP spawned successfully: pid=${child.pid}`);
+
+    // 必须读 stderr，否则管道满了进程卡死
+    child.stderr!.on('data', (chunk: Buffer) => {
+      const text = chunk.toString().trim();
+      if (text) rtLog(`[openakita-provider] ACP stderr: ${text.slice(0, 500)}`);
+    });
+
+    emitCanonicalTurnEvent(controller, {
+      type: 'status', data: { session_id: sdkSessionId || '' },
+    });
+
+    let spawnError = '';
+
+    // 等待 initialize 完成，然后 session/new
+    const cached = await new Promise<CachedAcpSession | null>((resolve) => {
       let lineBuf = '';
-      let sessionStarted = false;
-      // 任务结果 box 状态机：box 内文本实时发送（不再等进程结束）
-      let inResultBox = false;
-      let resultBoxType: 'complete' | 'error' | null = null;
-      let boxLines: string[] = [];
-      let sentResultText = false;
+      let sessionDone = false;
+      let sessionId = '';
+      const initId = 1;
+      let sessionId2 = 2;
+      let resolved = false;
+      let resumeAttempted = false;
+      // 内部可变引用：监听器在 init 阶段读取时为 null，session 就绪后为真实条目
+      let entry: CachedAcpSession | null = null;
 
-      const settle = (err?: string) => {
-        if (settled) return;
-        settled = true;
-        if (err) {
-          rejectPromise(new Error(err));
-        } else {
-          resolvePromise();
-        }
+      const done = (c: CachedAcpSession | null) => {
+        if (resolved) return;
+        resolved = true;
+        resolve(c);
       };
 
-      // 处理 OpenAkita 的 NDJSON / 混合输出
-      const handleChunk = (chunk: Buffer) => {
-        const text = chunk.toString('utf-8');
-        stdoutBuf += text;
-        lineBuf += text;
-
-        const lines = lineBuf.split('\n');
-        lineBuf = lines.pop() || '';
-
-        for (const rawLine of lines) {
-          const line = rawLine.trim();
-          if (!line) continue;
-
-          // 尝试解析 NDJSON
-          if (line.startsWith('{')) {
-            try {
-              const evt = JSON.parse(line) as OpenAkitaNdjsonEvent;
-              this.handleNdjsonEvent(evt, controller, () => {
-                sessionStarted = true;
-              });
-              continue;
-            } catch {
-              // 不是 JSON，按普通行处理
-            }
-          }
-
-          // 日志行：优先解析 ReAct/IntentTag/Brain 等思考与工具痕迹
-          const isLogLine = line.startsWith('2026-') || line.includes(' - INFO - ') || line.includes(' - ERROR - ') || line.includes(' - WARNING - ');
-          if (isLogLine) {
-            if (this.handleReActLogLine(line, controller)) continue;
-            continue;
-          }
-          if (line.startsWith('┌')) {
-            // 任务完成/失败 box 开始
-            if (line.includes('任务完成')) {
-              inResultBox = true;
-              resultBoxType = 'complete';
-              boxLines = [];
-            } else if (line.includes('任务失败')) {
-              inResultBox = true;
-              resultBoxType = 'error';
-              boxLines = [];
-            }
-            continue;
-          }
-          if (line.startsWith('│') && inResultBox) {
-            // box 内容行：剥掉 │ 与 padding
-            const content = line.replace(/^│/, '').replace(/│$/, '').trim();
-            if (content) {
-              boxLines.push(content);
-              // 实时发送：有内容就立即推给前端（累积发送，避免逐字符刷屏）
-              this.emitResultTextProgress(controller, boxLines.join('\n'), resultBoxType);
-            }
-            continue;
-          }
-          if (line.startsWith('└') && inResultBox) {
-            // box 结束：文本已通过增量实时发送；仅当失败且内容明确是错误信息时补发 error 事件
-            if (resultBoxType === 'error' && !sentResultText) {
-              const errText = boxLines.join('\n').trim();
-              // OpenAkita 有时把含正常思考内容的回复标记为"任务失败"box，
-              // 只有内容以"错误:"/"Error"开头才视为真错误，否则当正常文本
-              if (errText && (errText.startsWith('错误') || errText.startsWith('Error') || errText.includes('大模型返回异常'))) {
-                sentResultText = true;
-                emitCanonicalTurnEvent(controller, { type: 'error', data: errText });
-              }
-            }
-            inResultBox = false;
-            resultBoxType = null;
-            continue;
-          }
-          if (line.startsWith('┌') || line.startsWith('└') || line.startsWith('│') || line.startsWith('─')) {
-            continue;
-          }
-          if (/^\d{4}-\d{2}-\d{2}/.test(line)) continue;
-          if (line.startsWith('Traceback') || line.startsWith('  File') || line.startsWith('RuntimeError')) continue;
-
-          // 解析思考过程（IntentTag / ReAct 决策 / text_preview）
-          this.handleThinkingLine(line, controller);
-        }
+      const createCacheEntry = (sid: string) => {
+        const cachedEntry: CachedAcpSession = {
+          child, sessionId: sid, cwd, env,
+          lineBuf: '', lastUsed: Date.now(),
+          currentSettle: null, currentController: null, currentText: '', currentThinking: '', _inThinking: false, _textEmitted: false, _firstUpdateLogged: false,
+          nextId: 100, currentPromptId: 0, alive: true,
+          sessionRecoveryAttempts: 0, pendingRetryPrompt: null,
+          pendingRetrySettle: null, pendingRetryController: null,
+          pendingRetrySdkSessionId: undefined, pendingRetryAbortController: undefined,
+        };
+        entry = cachedEntry;
+        return cachedEntry;
       };
 
-      child.stdout!.on('data', handleChunk);
+      child.stdout!.removeAllListeners('data');
+      child.stdout!.on('data', (c: Buffer) => this.onAcpData(entry, c));
 
-      child.stderr!.on('data', (chunk: Buffer) => {
-        const text = chunk.toString('utf-8');
-        stderrBuf += text;
-        rtLog(`[openakita-provider] stderr: ${text.slice(0, 300)}`);
+      child.on('close', (code) => {
+        const cur = this.acpCache.get(cacheKey);
+        if (cur && cur.sessionId) {
+          cur.alive = false;
+          console.log(`[openakita-provider] ACP process exited code=${code}`);
+          this.acpCache.delete(cacheKey);
+        }
       });
+
+      const fallbackToNew = () => {
+        console.log(`[openakita-provider] Resume failed, falling back to session/new`);
+        this.removeSavedSession(cacheKey);
+        resumeAttempted = true;
+        sessionId2 = 99;
+        child.stdin!.write(JSON.stringify({
+          jsonrpc: '2.0', id: sessionId2, method: 'session/new',
+          params: { cwd: sessionNewCwd, mcpServers: [] },
+        }) + '\n');
+      };
 
       child.on('error', (err) => {
-        rtLog(`[openakita-provider] spawn ERROR: ${err.message}`);
-        settle(`Failed to spawn openakita: ${err.message}`);
+        spawnError = err.message;
+        console.error(`[openakita-provider] ACP spawn error: ${err.message}`);
+        done(null);
       });
 
       child.on('close', (code) => {
-        rtLog(`[openakita-provider] process closed, code=${code}`);
-        // 完整记录 stdout（尾部 8000 字符）用于分析 thinking/tool/回复格式
-        if (stdoutBuf.trim()) {
-          const tail = stdoutBuf.length > 8000 ? stdoutBuf.slice(-8000) : stdoutBuf;
-          rtLog(`[openakita-provider] STDOUT TAIL (${stdoutBuf.length} chars): ${tail}`);
+        if (!sessionDone) {
+          console.error(`[openakita-provider] ACP exited during init code=${code}`);
+          done(null);
         }
-        if (stderrBuf.trim()) {
-          rtLog(`[openakita-provider] STDERR TAIL: ${stderrBuf.slice(-1500)}`);
+      });
+
+      child.stdout!.on('data', (chunk: Buffer) => {
+        lineBuf += chunk.toString();
+        const lines = lineBuf.split('\n');
+        lineBuf = lines.pop() || '';
+        for (const raw of lines) {
+          const trimmed = raw.trim();
+          if (!trimmed.startsWith('{')) continue;
+          try {
+            const msg = JSON.parse(trimmed);
+            const id = msg.id as number | undefined;
+
+            if (id === initId && msg.result) {
+              console.log(`[openakita-provider] ACP initialized`);
+              if (saved) {
+                console.log(`[openakita-provider] Attempting session/load: ${saved.sessionId}`);
+                child.stdin!.write(JSON.stringify({
+                  jsonrpc: '2.0', id: sessionId2, method: 'session/load',
+                  params: { sessionId: saved.sessionId, cwd: sessionNewCwd, mcpServers: [] },
+                }) + '\n');
+              } else {
+                child.stdin!.write(JSON.stringify({
+                  jsonrpc: '2.0', id: sessionId2, method: 'session/new',
+                  params: { cwd: sessionNewCwd, mcpServers: [] },
+                }) + '\n');
+              }
+              continue;
+            }
+
+            if (id === sessionId2 && msg.result) {
+              const r = msg.result as Record<string, unknown>;
+              sessionId = (r.sessionId as string) || (saved ? saved.sessionId : undefined) || '';
+              sessionDone = true;
+              const action = resumeAttempted || saved ? 'loaded' : 'new';
+              console.log(`[openakita-provider] ACP session (${action}): ${sessionId}`);
+              const cachedEntry = createCacheEntry(sessionId);
+              this.acpCache.set(cacheKey, cachedEntry);
+              done(cachedEntry);
+              continue;
+            }
+
+            if (id === sessionId2 && msg.error && !resumeAttempted && saved) {
+              console.log(`[openakita-provider] session/load failed: ${JSON.stringify(msg.error)}`);
+              fallbackToNew();
+              continue;
+            }
+
+            if (id != null && (id === initId || id === sessionId2) && msg.error) {
+              console.error(`[openakita-provider] ACP init error:`, JSON.stringify(msg.error));
+              done(null);
+              continue;
+            }
+          } catch {}
         }
-        // 兜底：从 stdout 提取最终回复文本（仅当 box 未实时发送过）
-        if (!sessionStarted && stdoutBuf.trim() && this.lastSentBoxLen === 0) {
-          const extracted = this.extractFallbackText(stdoutBuf);
-          if (extracted) {
-            emitCanonicalTurnEvent(controller, {
-              type: 'text',
-              data: extracted,
-            });
+      });
+
+      child.stdin!.write(JSON.stringify({
+        jsonrpc: '2.0', id: initId, method: 'initialize',
+        params: {
+          protocolVersion: 1, capabilities: {},
+          clientInfo: { name: 'feishu-openakita', version: '1.0' },
+        },
+      }) + '\n');
+
+      setTimeout(() => { if (!sessionDone) { try { child.kill('SIGTERM'); } catch {} done(null); } }, 15_000);
+    });
+
+    if (!cached) {
+      const err = spawnError || 'Failed to initialize ACP session';
+      console.error(`[openakita-provider] ACP init failed:`, err);
+      emitCanonicalTurnEvent(controller, { type: 'error', data: err });
+      emitCanonicalTurnEvent(controller, { type: 'result', data: { session_id: sdkSessionId || '', is_error: true } });
+      emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
+      controller.close();
+      return;
+    }
+
+    this.saveSession(cacheKey, cached.sessionId, cwd);
+    return this.sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio);
+  }
+
+  /** 处理 ACP 进程的 stdout 数据 */
+  private onAcpData(cached: CachedAcpSession | null, chunk: Buffer): void {
+    // init/session-new 阶段 cached 尚未就绪（由 init 监听器处理），直接忽略
+    if (!cached) return;
+    cached.lineBuf += chunk.toString();
+    const lines = cached.lineBuf.split('\n');
+    cached.lineBuf = lines.pop() || '';
+    for (const raw of lines) {
+      const trimmed = raw.trim();
+      if (!trimmed.startsWith('{')) continue;
+      try {
+        const msg = JSON.parse(trimmed);
+        const id = msg.id as number | undefined;
+        const isResponse = !msg.method && (msg.result || msg.error);
+
+        // 路由响应到当前 prompt 的 settle
+        if (isResponse && cached.currentSettle && id != null && id === cached.currentPromptId) {
+          if (msg.error) {
+            const errMsg = msg.error.message || JSON.stringify(msg.error);
+            const errDetails = msg.error.data?.details || '';
+            const isSessionNotFound = errMsg.includes('Session not found') || errDetails.includes('Session not found');
+            if (isSessionNotFound && cached.sessionRecoveryAttempts < 1) {
+              cached.sessionRecoveryAttempts++;
+              console.log(`[openakita-provider] ACP Session not found, recreating (attempt ${cached.sessionRecoveryAttempts})`);
+              cached.pendingRetrySettle = cached.currentSettle;
+              cached.currentSettle = null;
+              const newSessionId = cached.nextId++;
+              cached.currentPromptId = newSessionId;
+              cached.child.stdin!.write(JSON.stringify({
+                jsonrpc: '2.0', id: newSessionId, method: 'session/new',
+                params: { cwd: this.workspace, mcpServers: [] },
+              }) + '\n');
+              continue;
+            }
+            cached.currentSettle(`ACP error: ${errMsg}`);
+          } else {
+            console.log(`[openakita-provider] ACP prompt done`);
+            cached.currentSettle();
           }
+          continue;
         }
-        if (code !== 0) {
-          const errMsg = stderrBuf.trim().slice(-500) || `openakita exited with code ${code}`;
-          settle(errMsg);
-        } else {
-          settle();
+
+        // session/update 通知
+        if (msg.method === 'session/update') {
+          if (!cached._firstUpdateLogged) {
+            cached._firstUpdateLogged = true;
+            console.log(`[openakita-provider] ACP first update after ${Date.now() - cached.lastUsed}ms`);
+          }
+          const update = msg.params?.update;
+          const updateType = (update?.sessionUpdate as string) || 'unknown';
+
+          if (update?.sessionUpdate === 'agent_message_chunk' && update?.content?.type === 'text') {
+            const chunkText = update.content.text;
+            let remaining = chunkText;
+            while (remaining.length > 0) {
+              if (cached._inThinking) {
+                const closeIdx = remaining.indexOf('</think>');
+                if (closeIdx === -1) {
+                  cached.currentThinking += remaining;
+                  remaining = '';
+                } else {
+                  cached.currentThinking += remaining.slice(0, closeIdx);
+                  remaining = remaining.slice(closeIdx + 8);
+                  cached._inThinking = false;
+                  if (cached.currentController && cached.currentThinking.trim()) {
+                    emitCanonicalTurnEvent(cached.currentController, {
+                      type: 'activity_event',
+                      data: {
+                        kind: 'reasoning_activity',
+                        id: 'thinking:openakita',
+                        status: 'running',
+                        text: cached.currentThinking,
+                      },
+                    });
+                  }
+                }
+              } else {
+                const openIdx = remaining.indexOf('<think>');
+                if (openIdx === -1) {
+                  const delta = remaining;
+                  cached.currentText += delta;
+                  remaining = '';
+                  if (cached.currentController && delta) {
+                    cached._textEmitted = true;
+                    emitCanonicalTurnEvent(cached.currentController, { type: 'text', data: delta });
+                  }
+                } else if (openIdx > 0) {
+                  const delta = remaining.slice(0, openIdx);
+                  cached.currentText += delta;
+                  remaining = remaining.slice(openIdx);
+                  if (cached.currentController && delta) {
+                    cached._textEmitted = true;
+                    emitCanonicalTurnEvent(cached.currentController, { type: 'text', data: delta });
+                  }
+                } else {
+                  cached._inThinking = true;
+                  remaining = remaining.slice(7);
+                }
+              }
+            }
+          }
+          if (update?.sessionUpdate === 'agent_thought_chunk' && update?.content?.type === 'text') {
+            cached.currentThinking += update.content.text;
+            if (cached.currentController) {
+              emitCanonicalTurnEvent(cached.currentController, {
+                type: 'activity_event',
+                data: {
+                  kind: 'reasoning_activity',
+                  id: 'thinking:openakita',
+                  status: 'running',
+                  text: cached.currentThinking,
+                },
+              });
+            }
+          }
+          if (update?.sessionUpdate === 'tool_call') {
+            const toolInfo = update.input ? `${update.title} ${JSON.stringify(update.input).slice(0, 100)}` : (update.title || '工具');
+            const toolStatus = (update.status as string) || 'running';
+            const toolCallId = String((update as any).toolCallId || (update as any).callId || `openakita-tool:${update.title || 'tool'}:${Date.now()}`);
+            const toolName = String(update.title || 'tool');
+            console.log(`[openakita-provider] ACP tool_call: ${toolInfo} status=${toolStatus} id=${toolCallId}`);
+            if (cached.currentController) {
+              emitCanonicalTurnEvent(cached.currentController, {
+                type: 'activity_event',
+                data: {
+                  kind: 'tool_activity',
+                  toolUseId: toolCallId,
+                  toolName,
+                  status: toolStatus === 'failed' ? 'failed' : (toolStatus === 'completed' ? 'completed' : 'running'),
+                  inputPreview: update.input && typeof update.input === 'object' ? JSON.stringify(update.input).slice(0, 220) : '',
+                  resultPreview: update.output && typeof update.output === 'string' ? update.output.slice(0, 220) : '',
+                },
+              });
+            }
+          }
+          continue;
         }
-      });
 
-      // 超时保护（OpenAkita 任务可能很长，默认 20 分钟）
-      const timeoutMs = parseInt(process.env.CTI_OPENAKITA_TIMEOUT_MS || '1200000', 10);
-      const timeout = setTimeout(() => {
-        rtLog(`[openakita-provider] task TIMEOUT after ${timeoutMs}ms, killing`);
-        try { child.kill('SIGTERM'); } catch {}
-        settle(`OpenAkita task timed out after ${timeoutMs / 1000}s`);
-      }, timeoutMs);
+        // init 阶段响应（已处理）
+        if (id != null && id <= 2 && isResponse) continue;
 
-      params.abortController?.signal.addEventListener('abort', () => {
-        rtLog(`[openakita-provider] abort requested, killing process`);
-        try { child.kill('SIGTERM'); } catch {}
-        emitCanonicalTurnEvent(controller, { type: 'error', data: 'aborted by user' });
+        // Session recovery: new session + retry
+        if (isResponse && cached.pendingRetryPrompt && cached.pendingRetrySettle && id != null && id === cached.currentPromptId) {
+          if (msg.error) {
+            console.error(`[openakita-provider] ACP session recovery failed:`, JSON.stringify(msg.error));
+            cached.pendingRetrySettle(`ACP error: Session recovery failed: ${msg.error.message || JSON.stringify(msg.error)}`);
+            cached.pendingRetryPrompt = null;
+            cached.pendingRetrySettle = null;
+            cached.pendingRetryController = null;
+            continue;
+          }
+          const r = msg.result as Record<string, unknown>;
+          const newSessionId = r.sessionId as string;
+          console.log(`[openakita-provider] ACP session recovered: ${newSessionId}`);
+          cached.sessionId = newSessionId;
+          const retryPrompt = cached.pendingRetryPrompt!;
+          const retrySettle = cached.pendingRetrySettle!;
+          cached.pendingRetryPrompt = null;
+          cached.pendingRetrySettle = null;
+          cached.pendingRetryController = null;
+          const retryId = cached.nextId++;
+          cached.currentPromptId = retryId;
+          cached.currentText = '';
+          cached.currentSettle = retrySettle;
+          cached.child.stdin!.write(JSON.stringify({
+            jsonrpc: '2.0', id: retryId, method: 'session/prompt',
+            params: {
+              sessionId: newSessionId,
+              prompt: [{ type: 'text', text: retryPrompt }],
+            },
+          }) + '\n');
+          continue;
+        }
+
+      } catch {}
+    }
+  }
+
+  /** 发送 prompt 并等待响应 */
+  private sendAcpPrompt(
+    cached: CachedAcpSession,
+    prompt: string,
+    controller: ReadableStreamDefaultController<string>,
+    sdkSessionId: string | undefined,
+    abortController: AbortController | undefined,
+    conversationHistory?: StreamChatParams['conversationHistory'],
+    fromAudio?: boolean,
+  ): Promise<void> {
+    rtLog(`[openakita-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}`);
+    return new Promise<void>((resolve) => {
+      const promptId = cached.nextId++;
+      cached.currentPromptId = promptId;
+      cached.currentText = '';
+      cached.currentThinking = '';
+      cached._inThinking = false;
+      cached._textEmitted = false;
+      cached.lastUsed = Date.now();
+      let enhancedPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${prompt}`;
+      if (!sdkSessionId) {
+        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+        if (memory) {
+          enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + prompt;
+        }
+      }
+      cached.pendingRetryPrompt = enhancedPrompt;
+      cached.pendingRetryController = controller;
+      cached.pendingRetrySdkSessionId = sdkSessionId;
+      cached.pendingRetryAbortController = abortController;
+
+      const abortHandler = () => {
+        console.log(`[openakita-provider] ACP abort: sending session/interrupt first`);
+        try {
+          cached.child.stdin!.write(JSON.stringify({
+            jsonrpc: '2.0', id: cached.nextId++, method: 'session/interrupt',
+            params: { sessionId: cached.sessionId },
+          }) + '\n');
+        } catch {}
+        setTimeout(() => {
+          if (cached.alive) {
+            console.log(`[openakita-provider] ACP interrupt timeout, force killing`);
+            try { cached.child.kill('SIGTERM'); } catch {}
+          }
+        }, 3000);
+      };
+      abortController?.signal.addEventListener('abort', abortHandler, { once: true });
+
+      cached.currentController = controller;
+      cached.currentSettle = (err?: string) => {
+        cached.currentSettle = null;
+        cached.currentController = null;
+        cached.pendingRetryPrompt = null;
+        cached.pendingRetrySettle = null;
+        cached.pendingRetryController = null;
+        cached.pendingRetrySdkSessionId = undefined;
+        cached.pendingRetryAbortController = undefined;
+        abortController?.signal.removeEventListener('abort', abortHandler);
+
+        if (err) {
+          console.error(`[openakita-provider] ACP error:`, err);
+          emitCanonicalTurnEvent(controller, { type: 'error', data: err });
+          cached.alive = false;
+          try { cached.child.kill('SIGTERM'); } catch {}
+          this.acpCache.delete(sdkSessionId || 'default');
+          this.removeSavedSession(sdkSessionId || 'default');
+        } else if (cached._textEmitted) {
+          // 文本已在流式阶段发出，不重复 emit
+        } else if (cached.currentText.trim()) {
+          emitCanonicalTurnEvent(controller, { type: 'text', data: cached.currentText.trim() });
+        } else if (cached.currentThinking.trim()) {
+          emitCanonicalTurnEvent(controller, { type: 'text', data: cached.currentThinking.trim() });
+        }
+        emitCanonicalTurnEvent(controller, { type: 'result', data: { session_id: sdkSessionId || '', is_error: !!err } });
         emitCanonicalTurnEvent(controller, { type: 'done', data: '' });
-        settle();
-      });
+        controller.close();
+        resolve();
+      };
+
+      // 记忆注入
+      const audioPrefix = fromAudio ? '[Audio] ' : '';
+      let fullPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${audioPrefix}${prompt}`;
+      if (!sdkSessionId) {
+        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+        if (memory) {
+          fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + audioPrefix + prompt;
+        }
+      }
+
+      // 对话历史注入
+      const history = conversationHistory;
+      if (history && history.length > 0) {
+        const recentHistory = history.slice(-20);
+        const historyBlock = recentHistory
+          .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+          .join('\n\n');
+        fullPrompt = `[Previous conversation context]\n${historyBlock}\n\n[End of previous context]\n\n[Current message]\n${fullPrompt}`;
+        console.log(`[openakita-provider] ACP injecting ${recentHistory.length} history messages`);
+      }
+
+      console.log(`[openakita-provider] ACP prompt id=${promptId} session=${cached.sessionId}`);
+      cached.child.stdin!.write(JSON.stringify({
+        jsonrpc: '2.0', id: promptId, method: 'session/prompt',
+        params: {
+          sessionId: cached.sessionId,
+          prompt: [{ type: 'text', text: fullPrompt }],
+        },
+      }) + '\n');
+
+      const timeoutMs = parseInt(process.env.CTI_OPENAKITA_TIMEOUT_MS || '300000', 10); // 默认 5 分钟
+      setTimeout(() => {
+        if (cached.currentSettle) {
+          cached.currentSettle(`ACP prompt timeout after ${timeoutMs / 1000}s`);
+        }
+      }, timeoutMs);
     });
   }
 
-  /** 解析 OpenAkita 日志行中的 ReAct 推理 / IntentTag 意图 / 工具调用痕迹 */
-  private pendingTools: { toolUseId: string; toolName: string }[] = [];
+  // ─── Session 持久化 ───
 
-  private handleReActLogLine(
-    line: string,
-    controller: ReadableStreamDefaultController<string>,
-  ): boolean {
-    // [ReAct-Stream] Iter N — decision=X, tools=[...], tokens_in=..., tokens_out=...
-    const reactMatch = line.match(/\[ReAct-Stream\]\s*Iter\s+(\d+)\s*[—\-–]\s*decision=([^,]+),\s*tools=\[([^\]]*)\]/);
-    if (reactMatch) {
-      const iter = reactMatch[1];
-      const decision = reactMatch[2].trim();
-      const tools = reactMatch[3].trim();
-      let thought = `第 ${iter} 轮推理`;
-      if (decision === 'final_answer') {
-        thought += '：已得出结论，准备回复';
-      } else if (decision) {
-        thought += `：决策=${decision}`;
+  private sessionFilePath(cacheKey: string): string {
+    const safe = cacheKey.replace(/[^a-zA-Z0-9_:-]/g, '_');
+    return path.join(OpenAkitaProvider.SESSION_DIR, `${safe}.json`);
+  }
+
+  private loadSavedSession(cacheKey: string): { sessionId: string; cwd: string } | null {
+    try {
+      const filePath = this.sessionFilePath(cacheKey);
+      if (!fs.existsSync(filePath)) return null;
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      if (data?.sessionId && data?.cwd) {
+        console.log(`[openakita-provider] Session loaded from disk: ${data.sessionId}`);
+        return { sessionId: data.sessionId, cwd: data.cwd };
       }
-      if (tools) {
-        thought += `，调用工具 [${tools}]`;
-        // 先完成上一轮的工具（真实时序：上一批工具已在两轮迭代间执行完毕）
-        this.completePendingTools(controller);
-        // 本轮工具标记 running
-        const toolNames = tools.split(',').map((t) => t.trim()).filter(Boolean);
-        for (const toolName of toolNames) {
-          const toolUseId = `openakita:${iter}:${toolName}`;
-          emitCanonicalTurnEvent(controller, {
-            type: 'activity_event',
-            data: JSON.stringify({
-              kind: 'tool_activity',
-              toolUseId,
-              toolName,
-              status: 'running',
-              inputPreview: `第 ${iter} 轮调用`,
-              source: 'openakita',
-            }),
-          });
-          this.pendingTools.push({ toolUseId, toolName });
+    } catch (e) {
+      console.log(`[openakita-provider] Session load failed: ${e}`);
+    }
+    return null;
+  }
+
+  private saveSession(cacheKey: string, sessionId: string, cwd: string): void {
+    try {
+      fs.mkdirSync(OpenAkitaProvider.SESSION_DIR, { recursive: true });
+      const filePath = this.sessionFilePath(cacheKey);
+      const data = { sessionId, cwd, savedAt: new Date().toISOString() };
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      console.log(`[openakita-provider] Session saved: ${sessionId}`);
+    } catch (e) {
+      console.log(`[openakita-provider] Session save failed: ${e}`);
+    }
+  }
+
+  private removeSavedSession(cacheKey: string): void {
+    try {
+      const filePath = this.sessionFilePath(cacheKey);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch {}
+  }
+
+  private startCleanupTimer(): void {
+    if (this.cleanupTimer) return;
+    this.cleanupTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [key, cached] of this.acpCache) {
+        if (now - cached.lastUsed > OpenAkitaProvider.IDLE_TIMEOUT_MS) {
+          console.log(`[openakita-provider] ACP idle cleanup: ${cached.sessionId}`);
+          this.saveSession(key, cached.sessionId, cached.cwd);
+          if (cached.currentSettle) {
+            cached.currentSettle('ACP process killed due to idle timeout');
+          }
+          cached.alive = false;
+          try { cached.child.kill('SIGTERM'); } catch {}
+          this.acpCache.delete(key);
         }
-      } else if (decision === 'final_answer') {
-        // 决策完成：所有之前 pending 的工具已完成
-        this.completePendingTools(controller);
       }
-      this.emitReasoning(thought, controller);
-      return true;
-    }
-
-    // [IntentTag] intent=..., has_tool_calls=..., tools_executed_in_task=..., text_preview="..."
-    const intentMatch = line.match(/\[IntentTag\]\s*intent=([^,]+),\s*has_tool_calls=([^,]+)/);
-    if (intentMatch) {
-      const intent = intentMatch[1].trim();
-      const hasTools = intentMatch[2].trim();
-      // 提取 text_preview（模型决策时的真实文本预览，作为思考内容）
-      const previewMatch = line.match(/text_preview="([^"]*)"/);
-      const preview = previewMatch ? previewMatch[1].trim() : '';
-      // 工具调用痕迹：显示意图与工具状态
-      let thought = `意图分析：${intent}`;
-      if (hasTools === 'True') {
-        thought += '，需要调用工具';
-        // 尝试提取工具名
-        const toolsInTask = line.match(/tools_executed_in_task=([^,]+)/);
-        if (toolsInTask && toolsInTask[1].trim() !== '[]' && toolsInTask[1].trim() !== 'False') {
-          thought += `，已执行工具 ${toolsInTask[1].trim()}`;
-        }
-      } else {
-        thought += '，直接回复';
+      if (this.acpCache.size === 0 && this.cleanupTimer) {
+        clearInterval(this.cleanupTimer);
+        this.cleanupTimer = null;
       }
-      // 追加真实思考内容（text_preview）
-      if (preview && preview !== '...' && !preview.includes('No intent tag')) {
-        thought += `\n思考：${preview}`;
-      }
-      this.emitReasoning(thought, controller);
-      return true;
-    }
-
-    // [ReAct] Trace saved: 完成一轮
-    if (line.includes('[ReAct] Trace saved')) {
-      this.emitReasoning('已完成一轮推理，保存轨迹', controller);
-      return true;
-    }
-
-    // [TaskMonitor] Task completed — 任务完成
-    const doneMatch = line.match(/\[TaskMonitor\]\s*Task completed:.*?duration=([\d.]+)s,\s*iterations=(\d+)/);
-    if (doneMatch) {
-      this.completePendingTools(controller);
-      this.emitReasoning(`任务完成，耗时 ${doneMatch[1]}s，共 ${doneMatch[2]} 轮推理`, controller);
-      return true;
-    }
-
-    // 任务失败兜底：也完成 pending 工具
-    const failedMatch = line.match(/\[TaskMonitor\]\s*Task completed:.*?success=False/);
-    if (failedMatch) {
-      this.completePendingTools(controller);
-    }
-
-    return false;
-  }
-
-  /** 将 pending 中的工具标记为已完成 */
-  private completePendingTools(controller: ReadableStreamDefaultController<string>): void {
-    for (const tool of this.pendingTools) {
-      emitCanonicalTurnEvent(controller, {
-        type: 'activity_event',
-        data: JSON.stringify({
-          kind: 'tool_activity',
-          toolUseId: tool.toolUseId,
-          toolName: tool.toolName,
-          status: 'completed',
-          source: 'openakita',
-        }),
-      });
-    }
-    this.pendingTools = [];
-  }
-
-  /** 增量发送 box 文本（text 事件是追加语义，只能发新增部分） */
-  private lastSentBoxLen = 0;
-
-  private emitResultTextProgress(
-    controller: ReadableStreamDefaultController<string>,
-    fullText: string,
-    boxType: 'complete' | 'error' | null,
-  ): void {
-    if (!fullText) return;
-    // 增量：只发送比上次多的部分
-    if (fullText.length > this.lastSentBoxLen) {
-      const delta = fullText.slice(this.lastSentBoxLen);
-      this.lastSentBoxLen = fullText.length;
-      if (boxType === 'error') {
-        // 错误文本也走 text 通道，但标记前缀，避免和正常回复混淆
-        emitCanonicalTurnEvent(controller, { type: 'text', data: delta });
-      } else {
-        emitCanonicalTurnEvent(controller, { type: 'text', data: delta });
-      }
-    }
-  }
-
-  /** 去重发送 reasoning 状态（累积完整思考链，preview 卡片只保留最后一条，需要发送全链才能看到过程） */
-  private thinkingLines: string[] = [];
-
-  private emitReasoning(
-    thought: string,
-    controller: ReadableStreamDefaultController<string>,
-  ): void {
-    if (!thought || thought.length < 2) return;
-    const hash = this.simpleHash(thought);
-    if (hash === this.lastThoughtHash) return;
-    this.lastThoughtHash = hash;
-
-    this.thinkingLines.push(thought);
-    // 累积完整思考链：每次发送全部历史，preview 卡片刷新时显示完整过程
-    const chain = this.thinkingLines.join('\n');
-    rtLog(`[openakita-provider] reasoning: ${chain.slice(0, 200)}`);
-    emitCanonicalTurnEvent(controller, {
-      type: 'status',
-      data: JSON.stringify({ reasoning: chain }),
-    });
-  }
-
-  /** 从 OpenAkita 日志行提取思考过程并转发为 reasoning 状态 */
-  private handleThinkingLine(
-    line: string,
-    controller: ReadableStreamDefaultController<string>,
-  ): void {
-    // 只处理包含思考标记的行
-    const markers = ['[IntentTag]', 'text_preview=', 'decision=', 'Thought:', 'Action:', '正在思考'];
-    if (!markers.some((m) => line.includes(m))) return;
-
-    let thought: string | null = null;
-
-    // 格式1: [IntentTag] ... text_preview="..."
-    const previewMatch = line.match(/text_preview="([^"]*)"/);
-    if (previewMatch) {
-      thought = previewMatch[1];
-    }
-    // 格式2: IntentTag 行本身（去掉标记前缀）
-    else if (line.includes('[IntentTag]')) {
-      const tagIdx = line.indexOf('[IntentTag]');
-      thought = line.slice(tagIdx + 10).trim();
-    }
-    // 格式3: ReAct Thought/Action
-    else if (line.includes('Thought:')) {
-      const tIdx = line.indexOf('Thought:');
-      thought = line.slice(tIdx + 8).trim();
-    }
-
-    if (!thought || thought.length < 2) return;
-    if (thought === '...' || thought === '思考中') return;
-
-    // 去重：同一思考不重复发送（简单 hash 去重）
-    const hash = this.simpleHash(thought);
-    if (hash === this.lastThoughtHash) return;
-    this.lastThoughtHash = hash;
-
-    rtLog(`[openakita-provider] thinking: ${thought.slice(0, 120)}`);
-    emitCanonicalTurnEvent(controller, {
-      type: 'status',
-      data: JSON.stringify({ reasoning: thought }),
-    });
-  }
-
-  private lastThoughtHash = '';
-
-  private simpleHash(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
-    }
-    return String(hash);
-  }
-
-  /** 解析 OpenAkita 的 opencode-format NDJSON 事件 */
-  private handleNdjsonEvent(
-    evt: OpenAkitaNdjsonEvent,
-    controller: ReadableStreamDefaultController<string>,
-    onSessionStart: () => void,
-  ): void {
-    const type = evt.type || '';
-    rtLog(`[openakita-provider] event: ${type}`);
-
-    switch (type) {
-      case 'server.connected':
-      case 'session.created':
-      case 'session.status':
-      case 'session.idle':
-        onSessionStart();
-        break;
-      case 'message.part.updated': {
-        onSessionStart();
-        const part = evt.part || evt.properties?.part;
-        const text = part?.text || evt.properties?.delta || evt.delta || '';
-        if (text) {
-          // text 事件 data 必须是纯字符串（conversation-engine 直接拼接 event.data）
-          emitCanonicalTurnEvent(controller, {
-            type: 'text',
-            data: text,
-          });
-        }
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  /** 从混合输出中提取最终回复（wrapper 的 extract_response 逻辑简化版） */
-  private extractFallbackText(raw: string): string {
-    // 方法1：任务完成 box
-    const lines = raw.split('\n');
-    let inBox = false;
-    const boxLines: string[] = [];
-    for (const line of lines) {
-      if (line.includes('任务完成') && line.includes('┌')) {
-        inBox = true;
-        continue;
-      }
-      if (inBox && line.includes('└')) {
-        inBox = false;
-        continue;
-      }
-      if (inBox && line.includes('│')) {
-        const text = line.trim().replace(/^│/, '').replace(/│$/, '').trim();
-        if (text) boxLines.push(text);
-      }
-    }
-    if (boxLines.length > 0) return boxLines.join('\n');
-
-    // 方法2：IntentTag text_preview
-    for (const line of lines) {
-      const m = line.match(/text_preview="([^"]*)"/);
-      if (m) return m[1];
-    }
-    return '';
+    }, 30_000);
   }
 }

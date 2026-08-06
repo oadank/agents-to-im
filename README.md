@@ -318,133 +318,82 @@ APPDATA=C:\Users\你的用户名\AppData\Roaming
 USERPROFILE=C:\Users\你的用户名
 ```
 
-### 第二步：部署方式选择
+### 第二步：NSSM 服务安装配置
 
-Windows 上有两种部署方式。**Codex 必须使用计划任务**，其他 Provider 可用 NSSM。
+以 `agents-hermes` 为例，其他 Provider（codex/gemini/mimo）完全相同。
 
----
-
-#### Codex：Windows Task Scheduler（必须）
-
-Codex CLI 内置的 `node-pty` 调用 `CreateFileMappingW` 创建 ConPTY，在 Session 0 下必然失败（`os error 5`）。NSSM 服务无论怎么配置都无法解决这个问题，因此 Codex 必须在用户交互式会话（Session 1+）中运行。
-
-**原理**：通过 Windows 计划任务，以 `InteractiveToken` 在用户登录时启动，daemon 和子进程都跑在用户 Session 中，ConPTY 正常工作。
-
-##### 1. 准备启动脚本
-
-创建 `C:\Users\你的用户名\.agents-to-im\start-codex-task.bat`：
-
-```bat
-@echo off
-set "CTI_BOT=codex"
-set "CTI_HOME=C:\Users\你的用户名\.agents-to-im"
-set "CTI_DASHBOARD_PORT=13581"
-set "CTI_LOG_LEVEL=debug"
-set "CTI_DEFAULT_WORKDIR=C:\D\opt"
-set "CTI_DISABLE_PERMISSION_CHECK=true"
-set "CTI_FEISHU_ALLOWED_USERS=*"
-set "CTI_DEFAULT_RUNTIME=codex"
-set "CTI_FEISHU_APP_ID=<从 config.env 读取>"
-set "CTI_FEISHU_APP_SECRET=<从 config.env 读取>"
-set "CTI_FEISHU_SHOW_TOOL_CALL_CARDS=true"
-set "CTI_FEISHU_SHOW_AGENT_DIVIDER=true"
-set "CTI_BOT_CODEX_APP_ID=<从 config.env 读取>"
-set "CTI_BOT_CODEX_APP_SECRET=<从 config.env 读取>"
-set "CTI_BOT_CODEX_RUNTIME=codex"
-set "CTI_BOT_CODEX_AGENT_NAME=codex"
-set "CTI_BOT_CODEX_MODEL_GROUP=codex-model"
-set "CTI_BOT_CODEX_MODEL_PROVIDER=LiteLLM"
-set "CTI_BOT_CODEX_SHOW_TOOL_CALL_CARDS=true"
-set "CTI_BOT_CODEX_SHOW_AGENT_DIVIDER=true"
-set "OPENAI_API_KEY=<从 config.env 读取>"
-set "CODEX_CLI_PATH=C:\Users\你的用户名\AppData\Roaming\npm\codex.exe"
-set "CODEX_HOME=C:\Users\你的用户名\.codex"
-set "HOME=C:\Users\你的用户名"
-set "USERPROFILE=C:\Users\你的用户名"
-set "APPDATA=C:\Users\你的用户名\AppData\Roaming"
-set "PATH=C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin;C:\Users\你的用户名\AppData\Roaming\npm;C:\Program Files\nodejs;C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0;%PATH%"
-
-set LOG_DIR="C:\Users\你的用户名\.agents-to-im\logs"
-mkdir "%LOG_DIR%" 2>nul
-
-:LOOP
-"C:\Program Files\nodejs\node.exe" "C:\D\opt\agents-to-im\dist\daemon.mjs" >> "%LOG_DIR%\codex-task.stdout.log" 2>> "%LOG_DIR%\codex-task.stderr.log"
-timeout /t 5 /nobreak >nul
-goto LOOP
-```
-
-> 注意：bat 中不要直接写真实密钥。建议从 `config.env` 读取或用环境变量覆盖。
-
-##### 2. 创建隐藏窗口包装器
-
-创建 `C:\Users\你的用户名\.agents-to-im\start-codex-task.vbs`：
-
-```vbs
-Set shell = CreateObject("WScript.Shell")
-result = shell.Run("""C:\Users\你的用户名\.agents-to-im\start-codex-task.bat""", 0, True)
-WScript.Quit result
-```
-
-##### 3. 创建计划任务
+#### 方式一：图形界面（推荐，不容易错）
 
 ```powershell
-$taskName = 'agents-codex'
-$vbs = 'C:\Users\你的用户名\.agents-to-im\start-codex-task.vbs'
-
-# 停止并禁用 NSSM 服务（如果之前用过 NSSM）
-Stop-Service -Name $taskName -Force -ErrorAction SilentlyContinue
-Set-Service -Name $taskName -StartupType Disabled
-
-# 创建计划任务
-$action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' -Argument "`"$vbs`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User 'LECOO\oadan'
-$principal = New-ScheduledTaskPrincipal -UserId 'LECOO\oadan' -LogonType Interactive -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries `
-    -ExecutionTimeLimit ([TimeSpan]::Zero) `
-    -MultipleInstances IgnoreNew `
-    -RestartCount 999 `
-    -RestartInterval (New-TimeSpan -Minutes 1) `
-    -StartWhenAvailable
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings | Out-Null
-
-# 立即启动
-Start-ScheduledTask -TaskName $taskName
+# 必须用管理员权限打开 PowerShell！
+nssm install agents-hermes
 ```
 
-##### 4. 验证
+弹出图形界面后，按以下配置：
+
+| 标签页 | 配置项 | 值 | 说明 |
+|--------|--------|----|------|
+| **Application** | Path | `C:\Program Files\nodejs\node.exe` | Node 绝对路径，不要用相对路径 |
+| | Startup directory | `C:\D\opt\agents-to-im` | 项目根目录，**绝对路径** |
+| | Arguments | `C:\D\opt\agents-to-im\dist\daemon.mjs` | daemon.mjs 的绝对路径 |
+| **Log on** | Log on as | `Local System account` | **勾选** `Allow service to interact with desktop` ← 这是 Session 0 关键 |
+| **Process** | Console window | ✅ `Create console window` | 这是解决 Session 0 死锁的关键 |
+| | Priority | `Normal` | 默认即可 |
+| | Affinity | All | 默认即可 |
+| **I/O** | Output (stdout) | `C:\Users\你的用户名\.agents-to-im\logs\hermes-stdout.log` | 路径必须存在，否则服务启不来 |
+| | Error (stderr) | `C:\Users\你的用户名\.agents-to-im\logs\hermes-stderr.log` | 同上 |
+| | File rotation | ✅ `Replace existing files` | 自动轮转日志 |
+| **Environment** | Environment variables | 把 `config.env` 的所有变量一行一行粘贴进来 | 每一行 `KEY=VALUE` 格式 |
+| **Exit action** | Exit action | `Restart application` | 崩溃自动重启 |
+| | Restart delay | `1000 ms` | 1 秒后重启 |
+| | Throttle restart | `60000 ms` | 1 分钟内连续重启超过 5 次就停止（防止死循环） |
+
+#### 方式二：命令行（自动化脚本）
 
 ```powershell
-# 确认任务状态
-Get-ScheduledTask -TaskName 'agents-codex' | Select-Object TaskName, State
+# 必须管理员权限！
+$serviceName = "agents-hermes"
 
-# 确认进程在 Session 1（不是 Session 0）
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
-    $_.CommandLine -match 'agents-to-im\\dist\\daemon.mjs' -and $_.SessionId -eq 1
-} | Select-Object ProcessId, SessionId
+# 1. 创建服务
+nssm install $serviceName C:\Program Files\nodejs\node.exe
 
-# 确认 Dashboard 端口
-Test-NetConnection -ComputerName 127.0.0.1 -Port 13581 -InformationLevel Quiet
+# 2. 配置参数
+nssm set $serviceName AppDirectory C:\D\opt\agents-to-im
+nssm set $serviceName AppParameters C:\D\opt\agents-to-im\dist\daemon.mjs
+
+# 3. 关键！允许服务与桌面交互（解决 Session 0 死锁）
+nssm set $serviceName Type SERVICE_WIN32_OWN_PROCESS + SERVICE_INTERACTIVE_PROCESS
+
+# 4. 日志路径（路径必须先存在！）
+mkdir C:\Users\你的用户名\.agents-to-im\logs -Force
+nssm set $serviceName AppStdout C:\Users\你的用户名\.agents-to-im\logs\hermes-stdout.log
+nssm set $serviceName AppStderr C:\Users\你的用户名\.agents-to-im\logs\hermes-stderr.log
+nssm set $serviceName AppStdoutCreationDisposition 4  # 覆盖而非追加
+nssm set $serviceName AppStderrCreationDisposition 4
+
+# 5. 环境变量（把 config.env 的内容全部设进去）
+$envVars = @(
+  "CTI_BOT=hermes",
+  "CTI_DEFAULT_RUNTIME=hermes",
+  "CTI_DASHBOARD_PORT=13581",
+  "CTI_DEFAULT_WORKDIR=C:\D\opt",
+  "APPDATA=C:\Users\你的用户名\AppData\Roaming",
+  "USERPROFILE=C:\Users\你的用户名",
+  "PATH=C:\Windows\System32;C:\Program Files\nodejs"  # 关键！确保 node 和 nssm 能找到子进程
+)
+
+foreach ($env in $envVars) {
+  nssm set $serviceName AppEnvironment $env
+}
+
+# 6. 设置自动重启
+nssm set $serviceName AppExit Default Restart
+nssm set $serviceName AppRestartDelay 1000
+nssm set $serviceName AppThrottle 60000
+
+# 7. 设置启动类型为自动
+Set-Service -Name $serviceName -StartupType Automatic
 ```
-
-##### 5. 崩溃自启测试
-
-```powershell
-# 杀掉 daemon 进程，确认 bat 的 :LOOP 会在 5 秒内重启
-Stop-Process -Id <PID> -Force
-# 等待新 PID 出现，端口恢复
-```
-
----
-
-#### 其他 Provider：NSSM 服务
-
-对于 Hermes、MiMo、Gemini 等不需要原生 ConPTY 的 Provider，NSSM 服务更合适（24/7 运行，不依赖用户登录）。
-
-**环境变量必须用 `REG_MULTI_SZ`**，不能用 `nssm set AppEnvironment` 拼接空格分隔字符串，否则会破坏环境变量导致服务崩溃。
-
-**日志路径必须先存在**，否则服务启动即退出。
 
 ### 第三步：Session 0 隔离的核心坑点（划重点）
 
@@ -463,14 +412,11 @@ Windows Session 0（服务运行的隔离环境）没有真实的 `conhost.exe`�
 1. `git status` / `git rev-parse` 等 git 命令（Hermes 的 `coding_system_blocks()`）
 2. `subprocess.run()` 捕获 stdout/stderr 时，句柄继承失败
 3. Windows API `GetConsoleWindow()` 返回 `NULL` 导致无限等待
-4. Codex CLI 内置的 `node-pty` 调用 `CreateFileMappingW` 创建 ConPTY 失败（`os error 5`）
 
-**解决方案**：
-1. ✅ 服务账户使用 `.\oadan`，并显式设置 `APPDATA`、`USERPROFILE` 和 `PATH`
-2. ✅ 环境变量必须以 `REG_MULTI_SZ` 写入 `AppEnvironmentExtra`
-3. ✅ 代码层对 `platform == "acp"` 跳过不必要的 git/filesystem 探测（见下文）
-4. ✅ **Codex 必须使用 Task Scheduler 的 `InteractiveToken` 在用户 Session 中启动**（见第二步）
-5. ❌ NSSM 的 `SERVICE_INTERACTIVE_PROCESS` (Type=0x110) 在 Windows 11 实测**不能**把子进程移出 Session 0，ConPTY 仍失败
+**解决方案**（必须同时满足）：
+1. ✅ NSSM 中勾选 `Allow service to interact with desktop`
+2. ✅ NSSM 中勾选 `Create console window`
+3. ✅ 代码层对 `platform == "acp"` 跳过 git/filesystem 探测（见下文）
 
 #### ❌ 坑 2：PYTHONUNBUFFERED 不是万能的
 

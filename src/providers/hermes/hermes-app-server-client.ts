@@ -260,6 +260,7 @@ export class HermesAppServerClient {
     rtLog(`[hermes-app-server] bootstrap: spawning "${this.executable}" args=${JSON.stringify(args)}`);
     const proc = spawn(this.executable, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
       env: {
         ...process.env,
         HOME: os.homedir(),

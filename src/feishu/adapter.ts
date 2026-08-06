@@ -17,6 +17,7 @@ import { DEFAULT_CHANNEL_INSTANCE_ID, resolveChannelInstanceId } from '../bridge
 import type { StructuredInputRequestInfo } from '../bridge/host.js';
 import { BaseChannelAdapter } from '../bridge/channel-adapter.js';
 import { getBridgeContext } from '../bridge/context.js';
+import { interruptActiveTask } from '../bridge/bridge-manager.js';
 import { appendLocalCommandExchange } from '../bridge/local-command-history.js';
 import {
   buildCardContent,
@@ -42,7 +43,7 @@ import {
 import type { MultiplexLLMProvider } from '../providers/multiplex.js';
 import { listRecentWorkspaces, type RecentWorkspaceOption } from '../infra/recent-workspaces.js';
 import type { RuntimeName } from '../runtime/types.js';
-import { getRuntimeConfig } from '../config/runtime-configs.js';
+import { getRuntimeConfig, buildSystemPrompt } from '../config/runtime-configs.js';
 import { JsonFileStore } from '../infra/store.js';
 import {
   extractActionSenderIdentity as extractActionSenderIdentityWithContext,
@@ -61,6 +62,7 @@ import {
   handleResetCommand as handleResetCommandWithContext,
   handleResumeCardAction as handleResumeCardActionWithContext,
   handleResumeSessionCommand as handleResumeSessionCommandWithContext,
+  handleInterruptCardAction as handleInterruptCardActionWithContext,
   handleStructuredInputCardAction as handleStructuredInputCardActionWithContext,
   patchActionCardSafely as patchActionCardSafelyWithContext,
   replayNativeSessionHistory as replayNativeSessionHistoryWithContext,
@@ -313,6 +315,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       handleClaudeModeCardAction: this.handleClaudeModeCardAction.bind(this),
       handleResumeSessionCommand: this.handleResumeSessionCommand.bind(this),
       handleResumeCardAction: this.handleResumeCardAction.bind(this),
+      handleInterruptCardAction: this.handleInterruptCardAction.bind(this),
       handleResetCommand: this.handleResetCommand.bind(this),
       handleModeCommand: this.handleModeCommand.bind(this),
       handlePlanCommand: this.handlePlanCommand.bind(this),
@@ -458,6 +461,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
   }
 
   private async fetchBotOpenId(): Promise<void> {
+    // 优先用配置指定的 bot open_id（user 视角，与群 mentions 匹配）
+    const configured = this.options?.profile?.botOpenId;
+    if (configured) {
+      this.botOpenId = configured;
+      console.log(`[feishu-adapter] Bot open_id (configured): ${configured}`);
+      return;
+    }
     if (!this.restClient) return;
     try {
       const response = await this.restClient.request({
@@ -719,6 +729,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
     const finalPreview = await this.previewService.finalizePreview(address, normalizeMarkdown(message));
     if (finalPreview?.ok) {
       void this.maybeSyncSessionTitle(address.chatId);
+      // 群聊回复：补发一条 post @ 发起人，让发起人/总控能收到（流式卡片不支持 @）
+      await this.mentionReplyToSender(address, message.replyToMessageId);
       return finalPreview;
     }
 
@@ -727,8 +739,38 @@ export class FeishuAdapter extends BaseChannelAdapter {
     const result = await this.sendAsPost(address, text, message.replyToMessageId);
     if (result.ok) {
       void this.maybeSyncSessionTitle(address.chatId);
+      // 群聊回复：补发一条 post @ 发起人
+      if (result.messageId) {
+        await this.mentionReplyToSender(address, message.replyToMessageId);
+      }
     }
     return result;
+  }
+
+  /**
+   * 群聊回复时，补发一条 post 富文本消息 @ 发起人（触发本 bot 的 sender），
+   * 让发起人/总控能收到回复。流式卡片不支持 @ 提及，故需单独补发。
+   * 仅群聊（group）补发，私聊（p2p）不需要 @ 发起人。
+   */
+  private async mentionReplyToSender(
+    address: ChannelAddress,
+    replyToMessageId?: string,
+  ): Promise<void> {
+    try {
+      // 仅群聊补发 @：私聊（p2p）是一对一，不需要 @
+      const binding = this.getStore().getChannelBinding(this.channelType, address.chatId, this.profileId);
+      if (binding?.chatType === 'p2p') return;
+      const senderId = address.userId;
+      if (!senderId || senderId === this.botOpenId) return;
+      const content = JSON.stringify({
+        zh_cn: {
+          content: [[{ tag: 'at', user_id: senderId, user_name: address.displayName || '' }]],
+        },
+      });
+      await this.sendLarkMessage(this.withInstance(address), 'post', content, replyToMessageId);
+    } catch (e) {
+      console.warn('[feishu-adapter] mentionReplyToSender failed:', e);
+    }
   }
 
   async sendImage(image: OutboundImage): Promise<SendResult> {
@@ -1101,6 +1143,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       runtime,
       model: options?.model || '',
       cwd: options?.cwd || store.getSetting('bridge_default_work_dir') || process.cwd(),
+      systemPrompt: buildSystemPrompt(runtime),
     });
     const initialBinding = store.upsertChannelBinding({
       channelType: this.channelType,
@@ -1208,6 +1251,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
     callbackData: string,
   ): Promise<{ toast: { type: string; content: string } }> {
     return handleResumeCardActionWithContext(this.getHandlerContext(), event, callbackData);
+  }
+
+  private async handleInterruptCardAction(
+    event: StructuredActionEvent,
+    callbackData: string,
+  ): Promise<{ toast: { type: string; content: string } }> {
+    return handleInterruptCardActionWithContext(this.getHandlerContext(), event, callbackData);
   }
 
   private async replayNativeSessionHistory(
@@ -1660,11 +1710,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
     if (waiter) {
       waiter(msg);
     } else {
-      this.queue.push(msg);
+      // 方案 C（优先队列）：新消息插队到队列最前面，当前任务完成后立即优先处理
+      this.queue.unshift(msg);
     }
   }
 
   private async enqueueChatTask(chatId: string, task: () => Promise<void>): Promise<void> {
+    // 优先队列（方案 C）：新消息在全局 queue 插队（见 enqueue 的 unshift），不打断当前任务
     const previous = this.chatQueues.get(chatId) || Promise.resolve();
     const next = previous.then(task, task);
     this.chatQueues.set(chatId, next);
@@ -1787,7 +1839,11 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return undefined;
   }
 
-  private async sendAsInteractiveCard(address: ChannelAddress, text: string, replyToMessageId?: string): Promise<SendResult> {
+  private async sendAsInteractiveCard(
+    address: ChannelAddress,
+    text: string,
+    replyToMessageId?: string,
+  ): Promise<SendResult> {
     // Build divider info if enabled
     let dividerInfo: AgentDividerInfo | undefined;
     if (this.options.profile.showAgentDivider ?? true) {
@@ -1827,7 +1883,12 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return this.options.profile.enableUserMode === true && this.larkClient.getUserAccessToken() !== null;
   }
 
-  private async sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string, forceBotToken?: boolean): Promise<SendResult> {
+  private async sendAsPost(
+    address: ChannelAddress,
+    text: string,
+    replyToMessageId?: string,
+    forceBotToken?: boolean,
+  ): Promise<SendResult> {
     // Build divider info if enabled (same logic as sendAsInteractiveCard)
     let dividerInfo: AgentDividerInfo | undefined;
     if (this.options.profile.showAgentDivider ?? true) {

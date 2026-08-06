@@ -1,7 +1,8 @@
-import type { InboundMessage } from '../../bridge/types.js';
+import type { InboundMessage, ChannelBinding } from '../../bridge/types.js';
 import { loadConfig } from '../../config/config.js';
 import { compactConversation, applyCompactResult } from '../../bridge/compact.js';
-import { interruptActiveTask } from '../../bridge/bridge-manager.js';
+import { interruptActiveTask, isSessionBusy } from '../../bridge/bridge-manager.js';
+import { buildInterruptCard } from '../cards/index.js';
 import type {
   AdapterContext,
   FeishuMessageEventData,
@@ -357,7 +358,9 @@ export async function handleDirectMessage(
       await ctx.ensureRuntimeAvailable(runtime);
       const store = ctx.getStore();
       const options: Parameters<typeof ctx.createBoundSession>[2] = {
-        cwd: process.platform === 'win32' ? (process.env.USERPROFILE || 'C:\\Users\\oadan') : '/opt',
+        // reasonix 用 CTI_REASONIX_ACP_CWD（如 C:\），其他 bot 用 USERPROFILE
+        cwd: process.env.CTI_REASONIX_ACP_CWD
+          || (process.platform === 'win32' ? (process.env.USERPROFILE || 'C:\\Users\\oadan') : '/opt'),
         bindingMode: 'code',
         existingChatId: inbound.address.chatId,
         skipReadyMessage: true,
@@ -503,8 +506,9 @@ export async function handleDirectMessage(
   const store = ctx.getStore();
   const existingBinding = store.getChannelBinding(ctx.channelType, inbound.address.chatId, ctx.profileId);
 
-  // 如果已有绑定，直接处理消息
+  // 如果已有绑定，直接处理消息（busy 时弹插队卡片）
   if (existingBinding) {
+    if (await maybeOfferInterrupt(ctx, existingBinding, inbound)) return;
     ctx.enqueue(inbound);
     return;
   }
@@ -542,6 +546,30 @@ export async function handleDirectMessage(
   }
   ctx.enqueue(inbound);
   return;
+}
+
+/**
+ * busy 时：先把新消息入队（队首，不丢消息）+ 弹插队卡片，返回 true（已弹卡片）。
+ * 空闲时返回 false，调用方直接 enqueue 即可。
+ */
+async function maybeOfferInterrupt(
+  ctx: AdapterContext,
+  binding: ChannelBinding,
+  inbound: InboundMessage,
+): Promise<boolean> {
+  const sessionId = binding.codepilotSessionId || binding.sdkSessionId;
+  if (!sessionId || !isSessionBusy(sessionId)) return false;
+  ctx.enqueue(inbound); // 先入队，点"立即插队"后 abort 当前任务，队列随即消费到它
+  try {
+    await ctx.sendInteractiveCard(inbound.address, buildInterruptCard({
+      chatId: inbound.address.chatId,
+      messageId: inbound.messageId,
+      botName: ctx.label,
+    }));
+  } catch (e) {
+    console.warn('[feishu-adapter] send interrupt card failed:', e);
+  }
+  return true;
 }
 
 export async function handleGroupMessage(
@@ -588,7 +616,20 @@ export async function handleGroupMessage(
       await ctx.sendAsPost(inbound.address, '当前群尚未绑定会话。请先私聊 Bot 发送 `/new:claude` 或 `/new:codex`。', inbound.messageId);
       return;
     }
-    ctx.enqueue(inbound);
+    // /stop 必须立即打断当前任务，不能排队（否则当前任务完成前 /stop 永远执行不到）
+    try {
+      const sessionId = binding.codepilotSessionId || binding.sdkSessionId;
+      const interrupted = interruptActiveTask(sessionId);
+      if (interrupted) {
+        await ctx.sendAsPost(inbound.address, '⏹ 正在中断当前任务...', inbound.messageId);
+      } else {
+        await ctx.sendAsPost(inbound.address, '当前没有正在运行的任务。', inbound.messageId);
+      }
+    } catch (e) {
+      console.log(`[inbound-handler] /stop interrupt error: ${e}`);
+      // 失败则退回队列处理
+      ctx.enqueue(inbound);
+    }
     return;
   }
   if (lower.startsWith('/mode')) {
@@ -640,7 +681,33 @@ export async function handleGroupMessage(
     return;
   }
   if (lower.startsWith('/new')) {
-    await ctx.sendAsPost(inbound.address, '请先私聊 Bot 使用 `/new:claude` 或 `/new:codex` 创建新会话。', inbound.messageId);
+    // 群聊 /new：用默认 runtime 自动创建并绑定新会话（不再要求私聊）
+    const newRuntime = ctx.getDefaultRuntime();
+    try {
+      await ctx.ensureRuntimeAvailable(newRuntime);
+      const store = ctx.getStore();
+      const newOptions: Parameters<typeof ctx.createBoundSession>[2] = {
+        cwd: process.env.CTI_REASONIX_ACP_CWD
+          || (process.platform === 'win32' ? (process.env.USERPROFILE || 'C:\\Users\\oadan') : '/opt'),
+        bindingMode: 'code',
+        existingChatId: inbound.address.chatId,
+        skipReadyMessage: true,
+      };
+      if (newRuntime === 'claude') {
+        newOptions.claudePermissionMode = 'bypassPermissions';
+      }
+      const { binding } = await ctx.createBoundSession(newRuntime, _sender, newOptions);
+      console.log(`[feishu-adapter] group /new: bound chat ${inbound.address.chatId} runtime=${newRuntime}`);
+      const feedback = `✅ 已新建 ${newRuntime} 会话（本群）｜工作区 \`${binding.workingDirectory}\`｜直接对话即可`;
+      await ctx.sendAsPost(inbound.address, feedback, inbound.messageId, true);
+    } catch (error) {
+      console.error('[feishu-adapter] group /new failed:', error);
+      await ctx.sendAsPost(
+        inbound.address,
+        `创建会话失败：${error instanceof Error ? error.message : String(error)}`,
+        inbound.messageId,
+      );
+    }
     return;
   }
   if (lower.startsWith('/')) {
@@ -649,13 +716,47 @@ export async function handleGroupMessage(
   }
 
   if (!binding) {
-    await ctx.sendAsPost(inbound.address, '当前群尚未绑定会话。请先私聊 Bot 发送 `/new:claude` 或 `/new:codex`。', inbound.messageId);
+    // 群聊自动绑定：@ bot 的普通消息未绑定时自动创建会话并绑定（默认 runtime），无需先私聊 /new
+    const autoRuntime = ctx.getDefaultRuntime();
+    try {
+      const autoOptions: Parameters<typeof ctx.createBoundSession>[2] = {
+        cwd: process.env.CTI_REASONIX_ACP_CWD
+          || (process.platform === 'win32' ? (process.env.USERPROFILE || 'C:\\Users\\oadan') : '/opt'),
+        bindingMode: 'code',
+        existingChatId: inbound.address.chatId,
+        skipReadyMessage: true,
+      };
+      if (autoRuntime === 'claude') {
+        autoOptions.claudePermissionMode = 'bypassPermissions';
+      }
+      if (autoRuntime === 'mimo') {
+        autoOptions.model = store.getSetting('compact_model') || 'MiMo-OpenAI';
+      }
+      const { binding: autoBinding } = await ctx.createBoundSession(autoRuntime, _sender, autoOptions);
+      console.log(`[feishu-adapter] group auto-bind chatId=${inbound.address.chatId} runtime=${autoRuntime}`);
+      await ctx.sendAsPost(
+        inbound.address,
+        `✅ 已自动绑定 ${autoRuntime} 会话（本群）｜工作区 \`${autoBinding.workingDirectory}\`｜直接对话即可`,
+        inbound.messageId,
+        true,
+      );
+      ctx.enqueue(inbound); // 当前消息直接进入新会话
+    } catch (autoError) {
+      console.error('[feishu-adapter] group auto-bind failed:', autoError);
+      await ctx.sendAsPost(
+        inbound.address,
+        `自动绑定失败：${autoError instanceof Error ? autoError.message : String(autoError)}`,
+        inbound.messageId,
+      );
+    }
     return;
   }
   if (workflow) {
     const consumed = await ctx.handlePlanWorkflowMessage(binding.id, workflow.workflowId, inbound);
     if (consumed) return;
   }
+  // busy 时弹插队卡片（消息已入队，用户可选立即打断或稍后处理）
+  if (await maybeOfferInterrupt(ctx, binding, inbound)) return;
   ctx.enqueue(inbound);
 }
 

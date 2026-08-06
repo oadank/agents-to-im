@@ -19,7 +19,7 @@ export function buildSimpleCard(text: string, dividerInfo?: AgentDividerInfo): R
     if (dividerInfo.provider) parts.push(`Provider: ${dividerInfo.provider}`);
     if (dividerInfo.session) parts.push(`Session: ${dividerInfo.session}`);
     if (dividerInfo.cacheHitRate != null && dividerInfo.cacheAvgRate != null) {
-      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}% | ⁓${dividerInfo.cacheAvgRate.toFixed(2)}%`);
+      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}% | 平均${dividerInfo.cacheAvgRate.toFixed(2)}%`);
     } else if (dividerInfo.cacheHitRate != null) {
       parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
     }

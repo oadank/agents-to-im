@@ -108405,7 +108405,7 @@ function buildCardContent(text, dividerInfo) {
     if (dividerInfo.provider) parts2.push(`Provider: ${dividerInfo.provider}`);
     if (dividerInfo.session) parts2.push(`Session: ${dividerInfo.session}`);
     if (dividerInfo.cacheHitRate != null && dividerInfo.cacheAvgRate != null) {
-      parts2.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%\u205E${dividerInfo.cacheAvgRate.toFixed(2)}%`);
+      parts2.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}% | \u205E${dividerInfo.cacheAvgRate.toFixed(2)}%`);
     } else if (dividerInfo.cacheHitRate != null) {
       parts2.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
     }
@@ -108435,7 +108435,7 @@ function buildPostContent(text, dividerInfo) {
     if (dividerInfo.provider) parts2.push(`Provider: ${dividerInfo.provider}`);
     if (dividerInfo.session) parts2.push(`Session: ${dividerInfo.session}`);
     if (dividerInfo.cacheHitRate != null && dividerInfo.cacheAvgRate != null) {
-      parts2.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%\u205E${dividerInfo.cacheAvgRate.toFixed(2)}%`);
+      parts2.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}% | \u205E${dividerInfo.cacheAvgRate.toFixed(2)}%`);
     } else if (dividerInfo.cacheHitRate != null) {
       parts2.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
     }
@@ -109334,7 +109334,7 @@ function buildSimpleCard(text, dividerInfo) {
     if (dividerInfo.provider) parts2.push(`Provider: ${dividerInfo.provider}`);
     if (dividerInfo.session) parts2.push(`Session: ${dividerInfo.session}`);
     if (dividerInfo.cacheHitRate != null && dividerInfo.cacheAvgRate != null) {
-      parts2.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%\u2053${dividerInfo.cacheAvgRate.toFixed(2)}%`);
+      parts2.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}% | \u2053${dividerInfo.cacheAvgRate.toFixed(2)}%`);
     } else if (dividerInfo.cacheHitRate != null) {
       parts2.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
     }

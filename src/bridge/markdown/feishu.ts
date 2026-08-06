@@ -89,7 +89,7 @@ export function buildCardContent(text: string, dividerInfo?: AgentDividerInfo): 
     if (dividerInfo.provider) parts.push(`Provider: ${dividerInfo.provider}`);
     if (dividerInfo.session) parts.push(`Session: ${dividerInfo.session}`);
     if (dividerInfo.cacheHitRate != null && dividerInfo.cacheAvgRate != null) {
-      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%⁞${dividerInfo.cacheAvgRate.toFixed(2)}%`);
+      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}% | ⁞${dividerInfo.cacheAvgRate.toFixed(2)}%`);
     } else if (dividerInfo.cacheHitRate != null) {
       parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
     }
@@ -128,7 +128,7 @@ export function buildPostContent(text: string, dividerInfo?: AgentDividerInfo): 
     if (dividerInfo.provider) parts.push(`Provider: ${dividerInfo.provider}`);
     if (dividerInfo.session) parts.push(`Session: ${dividerInfo.session}`);
     if (dividerInfo.cacheHitRate != null && dividerInfo.cacheAvgRate != null) {
-      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%⁞${dividerInfo.cacheAvgRate.toFixed(2)}%`);
+      parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}% | ⁞${dividerInfo.cacheAvgRate.toFixed(2)}%`);
     } else if (dividerInfo.cacheHitRate != null) {
       parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
     }

@@ -21,11 +21,12 @@ if (fs.existsSync(contactsPath)) {
   try { CONTACTS = JSON.parse(fs.readFileSync(contactsPath, 'utf8')); } catch {}
 }
 
-const APP_ID = process.env.REASONIX_APP_ID || CONTACTS.appId;
-// APP_SECRET 必须走环境变量，禁止硬编码/写入仓库
-const APP_SECRET = process.env.REASONIX_APP_SECRET;
+const APP_ID = process.env.REASONIX_APP_ID || process.env.CTI_BOT_REASONIX_APP_ID || CONTACTS.appId;
+// APP_SECRET 必须走环境变量，禁止硬编码/写入仓库。
+// 兼容两种命名：独立脚本环境 REASONIX_APP_SECRET；PM2 bot 环境 CTI_BOT_REASONIX_APP_SECRET。
+const APP_SECRET = process.env.REASONIX_APP_SECRET || process.env.CTI_BOT_REASONIX_APP_SECRET;
 if (!APP_SECRET) {
-  console.error('ERR: 缺少环境变量 REASONIX_APP_SECRET（或设置于运行环境，勿写入仓库）');
+  console.error('ERR: 缺少环境变量 REASONIX_APP_SECRET（或 CTI_BOT_REASONIX_APP_SECRET），勿写入仓库');
   process.exit(1);
 }
 const CHAT_ID_DEFAULT = CONTACTS.chatIdDefault;

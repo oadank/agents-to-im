@@ -1,18 +1,15 @@
-import { spawn } from 'node:child_process';
 import { readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type * as lark from '@larksuiteoapi/node-sdk';
 
 import type { ChannelAddress } from '../../bridge/types.js';
+import { synthesize as synthesizeTts } from '../tts-wrapper.mjs';
 
 const isWin = process.platform === 'win32';
 const TMP_DIR = isWin
-  ? join(tmpdir(), 'openclaw')
-  : '/tmp/openclaw';
-const TTS_WRAPPER = isWin
-  ? 'C:\\Users\\oadan\\.openclaw\\workspace\\main\\skills\\voice-engine\\tts-wrapper.mjs'
-  : '/opt/.openclaw/workspace/main/skills/voice-engine/tts-wrapper.mjs';
+  ? join(tmpdir(), 'agents-to-im-tts')
+  : '/tmp/agents-to-im-tts';
 
 export interface AudioReplyResult {
   success: boolean;
@@ -26,57 +23,20 @@ export class OutboundAudioService {
   ) {}
 
   /**
-   * Generate audio from text using TTS wrapper
+   * Generate audio from text using TTS (内置, 不再依赖 voice-engine)
    * Returns the path to the generated audio file (OPUS format for Feishu)
    */
   async generateAudio(text: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const ttsProvider = process.env.CTI_TTS_PROVIDER || 'auto';
-      const proc = spawn('node', [TTS_WRAPPER, text], {
-        windowsHide: true,
-        env: {
-          ...process.env,
-          TTS_CHANNEL: 'feishu', // OPUS format for Feishu
-          TTS_PROVIDER: ttsProvider,
-        },
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      proc.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`TTS failed (code=${code}): ${stderr || stdout}`));
-          return;
-        }
-
-        // tts-wrapper.mjs outputs file path to stdout (plain path, no marker)
-        // Fallback: stderr with [TTS_OUTPUT] marker for legacy compatibility
-        let audioPath = stdout.trim() || null;
-        if (!audioPath) {
-          const pathMatch = stderr.match(/\[TTS_OUTPUT\]\s*([^\s\n]+\.(opus|mp3))/);
-          audioPath = pathMatch ? pathMatch[1] : null;
-        }
-        if (!audioPath || !existsSync(audioPath)) {
-          reject(new Error(`TTS output invalid: ${audioPath || 'no path found in stderr'}`));
-          return;
-        }
-
-        resolve(audioPath);
-      });
-
-      proc.on('error', (err) => {
-        reject(new Error(`TTS process error: ${err.message}`));
-      });
+    const ttsProvider = process.env.CTI_TTS_PROVIDER || 'auto';
+    const result = await synthesizeTts(text, {
+      channel: 'feishu', // OPUS format for Feishu
+      provider: ttsProvider,
     });
+
+    if (!result || !result.path || !existsSync(result.path)) {
+      throw new Error(`TTS output invalid: ${result?.path || '合成失败'}`);
+    }
+    return result.path;
   }
 
   /**

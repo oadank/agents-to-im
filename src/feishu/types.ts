@@ -164,6 +164,12 @@ export interface CardActionResult {
     type: string;
     content: string;
   };
+  /**
+   * 可选：回调响应体里直接返回的新卡片（飞书共享卡片 update_multi:true 的官方更新方式）。
+   * 返回后飞书会用该卡片更新原卡片，对所有接受者生效；比异步 PATCH 可靠（PATCH 会被
+   * 回调响应（toast）覆盖/忽略，表现为"日志成功但卡片没变"）。
+   */
+  card?: Record<string, unknown>;
 }
 
 export interface StructuredInputCardOptions {
@@ -194,6 +200,10 @@ export interface AdapterContext {
   enqueueChatTask(chatId: string, task: () => Promise<void>): Promise<void>;
   /** 取消一条已入队的消息（插队卡"取消消息"按钮） */
   cancelInboundMessage(messageId: string): boolean;
+  /** "稍后"按钮：把消息从待处理队列移到挂起区，等同会话下一条消息合并发送 */
+  deferInboundMessage(messageId: string): boolean;
+  /** 取出该会话所有"稍后"挂起的消息（合并到下一条 prompt），取出后清空 */
+  collectDeferredMessages(chatId: string): InboundMessage[];
   /** Ingest message to OpenHuman memory_tree for semantic search. */
   ingestToMemoryTree(chatId: string, senderId: string, text: string, messageId: string): Promise<void>;
   sendAsPost(address: ChannelAddress, text: string, replyToMessageId?: string, forceBotToken?: boolean): Promise<SendResult>;

@@ -43,6 +43,7 @@ function buildSpawnEnv(): NodeJS.ProcessEnv {
       'C:\\WINDOWS\\System32\\Wbem',
       'C:\\Program Files\\nodejs',
       'C:\\Users\\oadan\\AppData\\Roaming\\npm',
+      'C:\\Users\\oadan\\AppData\\Local\\Programs\\@multicadesktop\\resources\\app.asar.unpacked\\resources\\bin',
     ].join(';'),
   };
 }
@@ -159,6 +160,8 @@ interface CachedAcpSession {
   pendingRetrySettle: ((err?: string) => void) | null;
   pendingRetryController: ReadableStreamDefaultController<string> | null;
   pendingRetrySdkSessionId: string | undefined;
+  /** abort 兜底定时器：session/interrupt 后 ACP 无响应时的强制 settle（正常 settle 会清理） */
+  abortKillTimer?: ReturnType<typeof setTimeout> | null;
   pendingRetryAbortController: AbortController | undefined;
 }
 
@@ -697,25 +700,31 @@ export class OpencodeProvider implements LLMProvider {
       cached.pendingRetryAbortController = abortController;
 
       const abortHandler = () => {
-        console.log(`[opencode-provider] ACP abort: sending session/interrupt first`);
+        console.log(`[opencode-provider] ACP abort: sending session/interrupt (keep process alive)`);
         try {
+          // interrupt 用当前 prompt 的 id：opencode 会以该 id 返回 stop reason 响应，
+          // 从而触发 currentSettle() 结束当前轮。若用 nextId++（自增 id），响应不匹配
+          // currentPromptId，settle 永不触发 → 锁链卡死。
           cached.child.stdin!.write(JSON.stringify({
-            jsonrpc: '2.0', id: cached.nextId++, method: 'session/interrupt',
+            jsonrpc: '2.0', id: cached.currentPromptId, method: 'session/interrupt',
             params: { sessionId: cached.sessionId },
           }) + '\n');
         } catch {}
-        // 3秒后如果还在运行，强制杀进程
-        setTimeout(() => {
-          if (cached.alive) {
-            console.log(`[opencode-provider] ACP interrupt timeout, force killing`);
-            try { cached.child.kill('SIGTERM'); } catch {}
+        // 插队语义：中断当前 turn，但进程保持存活，新消息复用同一 session 继续处理。
+        // 仅在 ACP 完全不响应（interrupt 后仍无 settle）时兜底 settle，避免锁链卡死。
+        const killTimer = setTimeout(() => {
+          if (cached.currentSettle) {
+            console.warn(`[opencode-provider] ACP interrupt unresponsive after 10s, force settling`);
+            cached.currentSettle('Interrupted: ACP did not respond to session/interrupt');
           }
-        }, 3000);
+        }, 10_000);
+        cached.abortKillTimer = killTimer;
       };
       abortController?.signal.addEventListener('abort', abortHandler, { once: true });
 
       cached.currentController = controller;
       cached.currentSettle = (err?: string) => {
+        if (cached.abortKillTimer) { clearTimeout(cached.abortKillTimer); cached.abortKillTimer = null; }
         cached.currentSettle = null;
         cached.currentController = null;
         cached.pendingRetryPrompt = null;

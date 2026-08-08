@@ -25,12 +25,13 @@ interface TeamData {
   openIds: Record<string, string>;
   multicaWorkspaceId: string;
   multicaAgents: Record<string, string>;
+  multicaSquads: Record<string, string>;
 }
 
 let _teamDataCache: TeamData | null = null;
 function loadTeamData(): TeamData {
   if (_teamDataCache) return _teamDataCache;
-  const empty: TeamData = { chatId: '', openIds: {}, multicaWorkspaceId: '', multicaAgents: {} };
+  const empty: TeamData = { chatId: '', openIds: {}, multicaWorkspaceId: '', multicaAgents: {}, multicaSquads: {} };
   try {
     // 打包后 __dirname 为 dist/，dev 下为 src/config/；多候选路径兼容
     const candidates = [
@@ -50,6 +51,7 @@ function loadTeamData(): TeamData {
       openIds: raw.openIds || {},
       multicaWorkspaceId: raw.multicaWorkspaceId || '',
       multicaAgents: raw.multicaAgents || {},
+      multicaSquads: raw.multicaSquads || {},
     };
   } catch (e) {
     console.warn('[runtime-configs] team-data.json 读取失败，使用空配置:', e);
@@ -147,6 +149,20 @@ function readOpencodeConfig(): { model: string; provider: string } {
       return { model: 'deepseek-v4-flash', provider: 'deepseek' };
     }
     const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    // 优先读顶层 model 字段（opencode CLI 实际使用的模型，格式 provider/model 或 litellm/xxx）
+    const topModel = typeof data?.model === 'string' ? data.model : '';
+    if (topModel) {
+      const slashIdx = topModel.indexOf('/');
+      if (slashIdx > 0) {
+        const provider = topModel.slice(0, slashIdx);
+        const model = topModel.slice(slashIdx + 1);
+        console.log(`[runtime-configs] runtime=opencode → model=${model} provider=${provider} (from opencode.json top-level model)`);
+        return { model, provider: provider === 'litellm' ? 'LiteLLM' : provider };
+      }
+      console.log(`[runtime-configs] runtime=opencode → model=${topModel} (from opencode.json top-level model, no provider prefix)`);
+      return { model: topModel, provider: 'LiteLLM' };
+    }
+    // fallback：读第一个 provider 的第一个模型
     const providers = data?.provider || {};
     const names = Object.keys(providers);
     if (names.length === 0) {
@@ -279,7 +295,7 @@ export function getRuntimeConfig(runtime: string): RuntimeConfig {
   // Opencode runtime：实时读取 opencode.json（真实模型）
   if (runtime === 'opencode') {
     const { model, provider } = readOpencodeConfig();
-    return { model, provider, displayName: 'Opencode' };
+    return { model, provider, displayName: 'OpenCode', role: '生图队长：正常对话直接回答；收到生图需求时，通过 Multica 调度生图小队（视觉导演+生图工程师）出图，再把图片发回飞书。同时可协助简单编码/通用问题' };
   }
 
   // 其他 runtime 保持原有逻辑（环境变量 + 默认值）
@@ -295,7 +311,7 @@ export function getRuntimeConfig(runtime: string): RuntimeConfig {
     mimo:       { model: 'MiMogo',        provider: 'LiteLLM',   displayName: 'MimoCode', role: '微信公众号队长：负责公众号内容（选题→文案→审核→发布），通过 Multica 调度文案助手/安全审查/发布智能体' },
     reasonix:   { model: 'codex-model',   provider: 'LiteLLM',   displayName: 'Reasonix', role: '总控/主控：接需求、判断任务类型、@对应队长、验收汇总，维护任务看板' },
   openclaw:   { model: 'codex-model',   provider: 'LiteLLM',   displayName: 'Openclaw',  role: '深度调研队长：研究方向→深挖→详细报告存wiki，通过 Multica 调度调研/研究助理' },
-    opencode:   { model: 'deepseek-v4-flash', provider: 'deepseek', displayName: 'Opencode', role: '生图/设计队长：负责生图/视觉设计/封面素材，通过 Multica 调度生图/前端工程师' },
+    opencode:   { model: 'codex-model',   provider: 'LiteLLM',   displayName: 'OpenCode', role: '生图队长：正常对话直接回答；收到生图需求时，通过 Multica 调度生图小队（视觉导演+生图工程师）出图，再把图片发回飞书。同时可协助简单编码/通用问题' },
     zcode:      { model: 'zcode-v1',      provider: 'zcode',     displayName: 'ZCode' },
     openhuman:  { model: 'openhuman-v1',  provider: 'openhuman', displayName: 'OpenHuman' },
     gemini:     { model: 'gemini-model',  provider: 'LiteLLM',   displayName: 'Gemini',   role: '视频/音频队长：负责生视频/配音/剪辑/成片，通过 Multica 调度视频语音/配音剪辑专家' },
@@ -324,15 +340,14 @@ export function buildSystemPrompt(runtime: string): string {
   const config = getRuntimeConfig(runtime);
   const team = loadTeamData();
   return `
-你是 ${config.displayName || config.model}，团队中的【${config.role || '成员'}】。
-
 # 团队协作规范（必须遵守）
-- 团队总控：Deepseek（Reasonix）——负责需求拆解、任务派发、验收汇总
+- 团队总控：Reasonix——负责需求拆解、任务派发、验收汇总
 - 团队群：${team.chatId || '<未配置>'}
 - 协作模式：总控按任务复杂度裁剪流程（简单 2 人、中等 3-4 人、复杂拆子团队并行）
-
-# 你的职责
-${config.role || '根据用户请求提供帮助。'}
+- **PM2 重启协作机制（重要）**：需要全量重启所有 bot 时——
+  · 若你本身是 bot 进程（会被 pm2 restart all 中断自己）：先 pm2 restart **除自己以外的所有 bot**，等它们全部 online 后，**私聊其中某个 agent，让它执行 pm2 restart <你自己的pm2名>**（消息能送达 = 你当下已干完活，不怕被中断）
+  · 若你非 bot（如桌面 CLI/手动操作）：环境正常时可直接 pm2 restart all（快速简单）
+  · 你的 pm2 名 = 你的 bot 身份名（如 claude/codex/gemini/hermes/mimo/openakita/openclaw/opencode/reasonix）
 
 # 交接铁律
 1. 任务完成后，**主动 @ 下一位接单人**（open_id 见通讯录）
@@ -362,51 +377,71 @@ ${LARK_CLI_INSTRUCTIONS}
 /**
  * lark-cli 飞书操作能力指令 + MCP 工具指引 + 知识循环
  * 由 conversation engine 注入到用户 prompt 中，让所有 AI Agent 知道可以用 lark-cli 操作飞书。
- * 身份规则：统一使用 user 身份（默认），不加 --as 参数。
+ * 身份规则：默认使用自己 bot 身份发消息（POST /api/send），只有代发时才用 user 身份（lark-cli）。
  */
 export const LARK_CLI_INSTRUCTIONS = `
-## 飞书操作能力 (lark-cli) — 必须使用，禁止用 Python 脚本替代
-你可以通过 shell 命令调用 lark-cli 直接操作飞书。命令默认输出 JSON 格式。命令超时请加 --timeout 参数。如需帮助可运行 lark-cli <command> --help。
+## 飞书操作能力（2026-08-07 更新）— bot 发消息用 /api/send，lark-cli 用于只读操作和 user 身份代发
+**发消息**：bot 身份用 agents-to-im 的 POST /api/send（SDK 直发，最可靠）；user 身份（代发/私聊联系）用 lark-cli。**只读查询**（列消息/搜索/联系人/文档）用 lark-cli。命令默认输出 JSON 格式。命令超时请加 --timeout 参数。如需帮助可运行 lark-cli <command> --help。
 
-**铁律：所有飞书操作必须通过 lark-cli 完成。禁止写 Python/Node 脚本调用飞书 API，这会绕过认证和权限管理，效率低且不可维护。**
+**铁律（2026-08-07 更新）：发消息一律用 /api/send（bot 身份），不要写 Python/Node 脚本直接调飞书开放 API（绕过认证和管理）；lark-cli 不再用于 bot 发消息（只读 + user 身份代发保留）。**
 
 ### 工具调用纪律（重要）
 - **一次只调用一个工具，串行执行**：先等前一个工具返回结果，再调用下一个。**严禁并行/同时发起多个工具调用**（多个 bash 或 MCP 工具一起发会导致执行挂起卡死）。
 - 需要多个检查时（如同时查任务计划+注册表+服务），**逐个顺序执行**，每个都等结果。
 
-### 身份选择规则
+### 身份选择规则（2026-08-07 更新：bot 发消息走 /api/send，lark-cli 只剩 user 身份）
 - **发消息两种身份**：
-  - **user 身份**（默认）：以用户陈丹身份发（如需代发）
-  - **自己 bot 身份**：用 --profile <自己> --as bot，以自己的 bot 身份发（推荐用于协作/主动 @ 别人）
-- **⚠️ 身份标识铁律**：**用 user 身份（陈丹代发）发消息时，消息内容必须带 [你的身份名] 前缀**（如 [Codex] 消息内容、[Hermes] 消息内容），否则群里无法区分是谁发的。用自己 bot 身份发则不需要前缀（飞书自动显示 bot 名）。
+  - **自己 bot 身份**（默认，推荐）：通过 agents-to-im 的 **POST /api/send**（bot 身份 SDK 直发），以自己的 bot 身份发（飞书自动显示 bot 名）。**不再用 lark-cli --as bot 发消息**
+  - **user 身份**（仅代发时）：用 lark-cli --as user 以用户陈丹身份发（如转达他人消息、私聊互相联系），必须带 [你的身份名] 前缀
+- **⚠️ 身份标识铁律（重要，2026-08-07 修正）**：判断用谁的身份，**看接收者是谁**：
+  · **发给用户/群里展示**（回复、发图、汇报）→ **自己的 bot 身份**（POST /api/send 自己端口），显示自己 bot 名，无需前缀
+  · **发给其他 bot**（派活、委托执行、bot间通信）→ **必须 user 身份**（lark-cli --as user + 内容带 [你的身份名] 前缀如 [Codex]）——因为 agents-to-im 过滤 sender_type=app，任何 bot 用 bot 身份发的消息任何 bot 都收不到
+  · 一句话：bot 身份 = 给人看；user 身份 = 给 bot 传话（必须带身份前缀）
+- **⚠️ 飞书实操要点（2026-08-08 实测补充，必读）**：
+  1. **中文编码**：发任何含中文的消息（文字/URL/汇报），必须用 python/node（UTF-8）发送，禁止 PowerShell 直接拼中文（会乱码成 ????）。PowerShell 传中文先转 UTF-8 或改用 python urllib/node。
+  2. **图片发到哪**："发图片给我" = 发到**当前飞书对话的 chat_id**（用户私聊你的那个）。不是团队群，不是桌面端。只有明确说"发群里"才发团队群（oc_b598b5209ec736d96c53e4b5b3cad491）。
+  3. **发图姿势（2026-08-08 修正，实测）**：**lark-cli 没有 \`images create\` 命令**（报 unknown command）。正确姿势：
+     - **方法A（推荐，bot 身份）**：POST 自己的 /api/send（msgType=image, content={\"image_key\":\"<img_xxx>\"}）——需要先用 lark-cli 上传拿 image_key，或用已有 image_key。
+     - **方法B（lark-cli 直接发图）**：\`cd <图片所在目录>\` 后用**相对路径**：\`lark-cli im +messages-send --chat-id <目标> --image \"文件名.jpg\" --as user\`。**⚠️ --image 只接受当前目录的相对路径，绝对路径会被拒**（报 \"must be a relative path within the current directory\"）。**中文文件名没问题**（相对路径下中文可正常上传）；报“中文打不开”其实是绝对路径被拒的误判，不要复制到英文路径绕弯，cd 到图片目录用相对路径即可。
+  4. **联系其他 bot**：用 user 身份（全局 lark-cli，不带 --profile）+ [你的身份名] 前缀。全局 lark-cli 配置在 ~/.lark-cli/，不需要你的专属 source。
+  5. **⚠️ 禁止发到"陈丹的飞书 CLI"机器人**：~/.lark-cli/ 里那个 bot（appId cli_aad3d4bbaaf8dbb3）是 lark-cli 工具用的机器人，**不是团队智能体**——发到它的私聊没人看。只发到：团队群、用户真实私聊、或其它 bot 的私聊。
+  6. **⚠️ 当前对话 = 飞书对话**：你是通过飞书 bot 接入的，用户和你对话的 chat_id 就是飞书 chat_id。**没有"ACP 桌面通道"这种说法**——用 /api/send 发到该 chat_id 就是对的。别被"桌面端/ACP"迷惑。
+  7. **完成后必回**：任务做完一定要回复当前对话（哪怕失败也报原因），不要沉默。
 - 发送消息示例：
   \`\`\`bash
-  # user 身份发消息
-  lark-cli im +messages-send --chat-id <目标群id> --text "消息内容"
-  # 自己 bot 身份发消息（推荐）
-  lark-cli im +messages-send --profile <自己的profile名> --as bot --chat-id <目标群id> --text "消息内容"
-  # 自己 bot 身份 @ 某人（post 格式真 @）
-  lark-cli im +messages-send --profile <自己的profile名> --as bot --chat-id <目标群id> --msg-type post --content '{"zh_cn":{"title":"","content":[[{"tag":"text","text":"消息"},{"tag":"at","user_id":"目标open_id","user_name":"目标名"}]]}}'
+  # 自己 bot 身份发消息（推荐）：POST /api/send，bot 身份 SDK 直发
+  # 每个 bot 一个端口（claude=13580 codex=13581 mimo=13582 gemini=13583 hermes=13584 openakita=13585 reasonix=13586 openclaw=13587 opencode=13588）
+  # 用 bash/PowerShell/curl 调本机端口：
+  #   curl -X POST http://127.0.0.1:<自己端口>/api/send -H "Content-Type: application/json" -d '{"chatId":"<目标群id>","msgType":"text","content":"消息内容"}'
+  #   @ 某人（post 富文本格式）：msgType=post, content 为 {"zh_cn":{"title":"","content":[[{"tag":"at","user_id":"目标open_id","user_name":"目标名"}],[{"tag":"text","text":"消息"}]]}}
+  #   PowerShell: Invoke-RestMethod -Uri "http://127.0.0.1:<端口>/api/send" -Method Post -Body (ConvertTo-Json @{chatId='<群id>';msgType='text';content='消息'}) -ContentType 'application/json'
+  # user 身份发消息（仅代发/私聊联系）：lark-cli im +messages-send --chat-id <目标群id> --text "消息内容"
   \`\`\`
 
 ### 团队群通讯录（真实 open_id 由运行环境注入，见 buildAgentPersona 输出的【团队通讯录】段落）
 - 找不到某成员 open_id 时，用 \`lark-cli contact search <姓名>\` 查询后使用
 
 ### 主动 @ 协作（重要）
-- **你可以主动 @ 其他 agent**（用自己 bot 身份 + post 格式），用于派活、确认、交接。
+- **你可以主动 @ 其他 agent**（派活/确认/交接）——**注意：@ 其他 bot 用 user 身份发**（bot 身份发的消息其他 bot 收不到，见上面身份铁律）
 - 任务完成后，**主动 @ 下一位接单人**（瀑布流交接）。
 - 需要 @ 谁，用【团队通讯录】里的 open_id（由运行环境注入）。
 
-### 回复 @ 铁律（重要）
-- **群聊回复时，必须主动 @ 原消息发起人**（用 lark-cli 的 @ 能力，open_id 从通讯录查询），让发起人/总控能收到你的回复。
-- 若原消息由某 bot（如总控 Deepseek）发起，回复时 @ 该 bot（open_id 见通讯录）。
-- 不要只在文本里写 @名字，要真正 @ 到人（用 lark-cli 的 @ 功能）。
+### 向总控私聊汇报（2026-08-08 添加，重要）
+- **总控要求私聊汇报时**（如认知更新结果），用你自己的 /api/send（bot 身份）发到 Reasonix 私聊 chat_id = oc_d8a3abf10296551ffeb332381bc26e96
+- 姿势：POST http://127.0.0.1:<你自己端口>/api/send，body {"chatId":"oc_d8a3abf10296551ffeb332381bc26e96","msgType":"text","content":"[你的身份名] 汇报内容"}
+- 中文必须 UTF-8（python urllib / node，禁止 PowerShell 拼中文）
+- ⚠️ 不要发到团队群汇报（会打扰全员）；总控要求私聊就私聊 Reasonix
 
-### 常用命令
-- lark-cli im +messages-send --chat-id <id> --text "消息"           # 发送消息
-- lark-cli im +messages-send --chat-id <id> --content '<post json>' --msg-type post  # @某人（post 格式真 @）
-- lark-cli im +chat-messages-list --chat-id <id>                    # 列出群消息
-- lark-cli im +messages-reply --message-id <om_xxx> --text "回复"   # 回复消息
+### 回复 @ 铁律（重要）
+- **群聊回复时，必须主动 @ 原消息发起人**（用 /api/send 的 post 格式 @ 能力，open_id 从通讯录查询），让发起人/总控能收到你的回复。
+- 若原消息由某 bot（如总控 Reasonix）发起，回复时 @ 该 bot（open_id 见通讯录）。
+- 不要只在文本里写 @名字，要真正 @ 到人（/api/send msgType=post 的 @ 功能）。
+
+### 常用命令（2026-08-07 更新）
+- **发消息（bot 身份）**：POST http://127.0.0.1:<自己端口>/api/send，body {"chatId":"<id>","msgType":"text|post|image","content":"..."}
+- **发消息（user 身份，仅代发/私聊联系）**：lark-cli im +messages-send --chat-id <id> --text "消息"
+- lark-cli im +chat-messages-list --chat-id <id>                    # 列出群消息（只读）
+- lark-cli im +messages-reply --message-id <om_xxx> --text "回复"   # 回复消息（只读/回复）
 - lark-cli im +chat-search --keyword "群名"                          # 搜索群
 - lark-cli contact search <name>                                    # 搜索联系人
 - lark-cli contact get <open_id>                                    # 获取联系人信息
@@ -481,13 +516,18 @@ export function buildAgentPersona(): string {
   const multicaAgentLines = Object.entries(team.multicaAgents)
     .map(([n, id]) => `  - ${n} ${id}`)
     .join('\n');
+  const multicaSquadLines = Object.entries(team.multicaSquads)
+    .map(([n, id]) => `  - ${n} ${id}`)
+    .join('\n');
   const multicaBlock = team.multicaWorkspaceId
-    ? `# Multica 专家团调度（你是队长，这是你的执行工具）
+    ? `# Multica 专家团调度（你的执行工具）
 你可以通过 Multica CLI 发 issue 给专家团智能体执行任务（Multica 是独立执行引擎，飞书是协调层）：
 - 命令：\`multica issue create --title "任务" --description "需求+验收标准" --assignee <专家id> --server-url https://api.multica.ai --workspace-id ${team.multicaWorkspaceId} --profile desktop-api.multica.ai\`
 - 查进度：\`multica issue list --output json --server-url https://api.multica.ai --workspace-id ${team.multicaWorkspaceId} --profile desktop-api.multica.ai\`
 - 专家团（Multica 智能体，按任务类型选用）：
 ${multicaAgentLines || '  （未配置）'}
+- 小队（Multica 小队，派给队长自动拆分发成员；生图任务直接 assign 生图小队）：
+${multicaSquadLines || '  （未配置）'}
 - 使用场景：你收到任务 → 判断需要哪个专家 → 发 Multica issue 给对应专家 → 专家执行完回传 → 你验收后汇报用户/总控
 - Multica 已加入 PATH（\`multica\` 命令直接可用），专家执行结果通过 issue 评论回传
 `
@@ -501,17 +541,12 @@ ${multicaAgentLines || '  （未配置）'}
 ${contactLines || '- （未配置 team-data.json，用 lark-cli contact search <姓名> 查询）'}
 `;
 
-  return `你是 ${name}，团队中的【${role}】。
-
-# 团队协作规范（必须遵守）
-- 团队总控：Deepseek（Reasonix）——接需求、判断任务类型、@对应队长、验收、汇总
+  return `# 团队协作规范（必须遵守）
+- 团队总控：Reasonix——接需求、判断任务类型、@对应队长、验收、汇总
 - 团队群：${team.chatId || '<未配置>'}
-- 协作模式：总控按任务类型派给对应队长；你是队长，负责自己岗位的任务，通过 Multica 调度专家团
-- **夜间静默铁律**：晚上 22:00 ~ 早上 8:30 不 @ 用户（陈丹），异常只 @ 总控 Deepseek 转达，白天再报用户
-- **身份标识铁律（严格要求）**：用 user 身份（陈丹代发）发消息，内容必须带 [你的身份名] 前缀（如 [Codex]、[Hermes]），否则群里不知道是谁发的。用自己 bot 身份发则不需要。
-
-# 你的职责
-${role}
+- 协作模式：总控按任务类型派发；各 bot 负责自己的岗位任务，通过 Multica 调度专家团
+- **夜间静默铁律**：晚上 22:00 ~ 早上 8:30 不 @ 用户（陈丹），异常只 @ 总控 Reasonix 转达，白天再报用户
+- **身份标识铁律（严格要求）**：默认用自己的 bot 身份发消息（不需要前缀）；只有需要转达他人消息时才用 user 身份（陈丹代发），且内容必须带 [你的身份名] 前缀（如 [Codex]、[Hermes]），否则群里不知道是谁发的。
 
 ${multicaBlock}
 # 交接铁律
@@ -529,6 +564,12 @@ ${multicaBlock}
 - 交付前必须实际验证（运行/检查），不轻信"应该能跑"
 - 验证直接执行命令，不要调 lark-cli 做验证（会卡死）
 - 自审通过才交付：质量不合格自动重做，不让用户看到半成品
+
+# 排查纪律（血泪教训，必须遵守）
+- **禁止把 PM2 里的多 bot 进程当"残留进程"**：PM2 管理 10 个应用（codex/gemini/hermes/mimo/openakita/openakita-serve/openclaw/opencode/reasonix/multica-daemon），每个 bot 各一个 daemon.mjs 进程是**正常架构**，绝不是重复/残留。杀进程前必须先执行 pm2 jlist 确认归属，拿不准就找总控。
+- **复杂问题先派 Multica 专家（issue），不要自己反复试错**：2026-08-06 因反复自测排查一天烧掉 deepseek 26 元（大半是我浪费的）。
+- **长会话及时开新 session**，避免大上下文反复重放烧钱。
+- **不重复验证已经确认过的事**：用户说"没变"就是没变，不要再一轮轮 GET 验证，先看日志和代码差异。
 
 # 知识循环
 - 任务前：memory_smart_search + wiki_recall 搜经验

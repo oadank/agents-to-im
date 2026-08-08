@@ -22,6 +22,9 @@ export class LarkClient {
   readonly lastOutboundMessageAt = new Map<string, number>();
 
   private client: lark.Client | null = null;
+  private appId = '';
+  private appSecret = '';
+  private domain = 'https://open.feishu.cn';
 
   constructor() {
     // Removed user token loading - now using lark-cli for user identity
@@ -31,8 +34,11 @@ export class LarkClient {
     return this.client;
   }
 
-  setClient(client: lark.Client | null): void {
+  setClient(client: lark.Client | null, appId?: string, appSecret?: string, domain?: string): void {
     this.client = client;
+    if (appId) this.appId = appId;
+    if (appSecret) this.appSecret = appSecret;
+    if (domain) this.domain = domain === 'lark' ? 'https://open.larksuite.com' : 'https://open.feishu.cn';
     if (!client) {
       this.outboundMessageQueues.clear();
       this.lastOutboundMessageAt.clear();
@@ -209,25 +215,31 @@ export class LarkClient {
     card: Record<string, unknown>,
     options?: PatchCardOptions,
   ): Promise<void> {
-    if (!this.client) {
-      throw new Error('Feishu client not initialized');
+    // 原生 HTTP 直调飞书 API：SDK 的 im.message.patch 存在"返回 code=0 但卡片实际未更新"的兼容问题
+    // （2026-08-06 实测：SDK patch 后 lark-cli 看卡片内容未变；原生 HTTP 同一请求成功）。
+    if (!this.appId || !this.appSecret) {
+      throw new Error('Feishu app credentials not configured for patchCard');
     }
-    const response = await (this.client.im.message as {
-      patch: (payload: {
-        path: { message_id: string };
-        data: { content: string };
-        params?: { message_id_type: 'open_message_id' };
-      }) => Promise<{ code?: number; msg?: string }>;
-    }).patch({
-      path: { message_id: messageId },
-      ...(options?.messageIdType === 'open_message_id'
-        ? { params: { message_id_type: 'open_message_id' as const } }
-        : {}),
-      data: {
-        content: JSON.stringify(card),
-      },
+    // 获取 tenant_access_token
+    const authResp = await fetch(`${this.domain}/open-apis/auth/v3/tenant_access_token/internal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: this.appId, app_secret: this.appSecret }),
     });
-    assertLarkOk(response, 'im.message.patch');
+    const authJson = await authResp.json() as { code?: number; tenant_access_token?: string; msg?: string };
+    if (authJson.code !== 0 || !authJson.tenant_access_token) {
+      throw new Error(`feishu token error: code=${authJson.code} msg=${authJson.msg}`);
+    }
+    const token = authJson.tenant_access_token;
+    // PATCH 更新卡片：URL 直接放 message_id，不带 message_id_type query（实测必需）
+    const resp = await fetch(`${this.domain}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ content: JSON.stringify(card) }),
+    });
+    const json = await resp.json() as { code?: number; msg?: string };
+    console.log(`[feishu-adapter] patchCard(HTTP) id=${messageId} -> code=${json.code} msg=${json.msg || ''}`);
+    assertLarkOk(json, 'im.message.patch(HTTP)');
   }
 
   async deleteMessageQuietly(messageId: string): Promise<void> {

@@ -353,10 +353,18 @@ export class HermesProvider implements LLMProvider {
 
       // 发送 prompt（RPC 响应到达时，所有流式通知已通过订阅回调 emit）
       const promptInput = this.buildPrompt(params);
-      const result = await client.call<HermesPromptResult>('session/prompt', {
-        sessionId,
-        prompt: promptInput,
-      });
+      // 超时兜底：ACP 对上游错误（如 429）可能静默不返回 RPC 响应，无限 await 会导致
+      // conversation-engine 5min abort。这里加 120s 超时，超时则报错给用户（可恢复）。
+      const promptResult = await Promise.race([
+        client.call<HermesPromptResult>('session/prompt', {
+          sessionId,
+          prompt: promptInput,
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Hermes ACP session/prompt timeout after 120s (model may be stuck or upstream 429)')), 120_000);
+        }),
+      ]);
+      const result = promptResult;
 
       // RPC 已返回，所有文本已 emit → 发送 result 事件并关闭流
       const isError = result.stopReason !== 'end_turn';

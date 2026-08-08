@@ -6,6 +6,7 @@
  */
 
 import type { ChannelAddress, ChannelBinding, ChannelType } from './types.js';
+import type { RuntimeName } from '../runtime/types.js';
 import { getBridgeContext } from './context.js';
 
 /**
@@ -35,6 +36,7 @@ export function resolve(address: ChannelAddress): ChannelBinding {
 export function createBinding(
   address: ChannelAddress,
   workingDirectory?: string,
+  runtime?: RuntimeName,
 ): ChannelBinding {
   const { store } = getBridgeContext();
   const defaultCwd = workingDirectory
@@ -44,13 +46,19 @@ export function createBinding(
   const defaultProviderId = store.getSetting('bridge_default_provider_id') || '';
 
   const displayName = address.displayName || address.chatId;
-  const session = store.createSession(
-    `Bridge: ${displayName}`,
-    '',
-    undefined,
-    defaultCwd,
-    'code',
-  );
+  const session = runtime && store.createRuntimeSession
+    ? store.createRuntimeSession({
+        runtime,
+        model: '',
+        cwd: defaultCwd,
+      })
+    : store.createSession(
+        `Bridge: ${displayName}`,
+        '',
+        undefined,
+        defaultCwd,
+        'code',
+      );
 
   if (defaultProviderId) {
     store.updateSessionProviderId(session.id, defaultProviderId);

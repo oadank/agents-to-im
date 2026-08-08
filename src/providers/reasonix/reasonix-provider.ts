@@ -162,6 +162,8 @@ interface CachedAcpSession {
   inactivityTimer: ReturnType<typeof setTimeout> | null;
   /** 重置空闲超时计时器（由 sendAcpPrompt 注入，onAcpData 每收到输出调用） */
   resetInactivityTimer?: () => void;
+  /** abort 兜底定时器：session/interrupt 后 ACP 无响应时的强制 settle（正常 settle 会清理） */
+  abortKillTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 // ── ReasonixProvider ──
@@ -349,7 +351,7 @@ export class ReasonixProvider implements LLMProvider {
           sessionRecoveryAttempts: 0, pendingRetryPrompt: null,
           pendingRetrySettle: null, pendingRetryController: null,
           pendingRetrySdkSessionId: undefined, pendingRetryAbortController: undefined,
-          inactivityTimer: null, resetInactivityTimer: undefined,
+          inactivityTimer: null, resetInactivityTimer: undefined, abortKillTimer: null,
         };
 
         child.stdout!.removeAllListeners('data');
@@ -359,6 +361,13 @@ export class ReasonixProvider implements LLMProvider {
           cached.alive = false;
           console.log(`[reasonix-provider] ACP process exited code=${code}`);
           this.acpCache.delete(cacheKey);
+          // 进程意外退出时，必须 settle 等待中的 prompt，否则 conversation-engine 的流
+          // promise 永不结束 → processWithSessionLock 锁链卡死 → 后续消息永远不处理
+          if (cached.currentSettle) {
+            const settle = cached.currentSettle;
+            cached.currentSettle = null;
+            settle('ACP process exited unexpectedly');
+          }
         });
 
         this.acpCache.set(cacheKey, cached);
@@ -710,26 +719,44 @@ export class ReasonixProvider implements LLMProvider {
 
       const abortHandler = () => {
         if (cached.inactivityTimer) { clearTimeout(cached.inactivityTimer); cached.inactivityTimer = null; }
-        console.log(`[reasonix-provider] ACP abort: sending session/interrupt first`);
+        console.log(`[reasonix-provider] ACP abort: sending session/cancel (keep process alive for next message)`);
+        rtLog(`[reasonix-provider] ACP abort triggered: promptId=${cached.currentPromptId} settle=${!!cached.currentSettle}`);
+        // ⚠️ 插队/取消中断时立即清除 pendingRetryPrompt：否则 session/cancel 的响应
+        // 会被 onAcpData 的 "Session recovery" 分支误判为会话错误，用 pendingRetryPrompt
+        // 重发当前消息 → 用户看到"插队消息被处理两次"（2026-08-07 实测：nextId 连续 +2）。
+        cached.pendingRetryPrompt = null;
+        cached.pendingRetrySettle = null;
+        cached.pendingRetryController = null;
+        cached.pendingRetrySdkSessionId = undefined;
+        cached.pendingRetryAbortController = undefined;
         try {
+          // reasonix ACP 用标准 session/cancel（notification，无响应 id）取消当前 turn；
+          // 它会以 currentPromptId 返回 stop reason 响应，从而触发 currentSettle() 结束本轮。
+          // ⚠️ 不能用 session/interrupt —— 那是 openclaw/opencode 的变体方法，reasonix 报 method not found。
           cached.child.stdin!.write(JSON.stringify({
-            jsonrpc: '2.0', id: cached.nextId++, method: 'session/interrupt',
+            jsonrpc: '2.0', method: 'session/cancel',
             params: { sessionId: cached.sessionId },
           }) + '\n');
         } catch {}
-        // 3秒后如果还在运行，强制杀进程
-        setTimeout(() => {
-          if (cached.alive) {
-            console.log(`[reasonix-provider] ACP interrupt timeout, force killing`);
-            try { cached.child.kill('SIGTERM'); } catch {}
+        // 插队语义：取消当前 turn，但进程保持存活，新消息复用同一 session 继续处理。
+        // 只在 ACP 完全不响应（cancel 后仍无 settle）时才兜底 settle，避免锁链卡死。
+        const killTimer = setTimeout(() => {
+          if (cached.currentSettle) {
+            console.warn(`[reasonix-provider] ACP cancel unresponsive after 10s, force settling`);
+            rtLog(`[reasonix-provider] ACP cancel unresponsive after 10s, force settling (promptId=${cached.currentPromptId})`);
+            cached.currentSettle('Interrupted: ACP did not respond to session/cancel');
+          } else {
+            rtLog(`[reasonix-provider] ACP abortKillTimer fired but currentSettle already null`);
           }
-        }, 3000);
+        }, 10_000);
+        cached.abortKillTimer = killTimer;
       };
       abortController?.signal.addEventListener('abort', abortHandler, { once: true });
 
       cached.currentController = controller;
       cached.currentSettle = (err?: string) => {
         if (cached.inactivityTimer) { clearTimeout(cached.inactivityTimer); cached.inactivityTimer = null; }
+        if (cached.abortKillTimer) { clearTimeout(cached.abortKillTimer); cached.abortKillTimer = null; }
         cached.resetInactivityTimer = undefined;
         cached.currentSettle = null;
         cached.currentController = null;
@@ -743,8 +770,12 @@ export class ReasonixProvider implements LLMProvider {
         if (err) {
           console.error(`[reasonix-provider] ACP error:`, err);
           emitCanonicalTurnEvent(controller, { type: 'error', data: err });
-          cached.alive = false;
-          try { cached.child.kill('SIGTERM'); } catch {}
+          // 只有真实错误（API 失败/ACP 卡死不响应）才杀进程；插队中断（正常 interrupt 响应）
+          // 走无 err 路径，进程保持存活供下一条消息复用。
+          if (cached.alive) {
+            cached.alive = false;
+            try { cached.child.kill('SIGTERM'); } catch {}
+          }
           this.acpCache.delete(sdkSessionId || 'default');
           this.removeSavedSession(sdkSessionId || 'default');
         } else if (cached._textEmitted) {

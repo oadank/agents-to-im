@@ -193,6 +193,8 @@ async function main(): Promise<void> {
   console.log('[agents-to-im] Runtime selection: per-session multiplex (claude/codex)');
 
   const enabledChannelIds: string[] = [];
+  // 收集所有 FeishuAdapter（供 dashboard /api/send 按 bot 选择发送者）
+  const registeredAdapters: FeishuAdapter[] = [];
 
   // ── Multi-bot mode: create one adapter per bot ──
   if (config.bots && config.bots.length > 0) {
@@ -222,6 +224,7 @@ async function main(): Promise<void> {
       }
       bridgeManager.registerAdapter(botAdapter);
       enabledChannelIds.push(botAdapter.adapterId);
+      registeredAdapters.push(botAdapter);
       console.log(`[agents-to-im] Registered bot '${bot.name}' (runtime=${bot.runtime}, appId=${bot.appId.slice(0, 12)}...)`);
     }
   } else {
@@ -236,6 +239,7 @@ async function main(): Promise<void> {
     } else {
       bridgeManager.registerAdapter(feishuAdapter);
       enabledChannelIds.push(feishuAdapter.adapterId);
+      registeredAdapters.push(feishuAdapter);
     }
   }
 
@@ -287,7 +291,11 @@ async function main(): Promise<void> {
       store,
       getUptime: () => (Date.now() - startTime) / 1000,
       getBridgeStatus: bridgeManager.getStatus,
-      larkClient: undefined,
+      larkClient: registeredAdapters[0]?.getLarkClient(),
+      getLarkClientForBot: (botId: string) => {
+        const adapter = registeredAdapters.find((a) => a.profileId === botId);
+        return adapter?.getLarkClient();
+      },
     });
   } catch (err) {
     console.warn('[agents-to-im] Dashboard failed to start:', err instanceof Error ? err.message : err);

@@ -341,6 +341,7 @@ export interface BridgeStore {
     cwd?: string,
     mode?: string,
   ): BridgeSession;
+  createRuntimeSession?(params: { runtime: string; model: string; cwd?: string; systemPrompt?: string }): BridgeSession;
   updateSessionProviderId(sessionId: string, providerId: string): void;
 
   // ── Messages ──

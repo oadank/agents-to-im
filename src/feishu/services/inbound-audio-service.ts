@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer';
-import { spawn } from 'node:child_process';
 import { writeFileSync, unlinkSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -64,56 +63,90 @@ export class InboundAudioService {
 
   async transcribeAudio(audioPath: string): Promise<TranscribeResult> {
     const isWin = process.platform === 'win32';
-    const transcribeScript = isWin
-      ? 'C:\\Users\\oadan\\.openclaw\\workspace\\main\\skills\\voice-engine\\transcribe.ps1'
-      : '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
-
     const startTime = Date.now();
 
-    return new Promise((resolve, reject) => {
-      const proc = isWin
-        ? spawn('powershell.exe', ['-NoProfile', '-WindowStyle Hidden', '-ExecutionPolicy Bypass', '-File', transcribeScript, audioPath], {
-            windowsHide: true,
-          })
-        : spawn('bash', [transcribeScript, audioPath], {
-            env: {
-              ...process.env,
-              LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || ''),
-            },
+    // 统一走 agents-to-im 内建 ASR（不依赖 voice-engine 技能目录）
+    // 1. ffmpeg 转 wav（16k 单声道，sherpa-onnx 输入要求）
+    // 2. HTTP 调内建 asr-service (127.0.0.1:18790/transcribe)
+    // 3. 标点恢复（add-punctuation.mjs，纯正则无依赖）
+
+    const wavPath = audioPath.replace(/\.[^.]+$/, '') + '.wav';
+
+    try {
+      // 1. ffmpeg 转换
+      const { spawnSync } = await import('node:child_process');
+      const ffmpeg = process.env.ASR_FFMPEG_BIN
+        || (isWin ? 'C:\\Users\\oadan\\AppData\\Local\\Microsoft\\WinGet\\Links\\ffmpeg.exe' : 'ffmpeg');
+      const ffmpegResult = spawnSync(ffmpeg, ['-y', '-i', audioPath, '-ar', '16000', '-ac', '1', '-f', 'wav', wavPath], {
+        windowsHide: true,
+        timeout: 30000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      if (ffmpegResult.error || ffmpegResult.status !== 0) {
+        const errorMsg = ffmpegResult.error?.message || ffmpegResult.stderr?.toString() || 'Unknown ffmpeg error';
+        throw new Error(`ffmpeg 音频转换失败: ${errorMsg.slice(0, 300)}`);
+      }
+
+      // 2. HTTP 调内建 asr-service（端口 18790）
+      const { request } = await import('node:http');
+      const postData = JSON.stringify({ audioPath: wavPath });
+      const text = await new Promise<string>((resolve, reject) => {
+        const req = request({
+          hostname: '127.0.0.1',
+          port: Number(process.env.ASR_SERVICE_PORT || 18790),
+          path: '/transcribe',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData),
+          },
+          timeout: 60000,
+        }, (res) => {
+          let data = '';
+          res.on('data', (chunk) => data += chunk);
+          res.on('end', () => {
+            try {
+              const result = JSON.parse(data);
+              if (result.error) reject(new Error(result.error));
+              else resolve(result.text || '');
+            } catch (e) {
+              reject(new Error(`解析 ASR 响应失败: ${e instanceof Error ? e.message : String(e)}`));
+            }
           });
-      
-      let stdout = '';
-      let stderr = '';
-      
-      proc.stdout.on('data', (data) => {
-        stdout += data.toString();
+        });
+        req.on('error', reject);
+        req.on('timeout', () => {
+          req.destroy(new Error('ASR 服务请求超时'));
+        });
+        req.write(postData);
+        req.end();
       });
-      
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-      
-      proc.on('close', (code) => {
-        const duration_ms = Date.now() - startTime;
 
-        if (code !== 0 && !stdout.trim()) {
-          reject(new Error(`ASR 进程退出 (code=${code}): ${stderr.slice(0, 500)}`));
-          return;
+      if (!text) throw new Error('ASR 无输出');
+
+      // 3. 标点恢复（内置 add-punctuation，纯正则无外部依赖，import 打包进 dist）
+      let finalText = text;
+      try {
+        const { default: addPunct } = await import('../add-punctuation.mjs');
+        if (typeof addPunct === 'function') {
+          const punctOut = addPunct(text);
+          if (punctOut) finalText = String(punctOut).trim();
+        } else if (addPunct && typeof (addPunct as any).default === 'function') {
+          const punctOut = (addPunct as any).default(text);
+          if (punctOut) finalText = String(punctOut).trim();
         }
+      } catch {
+        // 标点恢复失败不影响主流程
+      }
 
-        const text = stdout.trim();
-        if (!text) {
-          reject(new Error(`ASR 无输出`));
-          return;
-        }
-
-        resolve({ text, duration_ms });
-      });
-      
-      proc.on('error', (err) => {
-        reject(new Error(`ASR 进程启动失败: ${err.message}`));
-      });
-    });
+      return { text: finalText, duration_ms: Date.now() - startTime };
+    } finally {
+      // 清理临时 wav
+      try {
+        const { unlinkSync } = await import('node:fs');
+        unlinkSync(wavPath);
+      } catch { /* ignore */ }
+    }
   }
 
   async downloadAndTranscribe(messageId: string, fileKey: string): Promise<TranscribeResult> {

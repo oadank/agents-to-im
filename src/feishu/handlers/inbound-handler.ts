@@ -326,7 +326,8 @@ export async function handleDirectMessage(
   sender: SenderIdentity,
   inbound: InboundMessage,
 ): Promise<void> {
-  const command = inbound.text.trim().toLowerCase();
+  // 命令匹配：只取第一行/第一段（容忍富文本解析出换行+附加内容，如 "/new\n发送自 陈丹的飞书 CLI"）
+  const command = inbound.text.trim().toLowerCase().split(/\r?\n/)[0].trim();
   if (command === '/new:claude') {
     await ctx.handleCreateSessionCommand(sender, inbound, 'claude');
     return;
@@ -577,7 +578,7 @@ async function maybeOfferInterrupt(
       botName: ctx.label,
     }));
     rtLog(`[maybeOfferInterrupt] interrupt card sent: messageId=${result.messageId} openId=${result.openMessageId || '(none)'}`);
-    setInterruptCardMessageId(inbound.messageId, result.messageId);
+    setInterruptCardMessageId(inbound.messageId, { messageId: result.messageId, openMessageId: result.openMessageId });
     // 自动插队：卡片弹出后 N 秒未操作，自动执行"立即插队"（默认 10s，可用 CTI_AUTO_INTERRUPT_MS 覆盖）
     scheduleAutoInterrupt(ctx, sessionId, inbound, result.messageId);
   } catch (e) {
@@ -592,13 +593,21 @@ async function maybeOfferInterrupt(
 const autoInterruptTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const AUTO_INTERRUPT_MS = parseInt(process.env.CTI_AUTO_INTERRUPT_MS || '10000', 10);
 
-// 插队卡片 messageId 映射：原始消息 messageId → 插队卡片 messageId（用于按钮点击后 patch 卡片状态）
-const interruptCardMessageIds = new Map<string, string>();
-export function getInterruptCardMessageId(messageId: string): string | undefined {
+// 插队卡片 messageId 映射：原始消息 messageId → { 卡片 messageId + openMessageId }（用于按钮点击后 patch 卡片状态）
+// 存双 id：飞书 patch 接口对 open_message_id（om_ 开头）需 message_id_type=open_message_id，
+// 对普通 message_id 需 message_id_type=message_id；双存双试提高成功率。
+const interruptCardMessageIds = new Map<string, { messageId: string; openMessageId?: string }>();
+// 定期兜底清理：映射超过 500 条时整体重建，防止内存泄漏（新卡片发送时 set 覆盖同名 key）
+setInterval(() => {
+  if (interruptCardMessageIds.size > 500) {
+    interruptCardMessageIds.clear();
+  }
+}, 30 * 60 * 1000).unref?.();
+export function getInterruptCardMessageId(messageId: string): { messageId: string; openMessageId?: string } | undefined {
   return interruptCardMessageIds.get(messageId);
 }
-export function setInterruptCardMessageId(messageId: string, cardMessageId: string): void {
-  interruptCardMessageIds.set(messageId, cardMessageId);
+export function setInterruptCardMessageId(messageId: string, cardInfo: { messageId: string; openMessageId?: string }): void {
+  interruptCardMessageIds.set(messageId, cardInfo);
 }
 export function deleteInterruptCardMessageId(messageId: string): void {
   interruptCardMessageIds.delete(messageId);
@@ -623,23 +632,45 @@ function scheduleAutoInterrupt(
     const interrupted = interruptActiveTask(sessionId);
     rtLog(`[autoInterrupt] chat=${chatId} session=${sessionId.slice(0, 8)} auto interrupt after ${AUTO_INTERRUPT_MS}ms, interrupted=${interrupted}`);
     if (interrupted) {
-      // 更新插队卡片为"已自动插队"状态（去掉按钮）
-      try {
-        await ctx.patchInteractiveCard(cardMessageId, buildInterruptCard({
-          chatId,
-          messageId: inbound.messageId,
-          botName: ctx.label,
-          status: 'auto',
-        }));
-        rtLog(`[autoInterrupt] interrupt card updated to auto status: ${cardMessageId}`);
-      } catch (e) {
-        rtLog(`[autoInterrupt] update interrupt card failed: ${e}`);
-        console.warn('[feishu-adapter] auto interrupt card patch failed:', e);
+      // 更新插队卡片为"已自动插队"状态（去掉按钮）；卡片本身已显示状态，无需再发重复 post
+      let cardPatched = false;
+      const autoCard = buildInterruptCard({
+        chatId,
+        messageId: inbound.messageId,
+        botName: ctx.label,
+        status: 'auto',
+      });
+      // 双 id 双尝试：open_message_id → message_id（与 patchActionCardSafely 同策略）
+      const cardInfo = getInterruptCardMessageId(inbound.messageId);
+      // 统一用 message_id 类型（不加 query，URL 直接放 om_ id —— 实测成功路径）
+      const autoAttempts = [
+        cardInfo?.messageId
+          ? { id: cardInfo.messageId, messageIdType: 'message_id' as const }
+          : null,
+        cardInfo?.openMessageId
+          ? { id: cardInfo.openMessageId, messageIdType: 'message_id' as const }
+          : null,
+      ].filter((a): a is { id: string; messageIdType: 'message_id' } => !!a);
+      for (const attempt of autoAttempts) {
+        try {
+          await ctx.patchInteractiveCard(attempt.id, autoCard, { messageIdType: attempt.messageIdType });
+          cardPatched = true;
+          rtLog(`[autoInterrupt] interrupt card updated to auto status: ${attempt.id} (via ${attempt.messageIdType})`);
+          break;
+        } catch (e) {
+          rtLog(`[autoInterrupt] update card via ${attempt.messageIdType} failed: ${e}`);
+        }
       }
-      try {
-        await ctx.sendAsPost(inbound.address, `⏱️ ${AUTO_INTERRUPT_MS / 1000}s 未操作，已自动插队：当前任务已中断，你的新消息优先处理中…`, inbound.messageId);
-      } catch (e) {
-        console.warn('[feishu-adapter] auto interrupt feedback failed:', e);
+      if (!cardPatched) {
+        console.warn('[feishu-adapter] auto interrupt card patch failed: both messageIdTypes');
+      }
+      // 仅当卡片 patch 失败时才用 post 兜底提示（卡片已显示则不再发重复消息）
+      if (!cardPatched) {
+        try {
+          await ctx.sendAsPost(inbound.address, `⏱️ ${AUTO_INTERRUPT_MS / 1000}s 未操作，已自动插队：当前任务已中断，你的新消息优先处理中…`, inbound.messageId);
+        } catch (e) {
+          console.warn('[feishu-adapter] auto interrupt feedback failed:', e);
+        }
       }
     }
   }, AUTO_INTERRUPT_MS);

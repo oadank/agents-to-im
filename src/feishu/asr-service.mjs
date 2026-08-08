@@ -7,9 +7,13 @@ import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
-const PORT = 18790;
-const SHERPA_BIN = 'C:\\D\\opt\\sherpa-onnx\\bin\\sherpa-onnx-offline.exe';
-const MODEL_DIR = 'C:\\D\\opt\\sherpa-onnx\\models\\sensevoice-int8';
+const PORT = Number(process.env.ASR_SERVICE_PORT || 18790);
+// 模型路径支持环境变量配置（别人部署时只需设置这两个变量）
+// Windows 默认本机路径，非 Windows 需显式配置
+const SHERPA_BIN = process.env.ASR_SHARPA_BIN
+  || 'C:\\D\\opt\\sherpa-onnx\\bin\\sherpa-onnx-offline.exe';
+const MODEL_DIR = process.env.ASR_MODEL_DIR
+  || 'C:\\D\\opt\\sherpa-onnx\\models\\sensevoice-int8';
 
 console.log(`[ASR-Service] 启动常驻 ASR 服务，端口 ${PORT}`);
 console.log(`[ASR-Service] sherpa-onnx: ${SHERPA_BIN}`);

@@ -14,7 +14,30 @@
 import http from 'node:http';
 import { CTI_HOME, loadConfig } from '../config/config.js';
 import type { LarkClient } from '../feishu/lark-client.js';
+import type { ChannelAddress } from '../bridge/types.js';
 import type { JsonFileStore } from './store.js';
+
+// 读取 JSON 请求体（限制 1MB）
+function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown> | null> {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 1024 * 1024) {
+        reject(new Error('body too large'));
+        req.destroy();
+        return;
+      }
+      data += chunk.toString('utf8');
+    });
+    req.on('end', () => {
+      if (!data) { resolve(null); return; }
+      try { resolve(JSON.parse(data)); } catch { resolve(null); }
+    });
+    req.on('error', reject);
+  });
+}
 
 // ── Types ──
 
@@ -33,6 +56,8 @@ interface DashboardDeps {
     }>;
   };
   larkClient?: LarkClient;
+  /** 多 bot 模式：按 botId 取 LarkClient（botId 即 FeishuAdapter 的 profile.id，如 opencode/claude） */
+  getLarkClientForBot?: (botId: string) => LarkClient | undefined;
 }
 
 let deps: DashboardDeps | null = null;
@@ -279,6 +304,80 @@ export function startDashboard(options: DashboardDeps): void {
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to generate auth URL' }));
+      }
+      return;
+    }
+
+    // POST /api/send — bot 身份发送消息（Multica 智能体出图后调此接口发飞书，替代 lark-cli）
+    // body: { chatId: string, msgType: 'text'|'post'|'image', content: string, threadId?: string }
+    //   text  → content 为纯文本
+    //   post  → content 为 post 富文本 JSON 字符串（{zh_cn:{title,content}}）
+    //   image → content 为 {"image_key":"img_v3_..."} JSON 字符串
+    // 认证：请求头 X-Send-Token 必须等于 CTI_SEND_TOKEN（未设置时本机回环放行）
+    if (url === '/api/send' && req.method === 'POST') {
+      try {
+        const sendToken = process.env.CTI_SEND_TOKEN || '';
+        const reqToken = req.headers['x-send-token'] || '';
+        if (sendToken && reqToken !== sendToken) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid x-send-token' }));
+          return;
+        }
+        const body = await readJsonBody(req);
+        if (!body || typeof body.chatId !== 'string' || !body.chatId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'chatId required' }));
+          return;
+        }
+        // 选择发送者 client：body.bot 指定 bot（多 bot 模式），否则用默认 larkClient
+        let client: LarkClient | undefined;
+        if (typeof body.bot === 'string' && body.bot && deps?.getLarkClientForBot) {
+          client = deps.getLarkClientForBot(body.bot);
+          if (!client) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `unknown bot: ${body.bot}` }));
+            return;
+          }
+        } else {
+          client = deps?.larkClient;
+        }
+        if (!client) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'larkClient not initialized' }));
+          return;
+        }
+        const msgType = (body.msgType || 'text') as 'text' | 'post' | 'image';
+        if (!['text', 'post', 'image'].includes(msgType)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'msgType must be text|post|image' }));
+          return;
+        }
+        if (typeof body.content !== 'string' || !body.content) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'content required' }));
+          return;
+        }
+        // text 类型：SDK 直接发需要 post 格式或走 lark-cli；这里统一转 post 富文本，保证 bot 身份可用
+        let finalMsgType: 'post' | 'image' | 'interactive' = msgType === 'text' ? 'post' : (msgType as 'post' | 'image');
+        let finalContent = body.content;
+        if (msgType === 'text') {
+          finalContent = JSON.stringify({
+            zh_cn: { title: '', content: [[{ tag: 'text', text: body.content }]] },
+          });
+        }
+        const address: ChannelAddress = {
+          channelType: 'feishu',
+          chatId: body.chatId,
+          threadId: typeof body.threadId === 'string' ? body.threadId : undefined,
+          displayName: 'api-send',
+        };
+        const resp = await client.sendMessage(address, finalMsgType, finalContent);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, message_id: resp?.data?.message_id || null }));
+      } catch (error) {
+        console.error('[dashboard] /api/send failed:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }));
       }
       return;
     }

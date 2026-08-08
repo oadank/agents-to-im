@@ -217,6 +217,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
   private waiters: Array<(msg: InboundMessage | null) => void> = [];
   /** 用户通过插队卡"取消消息"按钮标记作废的消息 id（从队列移除 + 防止已入链的执行） */
   private cancelledMessageIds = new Set<string>();
+  /** "稍后"按钮挂起的消息：chatId → 消息列表（等同会话下一条消息合并发送） */
+  private deferredMessages = new Map<string, InboundMessage[]>();
   private wsClient: lark.WSClient | null = null;
   private chatQueues = new Map<string, Promise<void>>();
   private seenMessageIds = new Map<string, number>();
@@ -278,7 +280,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
   }
 
   set restClient(client: lark.Client | null) {
-    this.larkClient.setClient(client);
+    const cfg = this.getClientConfig();
+    this.larkClient.setClient(client, cfg.appId || this.options.profile.appId, cfg.appSecret || this.options.profile.appSecret, String(cfg.domain));
   }
 
   get previewArtifacts(): Map<string, PreviewArtifact> {
@@ -357,6 +360,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
       enqueue: this.enqueue.bind(this),
       enqueueChatTask: this.enqueueChatTask.bind(this),
       cancelInboundMessage: this.cancelInboundMessage.bind(this),
+      deferInboundMessage: this.deferInboundMessage.bind(this),
+      collectDeferredMessages: this.collectDeferredMessages.bind(this),
       ingestToMemoryTree: this.ingestToMemoryTree.bind(this),
       sendAsPost: this.sendAsPost.bind(this),
       sendAsInteractiveCard: this.sendAsInteractiveCard.bind(this),
@@ -579,6 +584,11 @@ export class FeishuAdapter extends BaseChannelAdapter {
     });
   }
 
+  /** 查询消息是否已被"取消消息"按钮标记作废（供消费循环在入链前拦截） */
+  isMessageCancelled(messageId: string): boolean {
+    return this.cancelledMessageIds.has(messageId);
+  }
+
   /** 取消一条已入队的消息（插队卡"取消消息"按钮）：从队列移除 + 标记作废 */
   cancelInboundMessage(messageId: string): boolean {
     this.cancelledMessageIds.add(messageId);
@@ -588,6 +598,28 @@ export class FeishuAdapter extends BaseChannelAdapter {
       return true;
     }
     return false; // 不在待处理队列（可能已入 chatQueues 串行链），靠标记在消费时拦截
+  }
+
+  /** "稍后"按钮：把消息从待处理队列移到挂起区（等同会话下一条消息合并发送） */
+  deferInboundMessage(messageId: string): boolean {
+    const idx = this.queue.findIndex((m) => m.messageId === messageId);
+    if (idx === -1) {
+      // 不在队列（可能已出队执行）——只能标记，无法挂起
+      return false;
+    }
+    const [msg] = this.queue.splice(idx, 1);
+    const chatId = msg.address.chatId;
+    const list = this.deferredMessages.get(chatId) || [];
+    list.push(msg);
+    this.deferredMessages.set(chatId, list);
+    return true;
+  }
+
+  /** 取出该会话所有"稍后"挂起的消息（合并到下一条 prompt），取出后清空 */
+  collectDeferredMessages(chatId: string): InboundMessage[] {
+    const list = this.deferredMessages.get(chatId) || [];
+    this.deferredMessages.delete(chatId);
+    return list;
   }
 
   validateConfig(): string | null {
@@ -1010,34 +1042,66 @@ export class FeishuAdapter extends BaseChannelAdapter {
         rtLog(`[VOICE-DEBUG] Sherpa raw output: "${sherpaOutput.substring(0, 200)}"`);
         text = sherpaOutput;
 
-        // Step 4: 标点恢复 (调用 node 脚本)
+        // Step 4: 标点恢复 (内置 add-punctuation，不再依赖 voice-engine)
         if (text) {
           rtLog(`[VOICE-DEBUG] Starting punctuation recovery`);
-          const scriptDir = 'C:\\Users\\oadan\\.openclaw\\workspace\\main\\skills\\voice-engine';
-          const punctResult = spawnSync('node', [path.join(scriptDir, 'add-punctuation.mjs'), text], {
-            windowsHide: true,
-            timeout: 10000,
-            encoding: 'utf-8',
-            stdio: ['ignore', 'pipe', 'ignore'],
-          });
-          if (!punctResult.error && punctResult.status === 0 && punctResult.stdout) {
-            text = punctResult.stdout.trim();
+          try {
+            const { addPunctuation } = await import('./add-punctuation.mjs');
+            const punctOut = addPunctuation(text);
+            if (punctOut) text = String(punctOut).trim();
+            rtLog(`[VOICE-DEBUG] Punctuation recovery completed: "${text.substring(0, 50)}..."`);
+          } catch (e) {
+            rtLog(`[VOICE-DEBUG] Punctuation recovery skipped: ${e instanceof Error ? e.message : String(e)}`);
           }
-          rtLog(`[VOICE-DEBUG] Punctuation recovery completed: "${text.substring(0, 50)}..."`);
         } else {
           rtLog(`[VOICE-DEBUG] No text extracted from sherpa output`);
         }
       } else {
-        // Linux: 使用 bash 脚本（保持不变）
+        // Linux: ffmpeg 转 wav + HTTP 调内建 asr-service（与 Windows 统一，不依赖 voice-engine）
         rtLog(`[VOICE-DEBUG] Starting Linux audio processing`);
-        const { execFileSync } = await import('node:child_process');
-        const transcribeScript = '/opt/.openclaw/workspace/main/skills/voice-engine/transcribe.sh';
-        text = execFileSync('bash', [transcribeScript, tmpFile], {
-          encoding: 'utf-8',
-          timeout: 60000,
+        const { spawnSync } = await import('node:child_process');
+        const ffmpeg = process.env.ASR_FFMPEG_BIN || 'ffmpeg';
+        const ffmpegResult = spawnSync(ffmpeg, ['-y', '-i', tmpFile, '-ar', '16000', '-ac', '1', '-f', 'wav', wavFile], {
+          timeout: 30000,
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, LD_LIBRARY_PATH: '/sherpa-onnx/lib:' + (process.env.LD_LIBRARY_PATH || '') },
-        }).trim();
+        });
+        if (ffmpegResult.error || ffmpegResult.status !== 0) {
+          const errorMsg = ffmpegResult.error?.message || ffmpegResult.stderr?.toString() || 'Unknown ffmpeg error';
+          throw new Error(`ffmpeg 音频转换失败: ${errorMsg.slice(0, 300)}`);
+        }
+
+        const { request } = await import('node:http');
+        const postData = JSON.stringify({ audioPath: wavFile });
+        const sherpaOutput = await new Promise<string>((resolve, reject) => {
+          const req = request({
+            hostname: '127.0.0.1',
+            port: Number(process.env.ASR_SERVICE_PORT || 18790),
+            path: '/transcribe',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(postData),
+            },
+            timeout: 60000,
+          }, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+              try {
+                const result = JSON.parse(data);
+                if (result.error) reject(new Error(result.error));
+                else resolve(result.text || '');
+              } catch (e) {
+                reject(new Error(`解析 ASR 响应失败: ${e instanceof Error ? e.message : String(e)}`));
+              }
+            });
+          });
+          req.on('error', reject);
+          req.on('timeout', () => req.destroy(new Error('ASR 服务请求超时')));
+          req.write(postData);
+          req.end();
+        });
+        text = sherpaOutput;
         rtLog(`[VOICE-DEBUG] Linux audio processing completed: "${text.substring(0, 50)}..."`);
       }
 

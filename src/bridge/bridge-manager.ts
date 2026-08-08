@@ -24,6 +24,7 @@ import type {
 import { createAdapter, getRegisteredTypes } from './channel-adapter.js';
 import type { BaseChannelAdapter } from './channel-adapter.js';
 import * as router from './channel-router.js';
+import type { RuntimeName } from '../runtime/types.js';
 import * as engine from './conversation-engine.js';
 import * as broker from './permission-broker.js';
 import { deliver } from './delivery-layer.js';
@@ -1109,6 +1110,12 @@ function runAdapterLoop(adapter: BaseChannelAdapter): void {
           await handleMessage(adapter, msg);
         } else {
           const binding = router.resolve(msg.address);
+          // Skip messages cancelled via the "取消消息" button after they left
+          // the queue (consumeOne may have already popped them before the
+          // button click landed) but before they enter the session lock.
+          if (adapter.isMessageCancelled?.(msg.messageId)) {
+            continue;
+          }
           // Fire-and-forget into session lock — loop continues to accept
           // messages for other sessions immediately.
           processWithSessionLock(binding.codepilotSessionId, () =>
@@ -2004,11 +2011,21 @@ async function handleMessage(
   } : undefined;
 
   try {
+    // ── "稍后"消息合并：取同会话挂起的消息，追加到本条 prompt 一起发送 ──
+    // 用户点"稍后"的消息不再独立排队处理，而是随下一条消息合并发送（2026-08-07 方案 A）
+    const deferredMsgs = adapter.collectDeferredMessages?.(msg.address.chatId) || [];
+    const deferredSuffix = deferredMsgs.length > 0
+      ? '\n\n（以下是用户稍后发送的消息，请一并处理：\n' +
+        deferredMsgs.map((dm, i) => `[${i + 1}] ${dm.text}`).join('\n') +
+        '\n）'
+      : '';
+
     // Pass permission callback so requests are forwarded to IM immediately
     // during streaming (the stream blocks until permission is resolved).
     // Use text or empty string for image-only messages (prompt is still required by streamClaude)
-    const promptText = effectivePlanWorkflowMeta?.promptText || text || (hasAttachments ? 'Describe this image.' : '');
-    const storedUserText = effectivePlanWorkflowMeta?.storedUserText || text || (hasAttachments ? 'Describe this image.' : '');
+    const basePromptText = effectivePlanWorkflowMeta?.promptText || text || (hasAttachments ? 'Describe this image.' : '');
+    const promptText = basePromptText + deferredSuffix;
+    const storedUserText = basePromptText;
     const sendClaudePlanConfirmationCard = async (
       workflowId: string,
       planText: string,
@@ -2259,6 +2276,12 @@ async function handleMessage(
     let responseDelivery: SendResult | null = null;
     await settlePreview(previewState);
     if (!planAttemptIsCurrent()) {
+      return;
+    }
+    // 用户已通过插队卡"取消"按钮作废此消息（可能发生在消息出队执行之后）：
+    // 丢弃回复，不发送。任务本身不中断（用户点取消≠中断任务，只是撤消息）。
+    if (adapter.isMessageCancelled?.(msg.messageId)) {
+      console.warn(`[bridge-manager] message ${msg.messageId} cancelled during execution, discarding reply`);
       return;
     }
     await maybeSendToolResultImages(result.contentBlocks);
@@ -2586,6 +2609,13 @@ async function handleMessage(
     await settleLightweightActivity(lightweightActivityState);
 
     state.activeTasks.delete(binding.codepilotSessionId);
+    // 兜底：任务结束时若仍有"稍后"挂起的消息（用户稍后后没再发新消息来合并），
+    // 重新入队作为独立消息处理，避免消息永久丢失。
+    const orphanDeferred = adapter.collectDeferredMessages?.(msg.address.chatId) || [];
+    for (const dm of orphanDeferred) {
+      (adapter as unknown as { enqueue: (m: InboundMessage) => void }).enqueue(dm);
+      console.warn(`[bridge-manager] Re-enqueued orphan deferred message ${dm.messageId} after task end`);
+    }
     // Notify adapter that message processing ended
     adapter.onMessageEnd?.(msg.address);
     if (taskAbort.signal.aborted) {
@@ -2609,7 +2639,9 @@ async function handleCommand(
   const { store } = getBridgeContext();
 
   // Extract command and args (handle /command@botname format)
-  const parts = text.split(/\s+/);
+  // 只取第一行解析命令参数，忽略富文本解析出的换行附加内容（如 "/new\n发送自 陈丹的飞书 CLI"）
+  const firstLine = text.split(/\r?\n/)[0];
+  const parts = firstLine.split(/\s+/);
   const command = parts[0].split('@')[0].toLowerCase();
   const args = parts.slice(1).join(' ').trim();
 
@@ -2667,7 +2699,8 @@ async function handleCommand(
         }
         workDir = validated;
       }
-      const binding = router.createBinding(msg.address, workDir);
+      const defaultRuntime = (adapter as unknown as { getDefaultRuntime?: () => RuntimeName }).getDefaultRuntime?.() || 'claude';
+      const binding = router.createBinding(msg.address, workDir, defaultRuntime);
       response = `New session created.\nSession: <code>${binding.codepilotSessionId.slice(0, 8)}...</code>\nCWD: <code>${escapeHtml(binding.workingDirectory || '~')}</code>`;
       break;
     }

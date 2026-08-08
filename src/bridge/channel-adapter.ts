@@ -59,6 +59,25 @@ export abstract class BaseChannelAdapter {
   abstract consumeOne(): Promise<InboundMessage | null>;
 
   /**
+   * Check whether a message has been cancelled (via the "取消消息" button)
+   * after it left the queue but before it starts executing.
+   * Default implementation returns false.
+   */
+  isMessageCancelled?(_messageId: string): boolean;
+
+  /**
+   * "稍后"按钮：把消息从待处理队列移到挂起区（等同会话下一条消息合并发送）。
+   * Optional — adapters without this feature fall back to independent queueing.
+   */
+  deferInboundMessage?(_messageId: string): boolean;
+
+  /**
+   * 取出该会话所有"稍后"挂起的消息（合并到下一条 prompt），取出后清空。
+   * Optional — returns empty array when unsupported.
+   */
+  collectDeferredMessages?(_chatId: string): InboundMessage[];
+
+  /**
    * Send an outbound message to the channel.
    * Handles adapter-specific formatting and API calls.
    */

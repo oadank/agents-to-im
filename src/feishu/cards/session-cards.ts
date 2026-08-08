@@ -530,17 +530,17 @@ export function buildInterruptCard(opts: {
 }): Record<string, unknown> {
   const { chatId, messageId, botName, status = 'pending' } = opts;
   const buttons = [
-    { text: '⚡ 立即插队', callbackData: `interrupt:yes:${chatId}:${messageId}`, type: 'primary' as const },
-    { text: '🗑 取消消息', callbackData: `interrupt:cancel:${chatId}:${messageId}`, type: 'danger' as const },
-    { text: '⏳ 稍后处理', callbackData: `interrupt:no:${chatId}:${messageId}`, type: 'default' as const },
+    { text: '插队', callbackData: `interrupt:yes:${chatId}:${messageId}`, type: 'primary' as const },
+    { text: '取消', callbackData: `interrupt:cancel:${chatId}:${messageId}`, type: 'danger' as const },
+    { text: '稍后', callbackData: `interrupt:no:${chatId}:${messageId}`, type: 'default' as const },
   ];
 
   const statusContent: Record<NonNullable<typeof status>, string> = {
-    pending: `**${botName}** 正在处理上一条消息。\n你的新消息已排在队列最前：\n- **⚡ 立即插队**：中断当前任务（10 秒未操作将自动选择此项）\n- **🗑 取消消息**：撤回这条消息\n- **⏳ 稍后处理**：等当前任务完成后再处理`,
-    auto: `**${botName}** 正在处理上一条消息。\n⏱️ **10 秒未操作，已自动插队**：当前任务已中断，你的新消息优先处理中…`,
-    yes: `**${botName}** 正在处理上一条消息。\n⚡ **已立即插队**：当前任务已中断，你的新消息优先处理中…`,
-    no: `**${botName}** 正在处理上一条消息。\n⏳ **已排队**：你的新消息将在当前任务完成后自动处理。`,
-    cancel: `**${botName}** 正在处理上一条消息。\n🗑 **已取消这条消息**：当前任务继续处理，该消息不会再执行。`,
+    pending: `**${botName}** 正在处理上一条消息<br/>你的新消息已排在队列最前：<br/>• **⚡ 插队**：中断当前任务（10 秒未操作将自动选择）<br/>• **🗑 取消**：撤回这条消息<br/>• **⏳ 稍后**：等当前任务完成后再处理`,
+    auto: `**${botName}** 正在处理上一条消息<br/>⏱️ **已自动插队**：当前任务已中断，你的新消息优先处理中…`,
+    yes: `**${botName}** 正在处理上一条消息<br/>⚡ **已立即插队**：当前任务已中断，你的新消息优先处理中…`,
+    no: `**${botName}** 正在处理上一条消息<br/>⏳ **已排队**：你的新消息将在当前任务完成后自动处理。`,
+    cancel: `**${botName}** 正在处理上一条消息<br/>🗑 **已取消这条消息**：当前任务继续处理，该消息不会再执行。`,
   };
 
   const showButtons = status === 'pending';
@@ -549,6 +549,7 @@ export function buildInterruptCard(opts: {
     schema: '2.0',
     config: {
       wide_screen_mode: true,
+      // update_multi 必须是 true：飞书官方要求共享卡片 patch 更新前必须声明它
       update_multi: true,
     },
     header: {
@@ -569,7 +570,7 @@ export function buildInterruptCard(opts: {
               tag: 'column_set',
               flex_mode: 'flow',
               horizontal_spacing: '8px',
-              horizontal_align: 'left',
+              horizontal_align: 'center',
               columns: buttons.map((b) => ({
                 tag: 'column',
                 width: 'auto',

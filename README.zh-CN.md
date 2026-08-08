@@ -259,6 +259,53 @@ bridge 重启后保留的内容：
 
 ---
 
+## 语音识别配置（语音消息转文字）
+
+agents-to-im 内置语音识别能力（飞书收到语音消息自动转文字后进入对话），**不依赖外部技能目录**。
+
+### 依赖
+
+| 依赖 | 用途 | 安装 |
+|------|------|------|
+| sherpa-onnx | ASR 引擎（SenseVoice 模型） | 下载：https://github.com/k2-fsa/sherpa-onnx/releases（选 Windows 或 Linux 对应包） |
+| SenseVoice INT8 模型 | 中文/英文/日语/粤语识别 | 同上 releases 或 HF：SenseVoiceSmall |
+| ffmpeg | 音频转 wav（16k 单声道） | `apt install ffmpeg` 或 Windows 静态版 https://johnvansickle.com/ffmpeg/ |
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `ASR_SERVICE_PORT` | 内建 ASR 服务端口 | `18790` |
+| `ASR_SHARPA_BIN` | sherpa-onnx-offline 可执行文件路径 | Windows: `C:\D\opt\sherpa-onnx\bin\sherpa-onnx-offline.exe` |
+| `ASR_MODEL_DIR` | SenseVoice 模型目录（含 model.int8.onnx + tokens.txt） | Windows: `C:\D\opt\sherpa-onnx\models\sensevoice-int8` |
+| `ASR_FFMPEG_BIN` | ffmpeg 可执行文件路径 | Windows: WinGet 路径 / 其他: `ffmpeg`（PATH） |
+
+> 非 Windows 部署必须设置 `ASR_SHARPA_BIN` / `ASR_MODEL_DIR`（无默认值）。
+
+### 启动 ASR 服务
+
+```bash
+# 终端 1：ASR 常驻服务（端口 18790）
+node src/feishu/asr-service.mjs
+
+# 终端 2：OpenAI 兼容层（可选，端口 18791）
+node src/feishu/asr-openai-compat.mjs
+```
+
+> 生产环境建议用 PM2 托管这两个服务（`pm2 start src/feishu/asr-service.mjs --name asr-service`），确保崩溃自动拉起。
+
+### 验证
+
+```bash
+# 本地测试识别
+curl -X POST http://127.0.0.1:18790/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{"audioPath":"/path/to/16k.wav"}'
+# 返回 {"text":"识别出的文字"}
+```
+
+---
+
 ## 常见问题
 
 **同一个 Bot 能同时用 Claude 和 Codex 吗？**
@@ -281,6 +328,48 @@ MiMo agent 通过 `MiMoProvider` 走 mimo acp → LiteLLM → OpenCode Go mimo-v
 
 **AskUserQuestion 卡片在飞书里不弹出来怎么办？**
 检查 `config.env` 里 `CTI_DISABLE_PERMISSION_CHECK` 是否为 `true`，以及 `finalDelivery` 是否改为 `replace_preview`（`20dc496` 修复）。
+
+---
+
+## 语音生成配置（TTS，语音回复）
+
+agents-to-im 内置 TTS 能力（飞书 bot 可发语音回复），**不依赖外部技能目录**。6 个 TTS 通道自动回退。
+
+### 通道与优先级（auto 模式）
+
+| 优先级 | 通道 | 类型 | 需要 key? |
+|--------|------|------|-----------|
+| 1 | 小米 mimo | OpenAI 兼容 API | `TTS_XIAOMI_KEY` |
+| 2 | 微软 Edge | WebSocket | **否（免费）** |
+| 3 | 本地 MeloTTS | sherpa-onnx 本地 | **否** |
+| 4 | 旺旺 | HTTP API | `TTS_WANGWANG_URL` |
+| 5 | 阿里 | HTTP API | `TTS_ALI_KEY` |
+
+> 默认无 key 时自动走：微软 Edge（免费）→ 本地 Melo，零成本可用。
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `TTS_SHARPA_BIN` | sherpa-onnx-offline-tts 可执行文件路径 | Windows: `C:\D\opt\sherpa-onnx\bin\sherpa-onnx-offline-tts.exe` |
+| `TTS_MODEL_DIR` | 本地 TTS 模型目录（含 melo/、matcha/ 子目录） | Windows: `C:\D\opt\sherpa-onnx\models` |
+| `TTS_FFMPEG_BIN` | ffmpeg 路径（转码 opus/mp3） | Windows: WinGet 路径 / 其他: `ffmpeg` |
+| `TTS_EDGE_VOICE` | Edge TTS 音色 | `zh-CN-XiaoxiaoNeural` |
+| `TTS_XIAOMI_KEY` / `TTS_XIAOMI_BASE_URL` / `TTS_XIAOMI_MODEL` | 小米通道 | - |
+| `TTS_ALI_KEY` / `TTS_ALI_VOICE` | 阿里通道 | - |
+| `TTS_PROVIDER` | 指定通道（auto/xiaomi/edge/melo/matcha/wangwang/ali） | `auto` |
+| `CTI_TTS_PROVIDER` | 同上（agents-to-im 兼容名） | `auto` |
+
+> 非 Windows 部署必须设置 `TTS_SHARPA_BIN` / `TTS_MODEL_DIR`（无默认值）。旧配置兼容：若存在 `openclaw.json` 且未设环境变量，会读取其 `messages.tts.providers`。
+
+### 验证
+
+```bash
+# 本地测试合成（输出 opus 文件路径）
+node src/feishu/tts-wrapper.mjs "测试语音"
+```
+
+---
 
 **Dashboard 看不到聊天记录 / 卡住怎么办？**
 检查 OpenClaw Gateway 的 `bind=lan` 配置，以及 `.env` 是否改成 tailnet IP（`b12b61e` 修复）。详见 [openclaw-dashboard-fix.md](https://github.com/oadank/agents-to-im/blob/my-changes/docs/openclaw-dashboard-fix.md)。

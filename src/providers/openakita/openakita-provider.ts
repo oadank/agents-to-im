@@ -131,7 +131,12 @@ interface CachedAcpSession {
   pendingRetrySettle: ((err?: string) => void) | null;
   pendingRetryController: ReadableStreamDefaultController<string> | null;
   pendingRetrySdkSessionId: string | undefined;
+  /** abort 兜底定时器：session/interrupt 后 ACP 无响应时的强制 settle（正常 settle 会清理） */
+  abortKillTimer?: ReturnType<typeof setTimeout> | null;
   pendingRetryAbortController: AbortController | undefined;
+  /** 空闲超时计时器：有输出即重置，仅连续无输出才判定卡死（2026-08-08 修复固定 300s 硬超时 bug） */
+  inactivityTimer?: ReturnType<typeof setTimeout> | null;
+  resetInactivityTimer?: () => void;
 }
 
 // ── OpenAkitaProvider ──
@@ -418,6 +423,8 @@ export class OpenAkitaProvider implements LLMProvider {
       if (!trimmed.startsWith('{')) continue;
       try {
         const msg = JSON.parse(trimmed);
+        // 任何 ACP stdout 输出都视为活动：重置空闲超时，长任务只要持续输出就不限时（2026-08-08 修复）
+        cached.resetInactivityTimer?.();
         const id = msg.id as number | undefined;
         const isResponse = !msg.method && (msg.result || msg.error);
 
@@ -616,24 +623,32 @@ export class OpenAkitaProvider implements LLMProvider {
       cached.pendingRetryAbortController = abortController;
 
       const abortHandler = () => {
-        console.log(`[openakita-provider] ACP abort: sending session/interrupt first`);
+        console.log(`[openakita-provider] ACP abort: sending session/interrupt (keep process alive)`);
         try {
+          // interrupt 用当前 prompt 的 id：ACP 会以该 id 返回 stop reason 响应，
+          // 从而触发 currentSettle() 结束当前轮。若用 nextId++（自增 id），响应不匹配
+          // currentPromptId，settle 永不触发 → 锁链卡死。
           cached.child.stdin!.write(JSON.stringify({
-            jsonrpc: '2.0', id: cached.nextId++, method: 'session/interrupt',
+            jsonrpc: '2.0', id: cached.currentPromptId, method: 'session/interrupt',
             params: { sessionId: cached.sessionId },
           }) + '\n');
         } catch {}
-        setTimeout(() => {
-          if (cached.alive) {
-            console.log(`[openakita-provider] ACP interrupt timeout, force killing`);
-            try { cached.child.kill('SIGTERM'); } catch {}
+        // 插队语义：中断当前 turn，但进程保持存活，新消息复用同一 session 继续处理。
+        // 仅在 ACP 完全不响应（interrupt 后仍无 settle）时兜底 settle，避免锁链卡死。
+        const killTimer = setTimeout(() => {
+          if (cached.currentSettle) {
+            console.warn(`[openakita-provider] ACP interrupt unresponsive after 10s, force settling`);
+            cached.currentSettle('Interrupted: ACP did not respond to session/interrupt');
           }
-        }, 3000);
+        }, 10_000);
+        cached.abortKillTimer = killTimer;
       };
       abortController?.signal.addEventListener('abort', abortHandler, { once: true });
 
       cached.currentController = controller;
       cached.currentSettle = (err?: string) => {
+        if (cached.abortKillTimer) { clearTimeout(cached.abortKillTimer); cached.abortKillTimer = null; }
+        if (cached.inactivityTimer) { clearTimeout(cached.inactivityTimer); cached.inactivityTimer = null; cached.resetInactivityTimer = undefined; }
         cached.currentSettle = null;
         cached.currentController = null;
         cached.pendingRetryPrompt = null;
@@ -693,12 +708,19 @@ export class OpenAkitaProvider implements LLMProvider {
         },
       }) + '\n');
 
-      const timeoutMs = parseInt(process.env.CTI_OPENAKITA_TIMEOUT_MS || '300000', 10); // 默认 5 分钟
-      setTimeout(() => {
-        if (cached.currentSettle) {
-          cached.currentSettle(`ACP prompt timeout after ${timeoutMs / 1000}s`);
-        }
-      }, timeoutMs);
+      // 空闲超时（2026-08-08 修复：原固定 300s 硬超时会误杀长任务，改有输出即重置）
+      // 只有连续 IDLE_TIMEOUT_MS（默认 15 分钟）无任何 stdout 才判定卡死
+      const idleMs = OpenAkitaProvider.IDLE_TIMEOUT_MS;
+      cached.resetInactivityTimer = () => {
+        if (cached.inactivityTimer) { clearTimeout(cached.inactivityTimer); }
+        cached.inactivityTimer = setTimeout(() => {
+          if (cached.currentSettle) {
+            console.warn(`[openakita-provider] ACP idle timeout after ${idleMs / 1000}s, settling`);
+            cached.currentSettle(`ACP idle timeout after ${idleMs / 1000}s`);
+          }
+        }, idleMs);
+      };
+      cached.resetInactivityTimer();
     });
   }
 

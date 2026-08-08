@@ -1,7 +1,7 @@
 import { getBridgeContext } from '../../bridge/context.js';
 import { validateMode } from '../../bridge/security/validators.js';
 import { interruptActiveTask, isSessionBusy } from '../../bridge/bridge-manager.js';
-import { cancelAutoInterrupt, getInterruptCardMessageId, deleteInterruptCardMessageId } from './inbound-handler.js';
+import { cancelAutoInterrupt } from './inbound-handler.js';
 import { buildInterruptCard } from '../cards/index.js';
 import {
   buildResumeSessionCard,
@@ -248,33 +248,39 @@ export async function handleInterruptCardAction(
 
   if (action === 'cancel') {
     // 取消消息：撤回这条消息（从队列移除 + 标记作废），不打断当前任务
+    // ⚠️ 即使消息已出队进入执行（removed=false）也绝不中断任务：cancelledMessageIds 标记
+    // 已由 consumeOne 拦截（bridge-manager 消费前 isMessageCancelled 检查），中断任务会让
+    // busy 变 false，导致用户后续再发消息不再弹插队卡（实测 2026-08-07）。
     cancelAutoInterrupt(chatId);
-    await patchInterruptCardStatus(ctx, messageId, chatId, 'cancel');
     const removed = ctx.cancelInboundMessage(messageId);
     rtLog(`[handleInterruptCardAction] cancel messageId=${messageId} removed=${removed}`);
-    try {
-      await ctx.sendAsPost(address, removed
-        ? '🗑 已撤回这条消息，当前任务继续处理。'
-        : '🗑 消息已作废（可能正在处理），不会再被消费。', messageId);
-    } catch (e) {
-      console.warn('[feishu-adapter] interrupt:cancel feedback failed:', e);
-    }
-    return { toast: { type: 'success', content: '已取消该消息' } };
+    // 主通道：回调响应体里直接返回更新后的卡片（飞书官方格式：card.type='raw'，card.data=卡片对象）
+    // 官方文档示例：{"card":{"type":"raw","data":{...卡片 JSON...}}}，type 用 raw、data 放对象非字符串
+    const cancelCard = buildInterruptCard({ chatId, messageId, botName: ctx.label, status: 'cancel' });
+    return {
+      toast: { type: 'success', content: '已取消该消息' },
+      card: { type: 'raw', data: cancelCard },
+    };
   }
 
   if (action === 'no') {
-    // 稍后处理：新消息已排入队列，当前任务完成后自动执行；取消自动插队定时器
+    // 稍后处理：把消息移到挂起区（不打断当前任务），等同会话下一条消息合并发送
+    // ⚠️ 不再留在队列独立排队（会与插队消息顺序冲突、且分两次发送）；挂起后由
+    // handleMessage 组装 prompt 时合并进下一条消息。取消自动插队定时器。
     cancelAutoInterrupt(chatId);
-    await patchInterruptCardStatus(ctx, messageId, chatId, 'no');
-    try {
-      await ctx.sendAsPost(address, '好的，新消息已排入队列，当前任务完成后会自动处理。', messageId);
-    } catch (e) {
-      console.warn('[feishu-adapter] interrupt:no feedback failed:', e);
-    }
-    return { toast: { type: 'success', content: '已排队，稍后处理' } };
+    const deferred = ctx.deferInboundMessage(messageId);
+    rtLog(`[handleInterruptCardAction] no: deferred=${deferred} messageId=${messageId}`);
+    // 主通道：回调响应体里直接返回更新后的卡片（官方格式：type='raw'，data=卡片对象）
+    const noCard = buildInterruptCard({ chatId, messageId, botName: ctx.label, status: 'no' });
+    return {
+      toast: { type: 'success', content: '已排队，稍后处理' },
+      card: { type: 'raw', data: noCard },
+    };
   }
 
   // yes：立即插队 —— 中断当前任务，队列随即消费队首的新消息
+  // ⚠️ 必须先取消自动插队定时器：否则 10 秒后定时器还会触发，把刚启动的新任务二次中断（卡住根因）
+  cancelAutoInterrupt(chatId);
   const binding = ctx.getStore().getChannelBinding(ctx.channelType, chatId, ctx.profileId);
   if (!binding) {
     return { toast: { type: 'warning', content: '当前会话未绑定' } };
@@ -282,47 +288,13 @@ export async function handleInterruptCardAction(
   const sessionId = binding.codepilotSessionId || binding.sdkSessionId;
   const wasBusy = !!sessionId && isSessionBusy(sessionId);
   const interrupted = sessionId ? interruptActiveTask(sessionId) : false;
-  await patchInterruptCardStatus(ctx, messageId, chatId, 'yes');
-  try {
-    if (wasBusy && interrupted) {
-      await ctx.sendAsPost(address, '⚡ 已中断当前任务，你的新消息优先处理中…', messageId);
-    } else if (!wasBusy) {
-      await ctx.sendAsPost(address, '当前没有正在运行的任务，新消息将直接处理。', messageId);
-    } else {
-      await ctx.sendAsPost(address, '⚠️ 中断信号已发出（任务可能已进入收尾阶段）。', messageId);
-    }
-  } catch (e) {
-    console.warn('[feishu-adapter] interrupt:yes feedback failed:', e);
-  }
-  return { toast: { type: 'success', content: wasBusy ? '已插队' : '无任务可中断' } };
-}
-
-/** 按钮点击后把插队卡片 patch 成对应处理状态（去掉按钮，避免重复点击） */
-async function patchInterruptCardStatus(
-  ctx: AdapterContext,
-  messageId: string,
-  chatId: string,
-  status: 'yes' | 'no' | 'cancel',
-): Promise<void> {
-  const cardMessageId = getInterruptCardMessageId(messageId);
-  if (!cardMessageId) {
-    rtLog(`[patchInterruptCard] no card mapping for messageId=${messageId}`);
-    return;
-  }
-  try {
-    await ctx.patchInteractiveCard(cardMessageId, buildInterruptCard({
-      chatId,
-      messageId,
-      botName: ctx.label,
-      status,
-    }));
-    rtLog(`[patchInterruptCard] card ${cardMessageId} -> status=${status}`);
-  } catch (e) {
-    rtLog(`[patchInterruptCard] failed: ${e}`);
-    console.warn('[feishu-adapter] patch interrupt card failed:', e);
-  } finally {
-    deleteInterruptCardMessageId(messageId);
-  }
+  rtLog(`[handleInterruptCardAction] yes: sessionId=${sessionId ? sessionId.slice(0, 8) : '(none)'} wasBusy=${wasBusy} interrupted=${interrupted}`);
+  // 主通道：回调响应体里直接返回更新后的卡片（官方格式：type='raw'，data=卡片对象）
+  const yesCard = buildInterruptCard({ chatId, messageId, botName: ctx.label, status: 'yes' });
+  return {
+    toast: { type: 'success', content: wasBusy ? '已插队' : '无任务可中断' },
+    card: { type: 'raw', data: yesCard },
+  };
 }
 
 export async function replayNativeSessionHistory(

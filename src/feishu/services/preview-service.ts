@@ -13,6 +13,8 @@ import {
 export class PreviewService {
   readonly previewArtifacts = new Map<string, PreviewArtifact>();
   readonly activePreviewByRoute = new Map<string, string>();
+  /** 上次 sendPreview 时间戳（量化日志用） */
+  private _lastPreviewTs: number | null = null;
 
   constructor(
     private readonly larkClient: LarkClient,
@@ -41,6 +43,13 @@ export class PreviewService {
     const key = previewKey(routeKey, draftId);
     let artifact = this.previewArtifacts.get(key);
     const dividerInfo = this.getDividerInfo?.(address);
+    // 量化日志：记录每次 sendPreview 的间隔，判断飞书卡片实际刷新频率
+    const _now = Date.now();
+    const _gap = this._lastPreviewTs ? _now - this._lastPreviewTs : 0;
+    this._lastPreviewTs = _now;
+    try {
+      fs.appendFileSync(`C:\\D\\opt\\agents-to-im\\debug_realtime_${process.env.CTI_BOT || 'unknown'}.log`, `[${new Date().toISOString()}] [preview] sendPreview len=${text.length} gap=${_gap}ms mode=${artifact?.mode || 'new'}\n`, 'utf-8');
+    } catch {}
     console.log(`[preview-service] sendPreview: key=${key}, exists=${!!artifact}, total=${this.previewArtifacts.size}`);
     if (!artifact) {
       const createdArtifact = await this.createPreviewArtifact(address, draftId, text);

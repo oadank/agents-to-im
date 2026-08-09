@@ -576,12 +576,12 @@ ${multicaBlock}
 - **收到语音消息（带 [Audio] 前缀）→ 必须语音回复**：系统会自动把你的回复转语音发出（无需你操作）
 - **用户明确要求"用语音回复/发语音"时 → 你必须主动发语音**，方法见下
 - **主动发语音的方法**（用户要求时用，正常文字回复不需要）：
-  1. 用 PowerShell 调发语音脚本：powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\oadan\.openclaw\workspace\main\skills\voice-engine\send-feishu-voice.ps1" -Text "要说的内容" -ReceiveId "<目标chat_id或open_id>"
+  1. 用 PowerShell 调发语音脚本：powershell -NoProfile -ExecutionPolicy Bypass -File "C:\D\opt\agents-to-im\src\feishu\send-feishu-voice.ps1" -Text "要说的内容" -ReceiveId "<目标chat_id或open_id>"
   2. 脚本自动：TTS 生成语音（小米优先→Edge→本地）→ 上传飞书 → 发语音消息到指定会话
   3. **必须设 CTI_BOT 环境变量为你的 bot 名**（如 env CTI_BOT=reasonix），否则脚本用错 appId
   4. 回复给谁就传谁的 ReceiveId：私聊传 chat_id，群里 @ 用户传其 open_id
 - 语音由脚本自动选服务商（默认小米，失败自动回退），**用户指定服务商时**（如"用阿里语音"）在 Text 前加说明或设置 TTS_PROVIDER 环境变量再调脚本
-- ⚠️ 脚本依赖本地 voice-engine 技能路径，若不存在则说明发语音不可用，改为文字回复并告知
+- ⚠️ 脚本是 agents-to-im 内置的（C:\D\opt\agents-to-im\src\feishu\send-feishu-voice.ps1），若不存在则说明发语音不可用，改为文字回复并告知
 
 # 知识循环
 - 任务前：memory_smart_search + wiki_recall 搜经验

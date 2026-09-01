@@ -23,6 +23,14 @@ export function buildSimpleCard(text: string, dividerInfo?: AgentDividerInfo): R
     } else if (dividerInfo.cacheHitRate != null) {
       parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
     }
+    if (dividerInfo.contextPercent != null) {
+      parts.push(`上下文: ${dividerInfo.contextPercent.toFixed(2)}%`);
+    }
+    // 2026-08-09 修复：补余额显示（此前 buildSimpleCard 漏渲染 balance，
+    // 导致流式预览卡片的 meta 行只有 Agent/Model/Cache/上下文，正常文字回复不显示余额）
+    if (dividerInfo.balance) {
+      parts.push(`余额: ${dividerInfo.balance}`);
+    }
 
     const infoText = parts.join(' | ') || 'Agent: N/A';
     elements.push({

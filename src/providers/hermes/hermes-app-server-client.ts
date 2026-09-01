@@ -274,7 +274,6 @@ export class HermesAppServerClient {
         // _YOLO_MODE_FROZEN is read at import time from this env var.
         HERMES_YOLO_MODE: '1',
       },
-      windowsHide: true,
     });
     rtLog(`[hermes-app-server] spawned HERMES_HOME=${resolveHermesHome()} OPENAI_BASE_URL=...:4000`);
     this.proc = proc;
@@ -312,15 +311,16 @@ export class HermesAppServerClient {
       this.handleLine(line);
     });
 
-    // 30秒超时：initialize 握手
+    // 120秒超时：initialize 握手（2026-08-09 从 30s 调大：hermes Python app-server 冷启动加载依赖慢，
+    // 重启后 30s 内未就绪会被强杀 SIGTERM 导致 bot 不稳定，实测 initialize 需 40-90s）
     rtLog(`[hermes-app-server] calling initialize...`);
     let initDone = false;
     const timeoutId = setTimeout(() => {
       if (!initDone) {
-        rtLog(`[hermes-app-server] initialize TIMEOUT (30s), killing process`);
+        rtLog(`[hermes-app-server] initialize TIMEOUT (120s), killing process`);
         proc.kill();
       }
-    }, 30000);
+    }, 120000);
     await this.callInternal('initialize', buildInitializeParams());
     initDone = true;
     clearTimeout(timeoutId);

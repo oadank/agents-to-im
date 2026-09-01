@@ -346,10 +346,10 @@ export function startDashboard(options: DashboardDeps): void {
           res.end(JSON.stringify({ error: 'larkClient not initialized' }));
           return;
         }
-        const msgType = (body.msgType || 'text') as 'text' | 'post' | 'image';
-        if (!['text', 'post', 'image'].includes(msgType)) {
+        const msgType = (body.msgType || 'text') as 'text' | 'post' | 'image' | 'media';
+        if (!['text', 'post', 'image', 'media'].includes(msgType)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'msgType must be text|post|image' }));
+          res.end(JSON.stringify({ error: 'msgType must be text|post|image|media' }));
           return;
         }
         if (typeof body.content !== 'string' || !body.content) {
@@ -358,12 +358,33 @@ export function startDashboard(options: DashboardDeps): void {
           return;
         }
         // text 类型：SDK 直接发需要 post 格式或走 lark-cli；这里统一转 post 富文本，保证 bot 身份可用
-        let finalMsgType: 'post' | 'image' | 'interactive' = msgType === 'text' ? 'post' : (msgType as 'post' | 'image');
+        let finalMsgType: 'post' | 'image' | 'interactive' | 'media' = msgType === 'text' ? 'post' : (msgType as 'post' | 'image' | 'media');
         let finalContent = body.content;
         if (msgType === 'text') {
           finalContent = JSON.stringify({
             zh_cn: { title: '', content: [[{ tag: 'text', text: body.content }]] },
           });
+        }
+        // media（视频）：content 为 {"file_key","image_key"} JSON；也可传 body.filePath（视频）/body.imagePath（封面）由服务端上传
+        if (msgType === 'media') {
+          let mediaContent: Record<string, string> = {};
+          try {
+            mediaContent = JSON.parse(body.content);
+          } catch {
+            mediaContent = {};
+          }
+          if (typeof body.filePath === 'string' && body.filePath) {
+            mediaContent.file_key = await client.uploadFile(body.filePath, 'mp4');
+          }
+          if (typeof body.imagePath === 'string' && body.imagePath) {
+            mediaContent.image_key = await client.uploadImage(body.imagePath);
+          }
+          if (!mediaContent.file_key) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'media requires content.file_key or body.filePath' }));
+            return;
+          }
+          finalContent = JSON.stringify(mediaContent);
         }
         const address: ChannelAddress = {
           channelType: 'feishu',

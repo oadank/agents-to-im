@@ -29,3 +29,9 @@ src/config/team-data.json
 *.bak.*
 *.bak
 
+
+# 2026-09-01 存档前隔离：含真实密钥/本机数据，禁止推到 PUBLIC 仓库
+backup/
+config/
+_pm2j.json
+__pycache__/

@@ -14,7 +14,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
+import { larkInstructions, buildAgentPersona } from '../../config/runtime-configs.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
@@ -154,6 +154,8 @@ interface CachedAcpSession {
   nextId: number;
   currentPromptId: number;
   alive: boolean;
+  /** 该进程/会话是否已注入过人设（buildAgentPersona+larkInstructions()） */
+  personaInjected: boolean;
   sessionRecoveryAttempts: number;
   pendingRetryPrompt: string | null;
   pendingRetrySettle: ((err?: string) => void) | null;
@@ -185,6 +187,29 @@ export class OpenClawProvider implements LLMProvider {
       try { cached.child.kill('SIGTERM'); } catch {}
       this.acpCache.delete(key);
     }
+  }
+
+  /**
+   * 彻底重置 ACP 会话（/new 用）：kill 子进程 + 清缓存 + 删除持久化 session 文件。
+   * 与 clearCache 不同：clearCache 保留磁盘上的 session 文件（下次仍会 session/load 旧会话），
+   * resetSession 连磁盘文件一起删，下次消息必然走 session/new 全新空白会话（2026-08-09 对齐客户端语义）。
+   */
+  resetSession(cacheKey?: string): void {
+    const key = cacheKey || 'default';
+    const cached = this.acpCache.get(key);
+    if (cached) {
+      console.log(`[openclaw-provider] Reset ACP session: ${cached.sessionId}`);
+      cached.alive = false;
+      if (cached.currentSettle) {
+        const settle = cached.currentSettle;
+        cached.currentSettle = null;
+        settle('Session reset by /new');
+      }
+      try { cached.child.kill('SIGTERM'); } catch {}
+      this.acpCache.delete(key);
+    }
+    this.removeSavedSession(key);
+    console.log(`[openclaw-provider] Removed saved session file for key=${key}`);
   }
 
   async prepare(): Promise<void> {
@@ -239,6 +264,31 @@ export class OpenClawProvider implements LLMProvider {
     });
   }
 
+  /** MIME → 扩展名映射（图片附件落盘用） */
+  private static MIME_EXT: Record<string, string> = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+  };
+
+  /**
+   * 图片附件 → ACP image block（2026-08-11 正确姿势）。
+   * openclaw 引擎 agentCapabilities.promptCapabilities.image=true，ACP prompt 数组支持
+   * {type:'image', data:<base64>, mimeType:<mime>} block，引擎会原样传给模型识图。
+   * ⚠️ 不要用"落盘+路径文本"方案：agent 读本地二进制文件是乱码，模型识别不到。
+   */
+  private static buildImageBlocks(files?: StreamChatParams['files']): Array<{ type: 'image'; data: string; mimeType: string }> {
+    if (!files || files.length === 0) return [];
+    const blocks: Array<{ type: 'image'; data: string; mimeType: string }> = [];
+    for (const file of files) {
+      if (!OpenClawProvider.MIME_EXT[file.type]) continue; // 只处理图片
+      blocks.push({ type: 'image', data: file.data, mimeType: file.type });
+    }
+    return blocks;
+  }
+
   /**
    * 通过 ACP 协议与 reasonix acp 进程交互
    * 支持进程缓存：首次 spawn 并缓存，后续消息复用同一 session
@@ -257,7 +307,7 @@ export class OpenClawProvider implements LLMProvider {
       emitCanonicalTurnEvent(controller, {
         type: 'status', data: { session_id: existing.sessionId || sdkSessionId || '' },
       });
-      return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio);
+      return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio, params.files);
     }
 
     // 新建 session
@@ -345,7 +395,7 @@ export class OpenClawProvider implements LLMProvider {
           child, sessionId: sid, cwd, env,
           lineBuf: '', lastUsed: Date.now(),
           currentSettle: null, currentController: null, currentText: '', currentThinking: '', _inThinking: false, _textEmitted: false, _firstUpdateLogged: false,
-          nextId: 100, currentPromptId: 0, alive: true,
+          nextId: 100, currentPromptId: 0, alive: true, personaInjected: false,
           sessionRecoveryAttempts: 0, pendingRetryPrompt: null,
           pendingRetrySettle: null, pendingRetryController: null,
           pendingRetrySdkSessionId: undefined, pendingRetryAbortController: undefined,
@@ -475,7 +525,7 @@ export class OpenClawProvider implements LLMProvider {
       return;
     }
 
-    return this.sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio);
+    return this.sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio, params.files);
   }
 
   /** 处理 ACP 进程的 stdout 数据 */
@@ -505,7 +555,7 @@ export class OpenClawProvider implements LLMProvider {
               const newSessionId = cached.nextId++;
               cached.currentPromptId = newSessionId;
               // session/new cwd 必须是绝对路径（reasonix acp 校验）
-              const recoverCwd = configCwd;
+              const recoverCwd = cached.cwd || process.cwd();
               cached.child.stdin!.write(JSON.stringify({
                 jsonrpc: '2.0', id: newSessionId, method: 'session/new',
                 params: { cwd: recoverCwd, mcpServers: [] },
@@ -663,7 +713,7 @@ export class OpenClawProvider implements LLMProvider {
           cached.currentText = '';
           cached.currentSettle = retrySettle;
           // session/new cwd 必须是绝对路径（reasonix acp 校验）
-          const retrySessionNewCwd = configCwd;
+          const retrySessionNewCwd = cached.cwd || process.cwd();
           cached.child.stdin!.write(JSON.stringify({
             jsonrpc: '2.0', id: retryId, method: 'session/prompt',
             params: {
@@ -687,6 +737,7 @@ export class OpenClawProvider implements LLMProvider {
     abortController: AbortController | undefined,
     conversationHistory?: StreamChatParams['conversationHistory'],
     fromAudio?: boolean,
+    files?: StreamChatParams['files'],
   ): Promise<void> {
     rtLog(`[openclaw-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}, cached.nextId=${cached?.nextId}, cached.sessionId=${cached?.sessionId}`);
     return new Promise<void>((resolve) => {
@@ -697,12 +748,20 @@ export class OpenClawProvider implements LLMProvider {
       cached._inThinking = false;
       cached._textEmitted = false;
       cached.lastUsed = Date.now();
-      // 先增强 prompt（加入 LARK_CLI_INSTRUCTIONS），再存入 pendingRetryPrompt 以便重试时携带
-      let enhancedPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${prompt}`;
-      if (!sdkSessionId) {
-        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
-        if (memory) {
-          enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + prompt;
+
+      // 处理图片附件：构造 ACP image block（引擎原生支持识图，直接传 base64）
+      const imageBlocks = OpenClawProvider.buildImageBlocks(files);
+      // 先增强 prompt：仅在该进程/会话首次发消息时注入人设（buildAgentPersona+larkInstructions()）。
+      // ⚠️ 2026-08-09 修复：之前每轮都拼接人设，引擎自身通过 session/load 持久化完整 transcript，
+      // 每轮重复注入导致上下文线性膨胀、上下文100%卡死。仅判断不置位：置位统一在下方 fullPrompt 处。
+      let enhancedPrompt = prompt;
+      if (!cached.personaInjected) {
+        enhancedPrompt = `${buildAgentPersona()}${larkInstructions()}\n\n${prompt}`;
+        if (!sdkSessionId) {
+          const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+          if (memory) {
+            enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${larkInstructions()}\n\n用户消息：` + prompt;
+          }
         }
       }
       cached.pendingRetryPrompt = enhancedPrompt;
@@ -767,14 +826,19 @@ export class OpenClawProvider implements LLMProvider {
         resolve();
       };
 
-      // 记忆注入
+      // 记忆注入：仅首次发消息时注入人设（同 enhancedPrompt 处逻辑，保证 pendingRetryPrompt 与实际发送一致）。
+      // ⚠️ 2026-08-09 修复：人设只注入一次（引擎 session/load 已持久化），避免每轮重复导致上下文膨胀。
       const audioPrefix = fromAudio ? '[Audio] ' : '';
-      let fullPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${audioPrefix}${prompt}`;
-      if (!sdkSessionId) {
-        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
-        if (memory) {
-          fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + audioPrefix + prompt;
+      let fullPrompt = `${audioPrefix}${prompt}`;
+      if (!cached.personaInjected) {
+        fullPrompt = `${buildAgentPersona()}${larkInstructions()}\n\n${audioPrefix}${prompt}`;
+        if (!sdkSessionId) {
+          const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+          if (memory) {
+            fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${larkInstructions()}\n\n用户消息：` + audioPrefix + prompt;
+          }
         }
+        cached.personaInjected = true;
       }
 
       // 对话历史注入
@@ -788,13 +852,13 @@ export class OpenClawProvider implements LLMProvider {
         console.log(`[openclaw-provider] ACP injecting ${recentHistory.length} history messages`);
       }
 
-      console.log(`[openclaw-provider] ACP prompt id=${promptId} session=${cached.sessionId}`);
+      console.log(`[openclaw-provider] ACP prompt id=${promptId} session=${cached.sessionId} images=${imageBlocks.length}`);
       const promptSentAt = Date.now();
       cached.child.stdin!.write(JSON.stringify({
         jsonrpc: '2.0', id: promptId, method: 'session/prompt',
         params: {
           sessionId: cached.sessionId,
-          prompt: [{ type: 'text', text: fullPrompt }],
+          prompt: [...imageBlocks, { type: 'text', text: fullPrompt }],
         },
       }) + '\n');
 

@@ -1,6 +1,6 @@
 import type { BridgeSession } from '../bridge/host.js';
 
-export type RuntimeName = 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'gemini' | 'hermes' | 'openakita' | 'opencode';
+export type RuntimeName = 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'dsh' | 'gemini' | 'hermes' | 'openakita' | 'opencode';
 
 export type TitleStatus = 'pending' | 'done';
 export type DisplayNameMode = 'default' | 'native_locked' | 'manual_locked';

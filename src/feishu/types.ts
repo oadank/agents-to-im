@@ -198,6 +198,8 @@ export interface AdapterContext {
   markSeenMessage(messageId: string): boolean;
   enqueue(msg: InboundMessage): void;
   enqueueChatTask(chatId: string, task: () => Promise<void>): Promise<void>;
+  /** 查询消息是否仍在待处理队列（排队消息被 consumeOne 取出开始处理后即不在队列） */
+  isMessageQueued(messageId: string): boolean;
   /** 取消一条已入队的消息（插队卡"取消消息"按钮） */
   cancelInboundMessage(messageId: string): boolean;
   /** "稍后"按钮：把消息从待处理队列移到挂起区，等同会话下一条消息合并发送 */

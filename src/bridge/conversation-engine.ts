@@ -8,6 +8,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import type { ClaudePermissionMode } from '../runtime/claude-mode.js';
 import type { RuntimeName } from '../runtime/types.js';
 import { normalizeClaudePermissionMode } from '../runtime/claude-mode.js';
@@ -207,6 +208,9 @@ function resolveLegacyPermissionMode(binding: ChannelBinding, store?: any): Clau
       return 'plan';
     case 'ask':
       return 'default';
+    case 'bypassPermissions':
+    case 'dontAsk':
+      return binding.mode as ClaudePermissionMode;
     default: {
       // Check store setting for global permission mode override
       const storeMode = store?.getSetting?.('claude_permission_mode');
@@ -308,26 +312,24 @@ export async function processMessage(
     const storedUserText = options?.storedUserText ?? text;
     let savedContent = storedUserText;
     if (files && files.length > 0) {
-      const workDir = binding.workingDirectory || session?.working_directory || '';
-      if (workDir) {
-        try {
-          const uploadDir = path.join(workDir, '.codepilot-uploads');
-          if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-          }
-          const fileMeta = files.map((f) => {
-            const safeName = path.basename(f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-            const filePath = path.join(uploadDir, `${Date.now()}-${safeName}`);
-            const buffer = Buffer.from(f.data, 'base64');
-            fs.writeFileSync(filePath, buffer);
-            return { id: f.id, name: f.name, type: f.type, size: buffer.length, filePath };
-          });
-          savedContent = `<!--files:${JSON.stringify(fileMeta)}-->${storedUserText}`;
-        } catch (err) {
-          console.warn('[conversation-engine] Failed to persist file attachments:', err instanceof Error ? err.message : err);
-          savedContent = `[${files.length} image(s) attached] ${storedUserText}`;
+      // 2026-08-11：附件落盘改到系统 TEMP（codepilot-uploads/），不再写工作目录下的
+      // .codepilot-uploads（避免在 C:\Users\oadan 等工作目录留下永不清理的隐藏目录）。
+      // TEMP 由系统定期清理；文件名带 Date.now() 前缀保证唯一。
+      try {
+        const uploadDir = path.join(os.tmpdir(), 'codepilot-uploads');
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
         }
-      } else {
+        const fileMeta = files.map((f) => {
+          const safeName = path.basename(f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
+          const filePath = path.join(uploadDir, `${Date.now()}-${safeName}`);
+          const buffer = Buffer.from(f.data, 'base64');
+          fs.writeFileSync(filePath, buffer);
+          return { id: f.id, name: f.name, type: f.type, size: buffer.length, filePath };
+        });
+        savedContent = `<!--files:${JSON.stringify(fileMeta)}-->${storedUserText}`;
+      } catch (err) {
+        console.warn('[conversation-engine] Failed to persist file attachments:', err instanceof Error ? err.message : err);
         savedContent = `[${files.length} image(s) attached] ${storedUserText}`;
       }
     }
@@ -717,6 +719,12 @@ async function consumeStream(
               if (onActivityEvent) {
                 await onActivityEvent(activity);
               }
+              // 缓存命中率统计：codex 通过 activity_event(kind=context_usage) 上报 cachedInputTokens
+              if (activity.kind === 'context_usage' && activity.cacheReadInputTokens != null) {
+                const hit = Number(activity.cacheReadInputTokens ?? 0);
+                const miss = Math.max(0, Number(activity.inputTokens ?? 0) - hit);
+                if (hit + miss > 0) recordSessionCacheUsage(sessionId, hit, miss);
+              }
             } catch { /* skip */ }
             break;
           }
@@ -773,6 +781,11 @@ async function consumeStream(
                   outputTokens: Number(usage.output_tokens || 0),
                   cacheReadInputTokens: Number(usage.cache_read_input_tokens || 0),
                 });
+                // 缓存命中率统计（与 result 事件同算法）：codex 走 context_usage 上报 cachedInputTokens，
+                // 需在此计入缓存统计，否则 codex 命中率永远 0（fallback 显示错误）
+                const hit = Number(usage.cache_read_input_tokens ?? 0) + Number(usage.cache_creation_input_tokens ?? 0);
+                const miss = Math.max(0, Number(usage.input_tokens ?? 0) - Number(usage.cache_read_input_tokens ?? 0));
+                if (hit + miss > 0) recordSessionCacheUsage(sessionId, hit, miss);
               }
             } catch { /* skip */ }
             break;

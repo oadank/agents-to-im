@@ -12,7 +12,9 @@ if (!text) {
 }
 
 const providerIdx = process.argv.indexOf('--provider');
-const provider = providerIdx >= 0 ? process.argv[providerIdx + 1] : 'auto';
+const provider = providerIdx >= 0
+  ? process.argv[providerIdx + 1]
+  : (process.env.TTS_PROVIDER || 'auto');
 
 const result = await synthesize(text, { channel: 'feishu', provider });
 if (result) {

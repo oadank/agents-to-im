@@ -16,7 +16,7 @@
 import { GeminiAppServerClient, type GeminiServerMessage } from './gemini-app-server-client.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
-import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
+import { larkInstructions, buildAgentPersona } from '../../config/runtime-configs.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -399,10 +399,10 @@ export class GeminiProvider implements LLMProvider {
         .join('\n\n');
       parts.push({
         type: 'text',
-        text: `${toolInstruction}${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n以下是之前的对话历史，请继续对话：\n\n${historyText}\n\n---\n用户最新消息：\n${audioPrefix}${params.prompt}`,
+        text: `${toolInstruction}${buildAgentPersona()}${larkInstructions()}\n以下是之前的对话历史，请继续对话：\n\n${historyText}\n\n---\n用户最新消息：\n${audioPrefix}${params.prompt}`,
       });
     } else {
-      parts.push({ type: 'text', text: `${toolInstruction}${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n${audioPrefix}${params.prompt}` });
+      parts.push({ type: 'text', text: `${toolInstruction}${buildAgentPersona()}${larkInstructions()}\n${audioPrefix}${params.prompt}` });
     }
 
     return parts;

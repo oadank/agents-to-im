@@ -159,19 +159,83 @@ function isToolCallActivityEvent(event: ActivityEvent): boolean {
 }
 
 /**
- * 读取 reasonix 的 usage stats（stats/YYYY-MM-DD.jsonl），返回最近一轮 + 当日平均的缓存命中率。
- * source=cli 是飞书 bot（reasonix ACP）的请求记录；source=desktop 是桌面端（跳过）。
- * 供 reasonix（ACP 直连无 usage 上报到 conversation-engine）fallback 使用。
+ * 读取直连 deepseek 类 bot（reasonix / dsh）的 usage stats（stats/YYYY-MM-DD.jsonl），
+ * 返回最近一轮 + 当日平均的缓存命中率，以及最近一轮的上下文占用百分比
+ * （prompt tokens / 1M 上限）。source=cli 是飞书 bot（ACP 直连）的请求记录；
+ * source=desktop 是桌面端（跳过）。
+ * 供 ACP 直连无 usage 上报到 conversation-engine 的 bot fallback 使用。
  */
-function readReasonixCacheStats(): { lastRate: number; avgRate: number } | null {
+// DeepSeek 余额缓存（避免每轮都调 /user/balance 造成延迟；60 秒过期）
+let deepseekBalanceCache: { total: string; granted: string; toppedUp: string; cachedAt: number } | null = null;
+
+async function readDeepseekBalance(): Promise<{ total: string; granted: string; toppedUp: string } | null> {
+  const now = Date.now();
+  if (deepseekBalanceCache && now - deepseekBalanceCache.cachedAt < 60_000) {
+    return { total: deepseekBalanceCache.total, granted: deepseekBalanceCache.granted, toppedUp: deepseekBalanceCache.toppedUp };
+  }
   try {
-    const statsDir = path.join(
+    const key = process.env.DEEPSEEK_API_KEY
+      || (() => {
+        const envFile = 'C:\\Users\\oadan\\AppData\\Roaming\\reasonix\\.env';
+        try {
+          const line = fs.readFileSync(envFile, 'utf-8').split(/\r?\n/).find((l) => l.startsWith('DEEPSEEK_API_KEY='));
+          return line ? line.slice('DEEPSEEK_API_KEY='.length).trim() : '';
+        } catch { return ''; }
+      })();
+    if (!key) return null;
+    const resp = await fetch('https://api.deepseek.com/user/balance', {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json() as {
+      balance_infos?: Array<{ currency: string; total_balance: string; granted_balance: string; topped_up_balance: string }>;
+    };
+    const info = data.balance_infos?.[0];
+    if (!info) return null;
+    const result = { total: info.total_balance, granted: info.granted_balance, toppedUp: info.topped_up_balance };
+    deepseekBalanceCache = { ...result, cachedAt: now };
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/** 按 profileId 判断是否为直连 deepseek 的 bot（reasonix / dsh），决定是否显示余额等 meta 项 */
+function isDirectDeepSeekProfile(profileId: string): boolean {
+  return profileId.includes('reasonix') || profileId.includes('dsh');
+}
+
+/**
+ * 读取直连 deepseek 类 bot（reasonix / dsh）的 usage stats 文件目录。
+ * 2026-08-18：reasonix home 已统一为桌面 %APPDATA%/reasonix（REASONIX_HOME），
+ * bot 与桌面共用同一份 stats；dsh 在 ~/.dsh/dsh-bot（DSH_HOME）。
+ */
+function resolveStatsDir(profileId: string): string | null {
+  if (profileId.includes('dsh')) {
+    const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+    const botStatsDir = path.join(dshHome, 'dsh-bot', 'stats');
+    return fs.existsSync(botStatsDir) ? botStatsDir : null;
+  }
+  if (profileId.includes('reasonix')) {
+    const botHome = process.env.REASONIX_HOME || path.join(os.homedir(), '.reasonix-bot');
+    const botStatsDir = path.join(botHome, 'stats');
+    const desktopStatsDir = path.join(
       process.platform === 'win32'
         ? (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'))
         : path.join(os.homedir(), '.config'),
       'reasonix',
       'stats',
     );
+    return fs.existsSync(botStatsDir) ? botStatsDir : desktopStatsDir;
+  }
+  return null;
+}
+
+function readAgentCacheStats(profileId: string): { lastRate: number; avgRate: number; contextPercent: number } | null {
+  try {
+    const statsDir = resolveStatsDir(profileId);
+    if (!statsDir) return null;
     // 文件按本地日期命名（如 2026-08-06），不能用 toISOString（UTC 会偏一天）
     const now = new Date();
     const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -182,10 +246,13 @@ function readReasonixCacheStats(): { lastRate: number; avgRate: number } | null 
     let sumHit = 0;
     let sumMiss = 0;
     let total = 0;
+    let lastPromptTokens: number | null = null;
+    // reasonix / dsh (deepseek-v4-flash) 上下文上限 1M tokens；超过触发引擎压缩/报错
+    const CONTEXT_LIMIT_TOKENS = 1_000_000;
     const lines = fs.readFileSync(file, 'utf-8').split('\n');
     for (const line of lines) {
       if (!line.trim()) continue;
-      let rec: { source?: string; cache_hit?: number; cache_miss?: number };
+      let rec: { source?: string; cache_hit?: number; cache_miss?: number; prompt?: number };
       try { rec = JSON.parse(line); } catch { continue; }
       if (rec.source !== 'cli') continue; // 只看飞书 bot 的请求
       const hit = Number(rec.cache_hit ?? 0);
@@ -196,10 +263,49 @@ function readReasonixCacheStats(): { lastRate: number; avgRate: number } | null 
       sumHit += hit;
       sumMiss += miss;
       total++;
+      if (rec.prompt != null && Number(rec.prompt) > 0) lastPromptTokens = Number(rec.prompt);
     }
     if (lastRate == null || total === 0) return null;
     const avgRate = (sumHit / (sumHit + sumMiss)) * 100;
-    return { lastRate, avgRate };
+    const contextPercent = lastPromptTokens != null
+      ? Math.min(100, (lastPromptTokens / CONTEXT_LIMIT_TOKENS) * 100)
+      : 0;
+    return { lastRate, avgRate, contextPercent };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 查询 DeepSeek 直连余额（仅 reasonix 显示，其他 bot 走 LiteLLM 无此接口）。
+ * 缓存 60 秒避免每次回复都打余额接口。
+ */
+let balanceCache: { value: string; at: number } | null = null;
+async function fetchDeepSeekBalance(): Promise<string | null> {
+  const now = Date.now();
+  if (balanceCache && now - balanceCache.at < 60_000) return balanceCache.value;
+  try {
+    const key = process.env.DEEPSEEK_API_KEY || (() => {
+      const envFile = 'C:\\Users\\oadan\\AppData\\Roaming\\reasonix\\.env';
+      try {
+        const line = fs.readFileSync(envFile, 'utf-8').split(/\r?\n/).find((l) => l.startsWith('DEEPSEEK_API_KEY='));
+        return line ? line.slice('DEEPSEEK_API_KEY='.length).trim() : '';
+      } catch { return ''; }
+    })();
+    if (!key) return null;
+    const resp = await fetch('https://api.deepseek.com/user/balance', {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json() as {
+      balance_infos?: Array<{ currency: string; total_balance: string }>;
+    };
+    const info = data.balance_infos?.[0];
+    if (!info) return null;
+    const value = `¥${info.total_balance}`;
+    balanceCache = { value, at: now };
+    return value;
   } catch {
     return null;
   }
@@ -222,6 +328,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
   private wsClient: lark.WSClient | null = null;
   private chatQueues = new Map<string, Promise<void>>();
   private seenMessageIds = new Map<string, number>();
+  // ⚠️ 2026-08-09 修复：seenMessageIds 持久化到磁盘（CTI_HOME/seen-messages-<bot>.json），
+  // 避免 PM2 重启后内存 Set 清空导致飞书重推的旧消息被重复处理（"取消的消息又复活"根因）。
+  private readonly seenMessagesFile: string;
   private lastIncomingMessageId = new Map<string, string>();
   private typingReactions = new Map<string, string>();
   private pendingTitleSyncs = new Set<string>();
@@ -256,6 +365,28 @@ export class FeishuAdapter extends BaseChannelAdapter {
     super();
     this.instanceProfileId = options.profile.id || DEFAULT_CHANNEL_INSTANCE_ID;
     this.instanceAdapterId = `${this.channelType}:${this.instanceProfileId}`;
+    // 预热 reasonix / dsh 余额缓存：进程启动即拉取一次，保证第一轮回复的 meta 行就能显示余额
+    // （buildDividerInfo 同步读缓存；60s 内不重复打接口）
+    if (isDirectDeepSeekProfile(this.profileId)) {
+      void fetchDeepSeekBalance();
+    }
+    // 加载持久化的已读消息 ID（重启后仍能对飞书重推去重）
+    try {
+      const home = process.env.CTI_HOME || path.join(os.homedir(), '.agents-to-im');
+      this.seenMessagesFile = path.join(home, `seen-messages-${this.instanceProfileId}.json`);
+      if (fs.existsSync(this.seenMessagesFile)) {
+        const raw = JSON.parse(fs.readFileSync(this.seenMessagesFile, 'utf-8')) as Record<string, number>;
+        for (const [mid, ts] of Object.entries(raw)) {
+          this.seenMessageIds.set(mid, ts);
+        }
+      }
+    } catch {
+      // 加载失败不阻塞启动，退化为内存去重
+      this.seenMessagesFile = path.join(
+        process.env.CTI_HOME || path.join(os.homedir(), '.agents-to-im'),
+        `seen-messages-${this.instanceProfileId}.json`,
+      );
+    }
   }
 
   /** 获取该 adapter 的默认 runtime */
@@ -339,6 +470,12 @@ export class FeishuAdapter extends BaseChannelAdapter {
       const first = this.seenMessageIds.keys().next().value;
       if (first) this.seenMessageIds.delete(first);
     }
+    // 持久化：重启后仍能去重（2026-08-09 修复，防"取消消息复活/重复处理"）
+    try {
+      const obj: Record<string, number> = {};
+      this.seenMessageIds.forEach((v, k) => { obj[k] = v; });
+      fs.writeFileSync(this.seenMessagesFile, JSON.stringify(obj), 'utf-8');
+    } catch { /* 写盘失败不影响主流程 */ }
     return true;
   }
 
@@ -359,6 +496,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       markSeenMessage: this.markSeenMessage.bind(this),
       enqueue: this.enqueue.bind(this),
       enqueueChatTask: this.enqueueChatTask.bind(this),
+      isMessageQueued: this.isMessageQueued.bind(this),
       cancelInboundMessage: this.cancelInboundMessage.bind(this),
       deferInboundMessage: this.deferInboundMessage.bind(this),
       collectDeferredMessages: this.collectDeferredMessages.bind(this),
@@ -582,6 +720,11 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return new Promise<InboundMessage | null>((resolve) => {
       this.waiters.push(resolve);
     });
+  }
+
+  /** 查询消息是否仍在待处理队列（排队消息被 consumeOne 取出开始处理后即不在队列） */
+  isMessageQueued(messageId: string): boolean {
+    return this.queue.some((m) => m.messageId === messageId);
   }
 
   /** 查询消息是否已被"取消消息"按钮标记作废（供消费循环在入链前拦截） */
@@ -1294,7 +1437,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
     });
     // claude 用 sdkSessionId 做 --resume，/new 必须清空旧会话，否则会接回旧 Claude session
     // hermes/codex 也同样逻辑，清空旧 sdkSessionId 确保创建新 ACP session
-    if (runtime === 'claude' || runtime === 'hermes' || runtime === 'codex') {
+    // reasonix 同样需要（2026-08-09 修复）：/new 后清空旧 sdkSessionId，避免引擎 resume 回旧会话
+    // dsh 同样需要：ACP 缓存 key 是 sdkSessionId，/new 后已 reset，旧 id 无对应引擎
+    if (runtime === 'claude' || runtime === 'hermes' || runtime === 'codex' || runtime === 'reasonix' || runtime === 'dsh') {
       store.updateChannelBinding(initialBinding.id, { sdkSessionId: '' });
     }
     if (options?.bindingMode && initialBinding.mode !== options.bindingMode) {
@@ -1971,20 +2116,32 @@ export class FeishuAdapter extends BaseChannelAdapter {
 
       const cacheStats = this.buildCacheDivider(binding);
 
-      return {
+      const dividerInfo: AgentDividerInfo = {
         agent: runtimeConfig.displayName || this.options.profile.agentName || this.profileId,
         model: modelName,
         provider: providerName,
         session: binding?.sdkSessionId?.substring(0, 8) || binding?.codepilotSessionId?.substring(0, 8) || 'N/A',
-        ...(cacheStats ? { cacheHitRate: cacheStats.lastRate, cacheAvgRate: cacheStats.avgRate } : {}),
+        ...(cacheStats ? { cacheHitRate: cacheStats.lastRate, cacheAvgRate: cacheStats.avgRate, contextPercent: cacheStats.contextPercent || undefined } : {}),
       };
+      // 2026-08-09 修复：reasonix 余额补进 buildDividerInfo（预览卡片/骨架走此方法，之前漏加导致
+      // 正常文字回复不带余额，只有走 sendAsPost 的语音兜底路径才显示）。
+      // 2026-08-14 扩展：dsh（ACP 直连 deepseek）同样显示余额。
+      // 同步读 60s 缓存（不阻塞预览渲染）；同时异步刷新缓存（缓存有效时内部直接返回，过期才打接口），
+      // 保证每轮对话显示的余额最多滞后 60 秒。
+      if (isDirectDeepSeekProfile(this.profileId)) {
+        if (balanceCache) {
+          dividerInfo.balance = balanceCache.value;
+        }
+        void fetchDeepSeekBalance();
+      }
+      return dividerInfo;
     }
     return undefined;
   }
 
-  /** 计算当前 session 的缓存命中率（最近一轮 + 平均），供 meta 行显示 */
-  private buildCacheDivider(binding: ChannelBinding | null): { lastRate: number; avgRate: number } | null {
-    let cacheStats: { lastRate: number; avgRate: number } | null = null;
+  /** 计算当前 session 的缓存命中率（最近一轮 + 平均）和上下文占用百分比，供 meta 行显示 */
+  private buildCacheDivider(binding: ChannelBinding | null): { lastRate: number; avgRate: number; contextPercent: number } | null {
+    let cacheStats: { lastRate: number; avgRate: number; contextPercent: number } | null = null;
     const sid = binding?.codepilotSessionId;
     if (sid) {
       const s = getSessionCacheStats(sid);
@@ -1992,12 +2149,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
       if (s && s.lastTotal > 0) {
         const lastRate = (s.lastHit / s.lastTotal) * 100;
         const avgRate = (s.sumHit / (s.sumHit + s.sumMiss)) * 100;
-        cacheStats = { lastRate, avgRate };
+        // 非 reasonix bot 无 prompt tokens 数据源，contextPercent 留 0（由调用方决定是否显示）
+        cacheStats = { lastRate, avgRate, contextPercent: 0 };
       }
     }
     if (!cacheStats) {
-      cacheStats = readReasonixCacheStats();
-      rtLog(`[cacheStats] reasonix fallback: ${cacheStats ? `${cacheStats.lastRate.toFixed(2)}/${cacheStats.avgRate.toFixed(2)}` : 'null'}`);
+      cacheStats = readAgentCacheStats(this.profileId);
+      rtLog(`[cacheStats] ${this.profileId} fallback: ${cacheStats ? `${cacheStats.lastRate.toFixed(2)}/${cacheStats.avgRate.toFixed(2)} ctx=${cacheStats.contextPercent.toFixed(2)}%` : 'null'}`);
     }
     return cacheStats;
   }
@@ -2030,7 +2188,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
         model: modelName,
         provider: providerName,
         session: binding?.sdkSessionId?.substring(0, 8) || binding?.codepilotSessionId?.substring(0, 8) || 'N/A',
-        ...(cacheStats2 ? { cacheHitRate: cacheStats2.lastRate, cacheAvgRate: cacheStats2.avgRate } : {}),
+        ...(cacheStats2 ? { cacheHitRate: cacheStats2.lastRate, cacheAvgRate: cacheStats2.avgRate, contextPercent: cacheStats2.contextPercent || undefined } : {}),
+        ...(isDirectDeepSeekProfile(this.profileId) ? { balance: await fetchDeepSeekBalance() ?? undefined } : {}),
       };
     }
 
@@ -2077,7 +2236,8 @@ export class FeishuAdapter extends BaseChannelAdapter {
         model: modelName,
         provider: providerName,
         session: binding?.sdkSessionId?.substring(0, 8) || binding?.codepilotSessionId?.substring(0, 8) || 'N/A',
-        ...(cacheStats2 ? { cacheHitRate: cacheStats2.lastRate, cacheAvgRate: cacheStats2.avgRate } : {}),
+        ...(cacheStats2 ? { cacheHitRate: cacheStats2.lastRate, cacheAvgRate: cacheStats2.avgRate, contextPercent: cacheStats2.contextPercent || undefined } : {}),
+        ...(isDirectDeepSeekProfile(this.profileId) ? { balance: await fetchDeepSeekBalance() ?? undefined } : {}),
       };
     }
 

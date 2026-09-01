@@ -49,11 +49,14 @@ function loadConfig() {
 
   return {
     xiaomi: {
-      apiKey: env.TTS_XIAOMI_KEY || fileProviders.openai?.apiKey || '',
-      baseUrl: env.TTS_XIAOMI_BASE_URL || fileProviders.openai?.baseUrl || 'https://api.xiaomimimo.com/v1',
-      model: env.TTS_XIAOMI_MODEL || fileProviders.openai?.model || 'mimo-v2.5-tts',
-      voice: env.TTS_XIAOMI_VOICE || fileProviders.openai?.voice || 'default_zh',
-      speed: 1.2,
+      // [2026-08-16 修复] key 优先读 xiaomi 段（openclaw.json messages.tts.providers.xiaomi）
+      apiKey: env.TTS_XIAOMI_KEY || fileProviders.xiaomi?.apiKey || fileProviders.openai?.apiKey || '',
+      baseUrl: env.TTS_XIAOMI_BASE_URL || fileProviders.xiaomi?.baseUrl || fileProviders.openai?.baseUrl || 'https://api.xiaomimimo.com/v1',
+      model: env.TTS_XIAOMI_MODEL || fileProviders.xiaomi?.model || fileProviders.openai?.model || 'mimo-v2.5-tts',
+      // [2026-08-16 修复] 'default_zh' 不是有效音色（API 500）；有效：mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean
+      voice: env.TTS_XIAOMI_VOICE || fileProviders.xiaomi?.voice || fileProviders.openai?.voice || 'mimo_default',
+      // [2026-08-16 修复] 去掉 1.2 加速（用户反馈听着着急），用 API 默认语速
+      speed: 1.0,
     },
     microsoft: {
       enabled: env.TTS_EDGE_ENABLED !== 'false' && fileProviders.microsoft?.enabled !== false,
@@ -141,6 +144,8 @@ async function synthesizeXiaomi(text, outputFormat) {
     max_tokens: 8192,
     speed: cfg.speed,
     voice: cfg.voice,
+    // [2026-08-16 修复] 官方要求 audio.format 指定输出格式（默认 wav 也可，显式更稳）
+    audio: { format: 'wav' },
   });
   const res = await httpRequest(`${cfg.baseUrl}/chat/completions`, {
     method: 'POST',

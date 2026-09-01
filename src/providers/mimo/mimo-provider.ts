@@ -14,7 +14,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
+import { larkInstructions, buildAgentPersona } from '../../config/runtime-configs.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
@@ -154,6 +154,8 @@ interface CachedAcpSession {
   nextId: number;
   currentPromptId: number;
   alive: boolean;
+  /** 该进程/会话是否已注入过人设（buildAgentPersona+larkInstructions()） */
+  personaInjected: boolean;
   sessionRecoveryAttempts: number;
   pendingRetryPrompt: string | null;
   pendingRetrySettle: ((err?: string) => void) | null;
@@ -188,6 +190,29 @@ export class MiMoProvider implements LLMProvider {
       try { cached.child.kill('SIGTERM'); } catch {}
       this.acpCache.delete(key);
     }
+  }
+
+  /**
+   * 彻底重置 ACP 会话（/new 用）：kill 子进程 + 清缓存 + 删除持久化 session 文件。
+   * 与 clearCache 不同：clearCache 保留磁盘上的 session 文件（下次仍会 session/load 旧会话），
+   * resetSession 连磁盘文件一起删，下次消息必然走 session/new 全新空白会话（2026-08-09 对齐客户端语义）。
+   */
+  resetSession(cacheKey?: string): void {
+    const key = cacheKey || 'default';
+    const cached = this.acpCache.get(key);
+    if (cached) {
+      console.log(`[mimo-provider] Reset ACP session: ${cached.sessionId}`);
+      cached.alive = false;
+      if (cached.currentSettle) {
+        const settle = cached.currentSettle;
+        cached.currentSettle = null;
+        settle('Session reset by /new');
+      }
+      try { cached.child.kill('SIGTERM'); } catch {}
+      this.acpCache.delete(key);
+    }
+    this.removeSavedSession(key);
+    console.log(`[mimo-provider] Removed saved session file for key=${key}`);
   }
 
   async prepare(): Promise<void> {
@@ -340,7 +365,7 @@ export class MiMoProvider implements LLMProvider {
           child, sessionId: sid, cwd, env,
           lineBuf: '', lastUsed: Date.now(),
           currentSettle: null, currentController: null, currentText: '', currentThinking: '', _inThinking: false, _textEmitted: false, _firstUpdateLogged: false,
-          nextId: 100, currentPromptId: 0, alive: true,
+          nextId: 100, currentPromptId: 0, alive: true, personaInjected: false,
           sessionRecoveryAttempts: 0, pendingRetryPrompt: null,
           pendingRetrySettle: null, pendingRetryController: null,
           pendingRetrySdkSessionId: undefined, pendingRetryAbortController: undefined,
@@ -690,12 +715,17 @@ export class MiMoProvider implements LLMProvider {
       cached._inThinking = false;
       cached._textEmitted = false;
       cached.lastUsed = Date.now();
-      // 先增强 prompt（加入 LARK_CLI_INSTRUCTIONS），再存入 pendingRetryPrompt 以便重试时携带
-      let enhancedPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${prompt}`;
-      if (!sdkSessionId) {
-        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
-        if (memory) {
-          enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + prompt;
+      // 先增强 prompt：仅在该进程/会话首次发消息时注入人设（buildAgentPersona+larkInstructions()）。
+      // ⚠️ 2026-08-09 修复：之前每轮都拼接人设，引擎自身通过 session/load 持久化完整 transcript，
+      // 每轮重复注入导致上下文线性膨胀、上下文100%卡死。仅判断不置位：置位统一在下方 fullPrompt 处。
+      let enhancedPrompt = prompt;
+      if (!cached.personaInjected) {
+        enhancedPrompt = `${buildAgentPersona()}${larkInstructions()}\n\n${prompt}`;
+        if (!sdkSessionId) {
+          const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+          if (memory) {
+            enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${larkInstructions()}\n\n用户消息：` + prompt;
+          }
         }
       }
       cached.pendingRetryPrompt = enhancedPrompt;
@@ -761,14 +791,19 @@ export class MiMoProvider implements LLMProvider {
         resolve();
       };
 
-      // 记忆注入
+      // 记忆注入：仅首次发消息时注入人设（同 enhancedPrompt 处逻辑，保证 pendingRetryPrompt 与实际发送一致）。
+      // ⚠️ 2026-08-09 修复：人设只注入一次（引擎 session/load 已持久化），避免每轮重复导致上下文膨胀。
       const audioPrefix = fromAudio ? '[Audio] ' : '';
-      let fullPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${audioPrefix}${prompt}`;
-      if (!sdkSessionId) {
-        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
-        if (memory) {
-          fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + audioPrefix + prompt;
+      let fullPrompt = `${audioPrefix}${prompt}`;
+      if (!cached.personaInjected) {
+        fullPrompt = `${buildAgentPersona()}${larkInstructions()}\n\n${audioPrefix}${prompt}`;
+        if (!sdkSessionId) {
+          const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+          if (memory) {
+            fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${larkInstructions()}\n\n用户消息：` + audioPrefix + prompt;
+          }
         }
+        cached.personaInjected = true;
       }
 
       // 对话历史注入

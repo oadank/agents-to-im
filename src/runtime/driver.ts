@@ -12,6 +12,7 @@ import { ZCodeProvider } from '../providers/zcode/zcode-provider.js';
 import { MiMoProvider } from '../providers/mimo/mimo-provider.js';
 import { OpencodeProvider } from '../providers/opencode/opencode-provider.js';
 import { ReasonixProvider } from '../providers/reasonix/reasonix-provider.js';
+import { DshProvider } from '../providers/dsh/dsh-provider.js';
 import { OpenClawProvider } from '../providers/openclaw/openclaw-provider.js';
 import { GeminiProvider } from '../providers/gemini/gemini-provider.js';
 import { HermesProvider } from '../providers/hermes/hermes-provider.js';
@@ -304,6 +305,36 @@ export class ReasonixRuntimeDriver extends BaseRuntimeDriver {
 
   async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
     // Reasonix 不支持 session title 存储
+  }
+}
+
+export class DshRuntimeDriver extends BaseRuntimeDriver {
+  readonly runtime = 'dsh' as const;
+
+  constructor(
+    store: JsonFileStore,
+    config: Config,
+    private readonly providerLoader: () => Promise<DshProvider>,
+  ) {
+    super(store, config, 'dsh');
+  }
+
+  async prepare(): Promise<void> {
+    const provider = await this.providerLoader();
+    await provider.prepare();
+  }
+
+  async streamTurn(params: StreamChatParams): Promise<ReadableStream<string>> {
+    const provider = await this.providerLoader();
+    return provider.streamChat(params);
+  }
+
+  async readSessionTitle(_sessionId: string): Promise<string | null> {
+    return null;
+  }
+
+  async writeSessionTitle(_sessionId: string, _title: string): Promise<void> {
+    // DSH 不支持 session title 存储
   }
 }
 

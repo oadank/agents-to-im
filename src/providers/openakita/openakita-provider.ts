@@ -11,7 +11,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
+import { larkInstructions, buildAgentPersona } from '../../config/runtime-configs.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
@@ -126,6 +126,8 @@ interface CachedAcpSession {
   nextId: number;
   currentPromptId: number;
   alive: boolean;
+  /** 该进程/会话是否已注入过人设（buildAgentPersona+larkInstructions()） */
+  personaInjected: boolean;
   sessionRecoveryAttempts: number;
   pendingRetryPrompt: string | null;
   pendingRetrySettle: ((err?: string) => void) | null;
@@ -165,6 +167,54 @@ export class OpenAkitaProvider implements LLMProvider {
       try { cached.child.kill('SIGTERM'); } catch {}
       this.acpCache.delete(key);
     }
+  }
+
+  /**
+   * 彻底重置 ACP 会话（/new 用）：kill 子进程 + 清缓存 + 删除持久化 session 文件。
+   * 与 clearCache 不同：clearCache 保留磁盘上的 session 文件（下次仍会 session/load 旧会话），
+   * resetSession 连磁盘文件一起删，下次消息必然走 session/new 全新空白会话（2026-08-09 对齐客户端语义）。
+   */
+  resetSession(cacheKey?: string): void {
+    const key = cacheKey || 'default';
+    const cached = this.acpCache.get(key);
+    if (cached) {
+      console.log(`[openakita-provider] Reset ACP session: ${cached.sessionId}`);
+      cached.alive = false;
+      if (cached.currentSettle) {
+        const settle = cached.currentSettle;
+        cached.currentSettle = null;
+        settle('Session reset by /new');
+      }
+      try { cached.child.kill('SIGTERM'); } catch {}
+      this.acpCache.delete(key);
+    }
+    this.removeSavedSession(key);
+    console.log(`[openakita-provider] Removed saved session file for key=${key}`);
+  }
+
+  /** MIME → 扩展名映射（图片附件落盘用，同 openclaw-provider） */
+  private static MIME_EXT: Record<string, string> = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+  };
+
+  /**
+   * 图片附件 → ACP image block（2026-08-11 正确姿势，对齐 openclaw-provider）。
+   * openclaw/openakita 引擎 agentCapabilities.promptCapabilities.image=true，ACP prompt 数组支持
+   * {type:'image', data:<base64>, mimeType:<mime>} block，引擎会原样传给模型识图。
+   * ⚠️ 不要用"落盘+路径文本"方案：agent 读本地二进制文件是乱码，模型识别不到。
+   */
+  private static buildImageBlocks(files?: StreamChatParams['files']): Array<{ type: 'image'; data: string; mimeType: string }> {
+    if (!files || files.length === 0) return [];
+    const blocks: Array<{ type: 'image'; data: string; mimeType: string }> = [];
+    for (const file of files) {
+      if (!OpenAkitaProvider.MIME_EXT[file.type]) continue; // 只处理图片
+      blocks.push({ type: 'image', data: file.data, mimeType: file.type });
+    }
+    return blocks;
   }
 
   async prepare(): Promise<void> {
@@ -228,7 +278,7 @@ export class OpenAkitaProvider implements LLMProvider {
       emitCanonicalTurnEvent(controller, {
         type: 'status', data: { session_id: sdkSessionId || '' },
       });
-      return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio);
+      return this.sendAcpPrompt(existing, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio, params.files);
     }
 
     // 新建 session
@@ -286,7 +336,7 @@ export class OpenAkitaProvider implements LLMProvider {
           child, sessionId: sid, cwd, env,
           lineBuf: '', lastUsed: Date.now(),
           currentSettle: null, currentController: null, currentText: '', currentThinking: '', _inThinking: false, _textEmitted: false, _firstUpdateLogged: false,
-          nextId: 100, currentPromptId: 0, alive: true,
+          nextId: 100, currentPromptId: 0, alive: true, personaInjected: false,
           sessionRecoveryAttempts: 0, pendingRetryPrompt: null,
           pendingRetrySettle: null, pendingRetryController: null,
           pendingRetrySdkSessionId: undefined, pendingRetryAbortController: undefined,
@@ -394,7 +444,7 @@ export class OpenAkitaProvider implements LLMProvider {
         },
       }) + '\n');
 
-      setTimeout(() => { if (!sessionDone) { try { child.kill('SIGTERM'); } catch {} done(null); } }, 15_000);
+      setTimeout(() => { if (!sessionDone) { try { child.kill('SIGTERM'); } catch {} done(null); } }, 60_000);
     });
 
     if (!cached) {
@@ -408,7 +458,7 @@ export class OpenAkitaProvider implements LLMProvider {
     }
 
     this.saveSession(cacheKey, cached.sessionId, cwd);
-    return this.sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio);
+    return this.sendAcpPrompt(cached, prompt, controller, sdkSessionId, abortController, params.conversationHistory, params.fromAudio, params.files);
   }
 
   /** 处理 ACP 进程的 stdout 数据 */
@@ -600,6 +650,7 @@ export class OpenAkitaProvider implements LLMProvider {
     abortController: AbortController | undefined,
     conversationHistory?: StreamChatParams['conversationHistory'],
     fromAudio?: boolean,
+    files?: StreamChatParams['files'],
   ): Promise<void> {
     rtLog(`[openakita-provider] sendAcpPrompt ENTERED, cached.alive=${cached?.alive}`);
     return new Promise<void>((resolve) => {
@@ -610,11 +661,18 @@ export class OpenAkitaProvider implements LLMProvider {
       cached._inThinking = false;
       cached._textEmitted = false;
       cached.lastUsed = Date.now();
-      let enhancedPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${prompt}`;
-      if (!sdkSessionId) {
-        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
-        if (memory) {
-          enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + prompt;
+
+      // 处理图片附件：构造 ACP image block（引擎原生支持识图，直接传 base64，同 openclaw-provider）
+      const imageBlocks = OpenAkitaProvider.buildImageBlocks(files);
+
+      let enhancedPrompt = prompt;
+      if (!cached.personaInjected) {
+        enhancedPrompt = `${buildAgentPersona()}${larkInstructions()}\n\n${prompt}`;
+        if (!sdkSessionId) {
+          const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+          if (memory) {
+            enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${larkInstructions()}\n\n用户消息：` + prompt;
+          }
         }
       }
       cached.pendingRetryPrompt = enhancedPrompt;
@@ -680,12 +738,16 @@ export class OpenAkitaProvider implements LLMProvider {
 
       // 记忆注入
       const audioPrefix = fromAudio ? '[Audio] ' : '';
-      let fullPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${audioPrefix}${prompt}`;
-      if (!sdkSessionId) {
-        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
-        if (memory) {
-          fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + audioPrefix + prompt;
+      let fullPrompt = `${audioPrefix}${prompt}`;
+      if (!cached.personaInjected) {
+        fullPrompt = `${buildAgentPersona()}${larkInstructions()}\n\n${audioPrefix}${prompt}`;
+        if (!sdkSessionId) {
+          const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+          if (memory) {
+            fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${larkInstructions()}\n\n用户消息：` + audioPrefix + prompt;
+          }
         }
+        cached.personaInjected = true;
       }
 
       // 对话历史注入
@@ -704,7 +766,7 @@ export class OpenAkitaProvider implements LLMProvider {
         jsonrpc: '2.0', id: promptId, method: 'session/prompt',
         params: {
           sessionId: cached.sessionId,
-          prompt: [{ type: 'text', text: fullPrompt }],
+          prompt: [...imageBlocks, { type: 'text', text: fullPrompt }],
         },
       }) + '\n');
 

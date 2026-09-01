@@ -18,7 +18,7 @@ import {
   type PermissionResolution,
 } from '../claude/permission-gateway.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
-import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
+import { larkInstructions, buildAgentPersona } from '../../config/runtime-configs.js';
 
 const MIME_EXT: Record<string, string> = {
   'image/png': '.png',
@@ -178,7 +178,7 @@ function buildCollaborationMode(
     settings: {
       model,
       reasoning_effort: null,
-      developer_instructions: buildAgentPersona() + LARK_CLI_INSTRUCTIONS,
+      developer_instructions: buildAgentPersona() + larkInstructions(),
     },
   };
 }
@@ -566,8 +566,9 @@ async function buildUserInput(
   // 注入语音标签（如果是语音消息）
   const audioPrefix = fromAudio ? '[Audio] ' : '';
 
-  // 注入 LARK_CLI_INSTRUCTIONS 系统提示（与其他 provider 一致）
-  const systemPrefix = `${LARK_CLI_INSTRUCTIONS}\n\n`;
+  // ⚠️ 2026-08-09 修复：larkInstructions() 已在 developer_instructions（会话级，181 行）注入，
+  // 无需每轮重复拼到 user message。仅 fresh thread（history 注入）时补充，避免上下文线性膨胀。
+  const systemPrefix = history && history.length > 0 ? `${larkInstructions()}\n\n` : '';
 
   // If history is provided (session lost), inject as context
   let effectivePrompt = prompt;

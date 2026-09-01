@@ -4,10 +4,11 @@ $ErrorActionPreference = "Stop"
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $CONFIG_PATH = "C:\Users\oadan\.agents-to-im\config.env"
 $BOT = ($env:CTI_BOT ?? "codex").ToUpper()
-$dir = Join-Path $env:TEMP "openclaw"
+$dir = Join-Path $env:TEMP "agents-to-im-tts"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $env:TTS_CHANNEL = "feishu"
-$null = node "$SCRIPT_DIR\tts-wrapper.mjs" $Text 2>&1
+$startTime = Get-Date
+$null = node "$SCRIPT_DIR\tts-cli.mjs" $Text 2>&1
 $audioFile = Get-ChildItem -Path $dir -Filter "*TTS.opus" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 if (-not $audioFile -or -not (Test-Path $audioFile)) { exit 1 }
 $config = Get-Content $CONFIG_PATH -Encoding UTF8
@@ -28,4 +29,9 @@ $fileKey = $uploadResp.data.file_key
 $contentJson = @{file_key=$fileKey} | ConvertTo-Json -Compress
 $sendBody = @{receive_id=$ReceiveId;msg_type="audio";content=$contentJson} | ConvertTo-Json -Compress
 Invoke-RestMethod -Uri "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=$ReceiveType" -Method POST -Headers @{Authorization="Bearer $token";"Content-Type"="application/json"} -Body $sendBody | Out-Null
+# 发送成功后立即删除本次生成的音频（含 opus 最终文件 + raw 中间文件），不积累、无需定时清理
+# 只删本次 TTS 开始后生成的文件，避免误删其他并发 bot 正在使用的音频
+Get-ChildItem -Path $dir -ErrorAction SilentlyContinue |
+  Where-Object { $_.LastWriteTime -ge $startTime -and ($_.Extension -eq '.opus' -or $_.Name -like 'tts_*_raw.*') } |
+  Remove-Item -Force -ErrorAction SilentlyContinue
 Write-Host "OK"

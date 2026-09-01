@@ -36,7 +36,7 @@ export interface CompactConfig {
 
 export interface Config {
   defaultWorkDir: string;
-  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'openclaw' | 'gemini' | 'hermes' | 'openakita' | 'opencode';
+  defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'dsh' | 'openclaw' | 'gemini' | 'hermes' | 'openakita' | 'opencode';
   feishu: FeishuProfileConfig;
   /** 澶?bot 閰嶇疆鍒楄〃锛堟柊鏍煎紡锛?*/
   bots?: BotConfig[];
@@ -49,7 +49,7 @@ export interface BotConfig {
   name: string;
   appId: string;
   appSecret: string;
-  runtime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'openclaw' | 'gemini' | 'hermes' | 'openakita' | 'opencode';
+  runtime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'dsh' | 'openclaw' | 'gemini' | 'hermes' | 'openakita' | 'opencode';
   agentName?: string;
   modelGroup?: string;
   modelProvider?: string;
@@ -150,6 +150,7 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
             : runtimeStr === 'mimo' ? 'mimo'
               : runtimeStr === 'opencode' ? 'opencode'
               : runtimeStr === 'reasonix' ? 'reasonix'
+              : runtimeStr === 'dsh' ? 'dsh'
             : runtimeStr === 'openclaw' ? 'openclaw'
                 : runtimeStr === 'gemini' ? 'gemini'
                 : runtimeStr === 'hermes' ? 'hermes'
@@ -199,6 +200,7 @@ function parseBotConfigs(env: Map<string, string>): BotConfig[] {
             : runtimeStr === 'mimo' ? 'mimo'
               : runtimeStr === 'opencode' ? 'opencode'
               : runtimeStr === 'reasonix' ? 'reasonix'
+              : runtimeStr === 'dsh' ? 'dsh'
             : runtimeStr === 'openclaw' ? 'openclaw'
                 : runtimeStr === 'gemini' ? 'gemini'
                 : runtimeStr === 'hermes' ? 'hermes'
@@ -236,13 +238,14 @@ export function loadConfig(): Config {
   }
 
   const runtimeStr = env.get('CTI_DEFAULT_RUNTIME') || 'claude';
-  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'openclaw' | 'gemini' | 'hermes' | 'openakita' | 'opencode' =
+  const defaultRuntime: 'claude' | 'codex' | 'openhuman' | 'zcode' | 'mimo' | 'reasonix' | 'dsh' | 'openclaw' | 'gemini' | 'hermes' | 'openakita' | 'opencode' =
     runtimeStr === 'codex' ? 'codex'
       : runtimeStr === 'openhuman' ? 'openhuman'
         : runtimeStr === 'zcode' ? 'zcode'
           : runtimeStr === 'mimo' ? 'mimo'
             : runtimeStr === 'opencode' ? 'opencode'
             : runtimeStr === 'reasonix' ? 'reasonix'
+            : runtimeStr === 'dsh' ? 'dsh'
             : runtimeStr === 'openclaw' ? 'openclaw'
               : runtimeStr === 'gemini' ? 'gemini'
               : runtimeStr === 'hermes' ? 'hermes'

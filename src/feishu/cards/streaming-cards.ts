@@ -20,6 +20,10 @@ export function buildStreamingCardSkeleton(dividerInfo?: AgentDividerInfo): Reco
     if (dividerInfo.model) parts.push(`Model: ${dividerInfo.model}`);
     if (dividerInfo.provider) parts.push(`Provider: ${dividerInfo.provider}`);
     if (dividerInfo.session) parts.push(`Session: ${dividerInfo.session}`);
+    // 2026-08-09 修复：流式骨架也补余额（与 buildSimpleCard 保持一致）
+    if (dividerInfo.balance) {
+      parts.push(`余额: ${dividerInfo.balance}`);
+    }
     
     const infoText = parts.join(' | ') || 'Agent: N/A';
     elements.push({

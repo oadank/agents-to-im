@@ -66,6 +66,10 @@ export interface AgentDividerInfo {
   cacheHitRate?: number;
   /** 当日该 agent 的平均缓存命中率 */
   cacheAvgRate?: number;
+  /** 当前上下文占用百分比（0-100，基于最近一轮 prompt tokens / 1M 上限） */
+  contextPercent?: number;
+  /** DeepSeek 直连余额（如 ¥67.96），仅 reasonix 显示 */
+  balance?: string;
 }
 
 /**
@@ -92,6 +96,12 @@ export function buildCardContent(text: string, dividerInfo?: AgentDividerInfo): 
       parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}% | 平均:${dividerInfo.cacheAvgRate.toFixed(2)}%`);
     } else if (dividerInfo.cacheHitRate != null) {
       parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
+    }
+    if (dividerInfo.contextPercent != null) {
+      parts.push(`上下文: ${dividerInfo.contextPercent.toFixed(2)}%`);
+    }
+    if (dividerInfo.balance) {
+      parts.push(`余额: ${dividerInfo.balance}`);
     }
 
     const infoText = parts.join(' | ') || 'Agent: N/A';
@@ -131,6 +141,12 @@ export function buildPostContent(text: string, dividerInfo?: AgentDividerInfo): 
       parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}% | 平均:${dividerInfo.cacheAvgRate.toFixed(2)}%`);
     } else if (dividerInfo.cacheHitRate != null) {
       parts.push(`Cache: ${dividerInfo.cacheHitRate.toFixed(2)}%`);
+    }
+    if (dividerInfo.contextPercent != null) {
+      parts.push(`上下文: ${dividerInfo.contextPercent.toFixed(2)}%`);
+    }
+    if (dividerInfo.balance) {
+      parts.push(`余额: ${dividerInfo.balance}`);
     }
 
     const infoText = parts.join(' | ') || 'Agent: N/A';

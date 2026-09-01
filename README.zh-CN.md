@@ -1,119 +1,143 @@
-<div align="center">
-
 # agents-to-im
 
-### AI 编码代理困在你的终端里，团队却在飞书协作。这个项目把它们桥接起来 — 每个群一个会话，本地状态，流式卡片。
+> **把 AI 编码 Agent 桥接到飞书/Lark —— 一个机器人，接入你的整个 AI 团队。**
+
+基于 [francize/agents-to-im](https://github.com/francize/agents-to-im) 深度二次开发，原生支持 **11 种 AI 运行时**、**语音收发**、**缓存命中率监控**、**多机器人团队协作**与**统一认知注入**。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.6-green.svg)](https://nodejs.org/)
-[![Claude Code](https://img.shields.io/badge/Claude_Code-已支持-purple.svg)](https://docs.anthropic.com/en/docs/claude-code)
-[![Codex](https://img.shields.io/badge/Codex-已支持-orange.svg)](https://github.com/openai/codex)
 
-[English](README.md) · [配置指南](references/setup-guides.md) · [故障排查](references/troubleshooting.md)
-
-</div>
+[English](README.md) · [中文](README.zh-CN.md)
 
 ---
 
-> [!IMPORTANT]
-> **它动了什么：** 在 `~/.agents-to-im/` 下创建配置和状态文件（会话、绑定、消息历史）。以本地 daemon 方式运行在你的用户账号下。
->
-> **网络：** 只向飞书/Lark API 发起出站连接，不开放任何入站监听端口。
->
-> **凭据：** 存储在 `~/.agents-to-im/config.env`，文件权限 `600`。所有日志输出中的密钥均已脱敏。
->
-> **停用：** `agents-to-im stop`
->
-> **卸载：** `rm -rf ~/.agents-to-im`
+## 为什么你需要它（痛点）
 
-```bash
-npm install -g agents-to-im
-agents-to-im onboard   # 先选中文/英文，再按步骤引导权限、事件、回调和发布
-```
+Claude Code、Codex、Gemini、Hermes……每个 AI 编码工具都很强，但**它们都困在你的终端里**：
+
+| 痛点 | 每天在发生 |
+|------|-----------|
+| 🔄 **工具切换地狱** | Claude 写代码、Codex 查资料、Gemini 生图……每个都要打开独立终端、记各自的命令和 API Key |
+| 👁️ **黑盒不可见** | AI 在终端里闷头跑，你看不到它在想什么、调了什么工具、花了多少 token |
+| 💸 **重复烧钱** | 不知道缓存命中率，长对话反复重放上下文，API 费用悄悄涨 |
+| 🗣️ **只能在电脑前** | 团队在飞书协作，AI 却只能在你座位上用，离开电脑就失联 |
+| 🧩 **无法协作** | 多个 AI 各干各的，没有统一调度，没有团队认知共享 |
+
+**agents-to-im 把这一切搬进飞书**——你的 AI 团队 24 小时在线，随时随地在聊天里干活。
 
 ---
 
-> [!NOTE]
-> **项目来源：** `agents-to-im` 最初基于 [Claude-to-IM-skill](https://github.com/op7418/Claude-to-IM-skill) 演进而来，之后经历了重命名和较大规模重构。
-> 为了保留来源证据，历史重写前的完整提交链会保存在 `legacy/upstream-history` 分支。
+## 核心亮点（本项目的增强）
 
-## 解决什么问题
+### 1️⃣ 统一对接：一个机器人接入所有 AI，不用逐个配置 API
 
-Claude Code 和 Codex 是优秀的编码代理 — 但它们只在终端里和你对话。如果你的团队在飞书/Lark 上协作，没有一种干净的方式把这种能力带进 IM 工作空间，而不是把所有会话混进一个嘈杂的群聊线程里。
+不用为每个 AI 工具单独申请 App、单独配 Webhook、单独写适配层。**一个飞书应用实例 = 一个 AI 运行时**，11 种运行时开箱即用：
 
-常见的终端到聊天工具转发方案把聊天窗口直接当作会话容器 — 没有隔离、重启后无法恢复、飞书被降级为纯文本命令转发器。
+| 运行时 | 说明 |
+|--------|------|
+| **Claude Code** | Anthropic 官方编码 Agent |
+| **Codex** | OpenAI 编码 Agent（原生 Rust CLI） |
+| **Gemini** | Google 多模态模型 |
+| **Hermes** | 测试/巡检专用 Agent |
+| **MiMo** | 国产大模型（通过 LiteLLM 网关） |
+| **OpenAkita** | 开源 Agent 框架 |
+| **OpenClaw** | 深度调研 Agent |
+| **OpenCode** | 生图/前端 Agent |
+| **OpenHuman** | 人设 Agent |
+| **Reasonix** | 总控/调度 Agent |
+| **ZCode** | 额外编码运行时 |
 
-`agents-to-im` 采用不同的方式：私聊是控制面，每次 `/new:claude` 或 `/new:codex` 都会创建一个专属飞书群，绑定唯一的会话和 runtime。状态保存在本地，工作空间在 bridge 重启后依然可用。
+每个运行时通过 **LiteLLM 统一代理层**路由模型——换模型、换服务商只改一行配置，**不用动任何业务代码**。
+
+### 2️⃣ 分层可见：思考层 / 工具执行层 / 正文，一目了然
+
+不再是一个黑盒回复。飞书消息卡片**分层展示 AI 的完整工作过程**：
+
+```
+┌─────────────────────────────────────┐
+│ 💭 思考层    "先分析需求，拆成3步…"      │
+│ 🔧 工具执行  调用 Bash → 读取文件 → 编辑   │
+│ 📝 正文      "已完成：新增登录接口…"      │
+├─────────────────────────────────────┤
+│ Agent: codex │ Model: qwen3.7 │ 缓存: 99.2% │
+└─────────────────────────────────────┘
+```
+
+- **思考层（reasoning）**：AI 的推理过程单独展示，不污染正文
+- **工具执行层（tool_use）**：每一步调了什么工具、传入什么参数、返回什么结果，全部可见
+- **正文**：最终交付内容
+- **底部 meta 行**：**哪个机器人、用的什么模型、哪个服务商、session ID、缓存命中率**（最近一轮 + 当日平均）——每次回复都透明可见
+
+### 3️⃣ 缓存命中率监控：省钱看得见
+
+自动统计每个 session 的**缓存命中率**（`cache_read_input_tokens` / 总输入 token），每条回复底部实时显示**最近一轮 + 当日平均命中率**：
+
+- **Claude / Codex / OpenCode**（走 SDK/SSE 并上报 usage）：显示**各自真实**的缓存命中率，长对话命中率可达 **95-99%**，token 开销压到最低
+- **Reasonix**（ACP 直连）：读取本地 stats 文件显示真实命中率
+- **其他运行时**（未上报 usage 的）：显示 `--`（未统计），**不会用其他 bot 的数据顶替**
+- 数据按 session 独立统计，方便对比不同模型的成本表现
+
+> ⚠️ 已知限制：缓存命中率依赖运行时上报 `cache_read_input_tokens`，只有支持该字段的运行时才有真实数据；未上报的显示 `--` 而非编造数值。
+
+### 4️⃣ 语音收发：在飞书里用语音指挥 AI
+
+- **🎤 语音输入**：用户发语音 → 自动 ASR 转文字 → 带 `[Audio]` 标记进对话，AI 理解意图
+- **🔊 语音输出**：AI 回复自动/手动 TTS 合成语音（小米 → Edge → 本地多级回退），发回飞书
+- 语音转写不准时，AI 结合上下文猜测真实意图（如 "wiki" 被转成 "rick" 也能理解）
+
+### 5️⃣ 统一注入：团队认知自动同步给所有机器人
+
+通过 `runtime-configs.ts` + `team-data.json`，**一套配置同时注入所有 bot 的系统提示词**：
+
+- 团队协作规范、角色分工、通讯录（open_id）、交接铁律
+- 常用工具姿势（发消息/发图/语音/查 wiki）、MCP 指引
+- 知识循环（任务前搜经验 → 任务后沉淀）
+- **改一处，全部 bot 生效**——不用挨个维护每个人的 prompt
+
+### 6️⃣ 多机器人团队协作：一个群里一支 AI 团队
+
+不只一个机器人——**9 个 bot 在同一个飞书群各司其职**（总控/编码/文案/生图/测试/推送/巡检…），通过 Multica 调度专家团：
+
+- 总控接需求 → 拆解 → @ 对应队长 → 验收汇总，完整闭环
+- 每个 bot 独立会话、独立身份、独立模型
+- 定时巡检（autopilot）自动检查系统健康，**正常静默、异常才打扰**
+- bot 间消息过滤（`sender_type=app` 拦截），避免机器人互相刷屏
 
 ---
 
-## 看看效果
+## 基础功能（原版能力，本仓库完整保留）
 
-```
-你 → 私聊 Bot: /new:claude
-
-Bot → 创建新飞书群 "Claude 工作空间"
-Bot → 弹出模式选择卡片 (Code / Plan / Ask)
-你 → 选择 "Code"，选择工作目录 ~/my-project
-
-Bot → 群创建完毕，会话已绑定
-Bot → "需要我帮你处理 ~/my-project 中的什么问题？"
-
-你 → (在群里) 修复 auth.ts 中的登录重定向 bug
-
-Bot → [流式卡片，实时显示进度]
-Bot → [活动卡片：正在编辑 src/auth.ts]
-Bot → [权限卡片：允许写入文件？] [允许] [拒绝]
-Bot → 完成。已修复 handleCallback() 中的重定向循环。
-
-你 → /stop                    # 中断当前输出
-你 → /reset                   # 新会话，保留当前群
-你 → /mode                    # 切换 Claude 模式
-```
+- **私聊控制面 + 专属会话群**：`/new:claude` 创建独立飞书群绑定唯一会话，多会话互不干扰
+- **本地状态持久化**：会话/绑定/消息历史存在本地，重启后完整恢复
+- **CardKit 流式卡片**：AI 回复实时流式渲染，工具调用卡片单独展示
+- **权限系统**：allowlist 白名单控制谁能驱动 bot；危险操作需审批（permission request 卡片）
+- **命令白名单**：`/new /reset /stop /help /status /cwd /mode /bind /sessions` 等，路径不再被误判为命令
+- **多实例部署**：每个 bot 独立 App/端口/工作目录，互不干扰
+- **飞书用户身份发送**（OAuth）：可选以用户而非机器人身份发消息
+- **动态模型切换**：改配置重启即换模型，divider 自动更新
+- **飞书/Lark 双域支持**：`CTI_FEISHU_DOMAIN` 一键切换国际版
 
 ---
 
-## 安装
+## 架构
 
-### 推荐：通过 npm 安装
-
-```bash
-npm install -g agents-to-im
-agents-to-im onboard
+```
+飞书用户
+  │
+  ├─ feishu-claude ──→ LiteLLM ──→ claude-model
+  ├─ feishu-codex ──→ LiteLLM ──→ codex-model
+  ├─ feishu-gemini ──→ LiteLLM ──→ gemini-model
+  ├─ feishu-hermes ──→ LiteLLM ──→ codex-model
+  ├─ feishu-mimo ──→ LiteLLM ──→ deepseek-v4f
+  ├─ …（共 9-11 个实例）…
+  │
+  └─ 统一注入: runtime-configs.ts + team-data.json（团队认知同步）
+        │
+        ▼
+  每个 bot 系统提示词 = 基础指令 + 团队规范 + 语音/卡片/MCP 指引
 ```
 
-`onboard` 现在会优先让你选择中文或英文；所有选择题都支持 `↑/↓` 和 `Enter`；复制 scopes JSON、打开飞书页面前都会先确认，每一步做完后再按回车继续。
-
-后续统一通过 `agents-to-im ...` 管理 daemon：
-
-```bash
-agents-to-im onboard      # 显式运行引导
-agents-to-im start        # 启动 daemon
-agents-to-im stop         # 停止 daemon
-agents-to-im restart      # 配置变更后重启
-agents-to-im status       # 检查运行状态
-agents-to-im doctor       # 诊断常见问题
-agents-to-im upgrade      # 升级本地服务并在运行中时重启 bridge
-agents-to-im logs 200     # 查看最近日志
-```
-
-<details>
-<summary><b>备选：源码安装</b>（用于开发/调试）</summary>
-
-```bash
-git clone https://github.com/francize/agents-to-im.git
-cd agents-to-im
-npm install
-npm run build:all
-
-mkdir -p ~/.agents-to-im
-cp config.env.example ~/.agents-to-im/config.env
-$EDITOR ~/.agents-to-im/config.env
-
-bash scripts/daemon.sh restart
-```
-
-</details>
+每个实例独立：飞书 App 配置、端口、工作目录、会话状态、模型路由。
 
 ---
 
@@ -121,294 +145,114 @@ bash scripts/daemon.sh restart
 
 ### 前置条件
 
-- Node.js 20.6+（使用内置 `--env-file=` 标志安全加载 config.env）
-- 一个开启了 Bot 能力的飞书/Lark 自建应用（[配置指南](references/setup-guides.md)）
-- 本地已安装并认证 Claude Code CLI 和/或 Codex CLI
+- Node.js ≥ 20.6
+- 至少一个已安装并登录的 AI CLI（Claude Code / Codex / …）
+- 一个飞书自定义应用（开放平台创建，开启机器人能力）
 
-### 1. 创建并配置飞书/Lark 应用
-
-1. 在[飞书开放平台](https://open.feishu.cn/app)或 [Lark](https://open.larksuite.com/app) 创建自建应用
-2. 开启 **Bot** 能力
-3. 使用 [references/setup-guides.md](references/setup-guides.md) 中的完整 scopes JSON 一次性导入权限
-4. 先发布一次应用版本
-5. 本地启动 bridge 后，再去 `Events & Callbacks` 切到**长连接**
-6. 添加事件 `im.message.receive_v1`、`im.message.message_read_v1`、`im.chat.updated_v1`、`im.chat.member.bot.added_v1`
-   `im.chat.updated_v1` 用于把用户手动修改的群名回写到 Codex thread 或 Claude session。
-7. 添加回调 `card.action.trigger`
-8. 再发布一次应用版本
-9. 可选：在 Bot 菜单里添加 `/new:claude` 和 `/new:codex` 悬浮菜单
-
-### 2. 配置 bridge
+### 安装
 
 ```bash
+npm install -g agents-to-im
+
+# 克隆本仓库
+git clone https://github.com/oadank/agents-to-im.git
+cd agents-to-im
+npm install && npm run build
+```
+
+### 配置
+
+```bash
+# 创建配置目录
 mkdir -p ~/.agents-to-im
 cp config.env.example ~/.agents-to-im/config.env
+
+# 编辑：填入飞书 App ID/Secret、允许的用户、默认工作目录
 $EDITOR ~/.agents-to-im/config.env
 ```
 
-单 Bot 最小配置：
+最小配置：
 
-```env
-CTI_FEISHU_APP_ID=cli_xxx
-CTI_FEISHU_APP_SECRET=xxx
+```bash
 CTI_DEFAULT_WORKDIR=/path/to/your/project
+CTI_FEISHU_APP_ID=cli_XXXXXXXXXXXXX
+CTI_FEISHU_APP_SECRET=your-secret
+CTI_FEISHU_ALLOWED_USERS=ou_your_open_id     # 安全：只允许你自己
+CTI_DEFAULT_RUNTIME=claude                    # 或 codex/gemini/hermes/...
+CTI_DASHBOARD_PORT=13580                      # 每个实例独立端口
 ```
 
-<details>
-<summary><b>所有配置项</b></summary>
-
-| 变量 | 必填 | 说明 |
-|------|------|------|
-| `CTI_DEFAULT_WORKDIR` | 是 | 新会话的默认工作目录 |
-| `CTI_FEISHU_APP_ID` | 是 | 飞书 App ID |
-| `CTI_FEISHU_APP_SECRET` | 是 | 飞书 App Secret |
-| `CTI_FEISHU_DOMAIN` | 否 | 国际版填 `lark` |
-| `CTI_FEISHU_ALLOWED_USERS` | **是** | 逗号分隔的发送者 ID（open_id / user_id / union_id）。空值会拒绝所有人；填单独一个 `*` 表示放行所有（不安全，见 SECURITY.md）。 |
-| `CTI_FEISHU_SHOW_TOOL_CALL_CARDS` | 否 | 设为 `true` 后在群会话里展示 tool 调用活动卡片，包括 MCP/工具、命令执行和文件修改卡片。默认 `false`，普通助手消息卡片始终保留。 |
-| `CTI_CLAUDE_CODE_EXECUTABLE` | 否 | 显式指定 Claude CLI 路径。Windows 下接受 npm 安装出来的 `claude.cmd`，bridge 会自动映射到真实 CLI 入口。 |
-
-Claude 和 Codex 的默认模型、审批策略都直接由本机 CLI 自己决定。Codex 会话直接复用本地 `~/.codex/config.toml` 中的认证、trusted 目录、sandbox 和审批策略。
-如果 bridge 启动之后你才安装或更新 Claude Code，需要重启 bridge，让 daemon 重新读取新的 CLI 路径和环境。
-
-</details>
-
-### 3. 启动并验证
+### 启动
 
 ```bash
-agents-to-im start
-agents-to-im doctor        # 检查常见问题
-agents-to-im status        # 确认 bridge 正在运行
+# 开发模式
+npm run dev
+
+# 生产模式（推荐）
+npm start                # 或 scripts/daemon.ps1 / daemon.sh
 ```
 
-打开 `http://127.0.0.1:13578` 访问本地状态面板，然后私聊 Bot 发送 `/new:claude` 或 `/new:codex`。
+**Windows 推荐 PM2 托管**（多 bot 场景）：
+
+```bash
+pm2 start ecosystem.config.js
+pm2 save && pm2 startup   # 开机自启
+```
 
 ---
 
-## 工作原理
+## 配置参考（主要变量）
 
-私聊是控制面。每条 `/new:*` 命令会创建一个新飞书群，绑定唯一的会话和 runtime。本地 JSON 状态保证工作空间在 bridge 重启后可恢复。
-
-```mermaid
-flowchart LR
-  A["私聊: /new:claude"] --> B["Bot 创建飞书群"]
-  B --> C["1 个群 = 1 个会话 = 1 种 runtime"]
-  C --> D["本地状态: 绑定、消息、resume 标识"]
-  D --> E["bridge 重启 → 同一工作空间"]
-  C --> F["CardKit 流式、活动卡、权限按钮"]
-```
-
-<details>
-<summary><b>飞书原生交互</b></summary>
-
-| 交互方式 | 行为 |
-|----------|------|
-| 流式预览 | 优先 CardKit，降级为 interactive-card patch，最后退到普通文本 |
-| 权限处理 | 以审批卡片按钮为主；仅当群里恰好只有一个待处理请求时，`1/2/3` 可作为快捷回复 |
-| 活动可见性 | 命令/文件/计划进度以卡片呈现 |
-| 结构化提问 | Runtime 后续问题渲染为飞书卡片；敏感输入退回本地 CLI |
-| 群命名 | 首轮成功后自动重命名；Claude 非默认模式追加后缀如 `[Plan Mode]` |
-
-</details>
-
-<details>
-<summary><b>状态与恢复</b></summary>
-
-所有状态保存在 `~/.agents-to-im/`：
-
-| 路径 | 内容 |
+| 变量 | 说明 |
 |------|------|
-| `data/sessions.json` | 会话元数据、runtime、model、标题、resume 标识 |
-| `data/bindings.json` | 群到会话的绑定、工作目录、模式、模型路由 |
-| `data/messages/` | 按会话持久化的消息历史 |
-| `runtime/status.json` | bridge 运行状态和最近退出原因 |
-| `runtime/bridge.pid` | 当前 daemon PID |
+| `CTI_FEISHU_APP_ID` / `CTI_FEISHU_APP_SECRET` | 飞书应用凭证 |
+| `CTI_FEISHU_ALLOWED_USERS` | 允许驱动的用户白名单（安全关键） |
+| `CTI_DEFAULT_RUNTIME` | 默认运行时（claude/codex/gemini/hermes/mimo/openakita/openclaw/opencode/openhuman/reasonix/zcode） |
+| `CTI_DASHBOARD_PORT` | 控制面板端口（多实例各不同） |
+| `CTI_DEFAULT_WORKDIR` | 默认工作目录 |
+| `CTI_FEISHU_DOMAIN` | `feishu`（默认）或 `lark`（国际版） |
+| `CTI_FEISHU_SHOW_TOOL_CALL_CARDS` | 是否显示工具调用卡片 |
+| `CTI_FEISHU_SHOW_AGENT_DIVIDER` | 是否显示底部 Agent/模型/缓存 meta 行 |
+| `CTI_AGENT_NAME` / `CTI_MODEL_GROUP` / `CTI_MODEL_PROVIDER` | meta 行显示的 Agent/模型/服务商 |
+| `CTI_STUCK_TIMEOUT_MS` | 流式响应卡死超时（默认 5 分钟自动中断） |
 
-bridge 重启后保留的内容：
-- 群与会话的绑定关系
-- Runtime 选择（Claude 或 Codex）
-- 消息历史
-- Resume 标识（支持续上同一底层会话）
-- `/reset` 在同一个群里创建全新会话
-
-</details>
+语音相关：`TTS_PROVIDER`（指定 TTS 服务商）、`CTI_BOT`（语音脚本使用的 bot 身份）。
 
 ---
 
-## 命令
+## 常见命令
 
-### 私聊（控制面）
-
-| 命令 | 说明 |
+| 命令 | 作用 |
 |------|------|
-| `/new:claude` | 选择工作目录和 Claude 模式，创建专属群 |
-| `/new:codex` | 选择工作目录，创建专属 Codex 群 |
-| `/resume:claude` | 恢复最近的 Claude 会话到新群 |
-| `/resume:codex` | 恢复最近的 Codex 会话到新群 |
-
-其他私聊消息只会返回帮助提示。
-
-### 绑定群内
-
-| 命令 | 说明 |
-|------|------|
-| *(普通消息)* | 继续当前会话 |
-| `/mode` | 切换 Claude 模式（卡片）或 Codex bridge 模式（`/mode plan\|code\|ask`） |
-| `/plan` | 进入交互式计划；`/plan <需求>` 直接开始 |
-| `/stop` | 中断当前输出（等价于终端中按 `Esc`） |
-| `/reset` | 新会话，保留当前群和 runtime |
+| `/new[:runtime]` | 创建新会话群（可指定运行时） |
+| `/reset` | 重置当前会话 |
+| `/stop` | 停止当前任务 |
+| `/status` | 查看状态 |
+| `/cwd` | 查看/切换工作目录 |
+| `/mode` | 切换模式 |
+| `/bind` / `/sessions` | 会话绑定管理 |
 
 ---
 
-## 语音识别配置（语音消息转文字）
+## 项目结构
 
-agents-to-im 内置语音识别能力（飞书收到语音消息自动转文字后进入对话），**不依赖外部技能目录**。
-
-### 依赖
-
-| 依赖 | 用途 | 安装 |
-|------|------|------|
-| sherpa-onnx | ASR 引擎（SenseVoice 模型） | 下载：https://github.com/k2-fsa/sherpa-onnx/releases（选 Windows 或 Linux 对应包） |
-| SenseVoice INT8 模型 | 中文/英文/日语/粤语识别 | 同上 releases 或 HF：SenseVoiceSmall |
-| ffmpeg | 音频转 wav（16k 单声道） | `apt install ffmpeg` 或 Windows 静态版 https://johnvansickle.com/ffmpeg/ |
-
-### 环境变量
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `ASR_SERVICE_PORT` | 内建 ASR 服务端口 | `18790` |
-| `ASR_SHARPA_BIN` | sherpa-onnx-offline 可执行文件路径 | Windows: `C:\D\opt\sherpa-onnx\bin\sherpa-onnx-offline.exe` |
-| `ASR_MODEL_DIR` | SenseVoice 模型目录（含 model.int8.onnx + tokens.txt） | Windows: `C:\D\opt\sherpa-onnx\models\sensevoice-int8` |
-| `ASR_FFMPEG_BIN` | ffmpeg 可执行文件路径 | Windows: WinGet 路径 / 其他: `ffmpeg`（PATH） |
-
-> 非 Windows 部署必须设置 `ASR_SHARPA_BIN` / `ASR_MODEL_DIR`（无默认值）。
-
-### 启动 ASR 服务
-
-```bash
-# 终端 1：ASR 常驻服务（端口 18790）
-node src/feishu/asr-service.mjs
-
-# 终端 2：OpenAI 兼容层（可选，端口 18791）
-node src/feishu/asr-openai-compat.mjs
 ```
-
-> 生产环境建议用 PM2 托管这两个服务（`pm2 start src/feishu/asr-service.mjs --name asr-service`），确保崩溃自动拉起。
-
-### 验证
-
-```bash
-# 本地测试识别
-curl -X POST http://127.0.0.1:18790/transcribe \
-  -H "Content-Type: application/json" \
-  -d '{"audioPath":"/path/to/16k.wav"}'
-# 返回 {"text":"识别出的文字"}
+src/
+├── providers/       # 11 个运行时适配（claude/codex/gemini/hermes/mimo/openakita/openclaw/opencode/openhuman/reasonix/zcode）
+├── bridge/          # 会话引擎、流式处理、缓存统计、权限
+├── feishu/
+│   ├── cards/       # CardKit 卡片（流式/工具调用/会话/权限）
+│   ├── handlers/    # 入站消息/卡片回调/会话处理
+│   ├── adapter.ts   # 飞书适配 + meta 行（Agent/模型/缓存命中率）
+│   ├── tts-cli.mjs / edge-tts.mjs / asr-service.mjs  # 语音收发
+│   └── send-feishu-voice.ps1 / .sh   # 语音发送脚本
+└── config/
+    ├── runtime-configs.ts  # 统一注入（所有 bot 系统提示词）
+    └── team-data.json      # 团队通讯录/协作配置
 ```
 
 ---
-
-## 常见问题
-
-**同一个 Bot 能同时用 Claude 和 Codex 吗？**
-可以。当前 bridge 默认就是单 Bot 形态，在同一个飞书/Lark Bot 后面按会话选择 Claude 或 Codex。
-
-**bridge 重启后会怎样？**
-群、会话绑定和消息历史都保存在本地。在群里发消息即可继续上次的工作。
-
-**我的代码会被发到飞书服务器吗？**
-Bridge 只把 AI 生成的文本和活动摘要发到飞书。你的源代码留在本地 — 只有代理的输出和你的消息经过飞书 API。
-
-**Gemini agent 走什么模型？需要 Google API key 吗？**
-不需要 Google API key。Gemini agent 通过 `GeminiProvider`（OpenAI 兼容格式）走 LiteLLM 代理调用 OpenCode Go 的 mimo-v2.5（主力）+ deepseek-v4-flash（备选）。配置在 `config.env` 的 `CTI_BOT_GEMINI_MODEL_GROUP=gemini-model`，模型组在 LiteLLM 配置文件里定义。
-
-**MiMo agent 走什么模型？**
-MiMo agent 通过 `MiMoProvider` 走 mimo acp → LiteLLM → OpenCode Go mimo-v2.5。Token 自动刷新（cron 每 30 分钟），无需手动维护。
-
-**多个 bot 能共用一个 agents-to-im 服务吗？**
-可以。debian13 上 claude/mimo/gemini 三个 bot 共用一个 `agents-to-im.service`，统一配置 `/opt/.agents-to-im/config.env`，各 bot 独立记忆目录、独立 OAuth token。这是 `eadd9ad` 提交后的统一多 bot 架构。
-
-**AskUserQuestion 卡片在飞书里不弹出来怎么办？**
-检查 `config.env` 里 `CTI_DISABLE_PERMISSION_CHECK` 是否为 `true`，以及 `finalDelivery` 是否改为 `replace_preview`（`20dc496` 修复）。
-
----
-
-## 语音生成配置（TTS，语音回复）
-
-agents-to-im 内置 TTS 能力（飞书 bot 可发语音回复），**不依赖外部技能目录**。6 个 TTS 通道自动回退。
-
-### 通道与优先级（auto 模式）
-
-| 优先级 | 通道 | 类型 | 需要 key? |
-|--------|------|------|-----------|
-| 1 | 小米 mimo | OpenAI 兼容 API | `TTS_XIAOMI_KEY` |
-| 2 | 微软 Edge | WebSocket | **否（免费）** |
-| 3 | 本地 MeloTTS | sherpa-onnx 本地 | **否** |
-| 4 | 旺旺 | HTTP API | `TTS_WANGWANG_URL` |
-| 5 | 阿里 | HTTP API | `TTS_ALI_KEY` |
-
-> 默认无 key 时自动走：微软 Edge（免费）→ 本地 Melo，零成本可用。
-
-### 环境变量
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `TTS_SHARPA_BIN` | sherpa-onnx-offline-tts 可执行文件路径 | Windows: `C:\D\opt\sherpa-onnx\bin\sherpa-onnx-offline-tts.exe` |
-| `TTS_MODEL_DIR` | 本地 TTS 模型目录（含 melo/、matcha/ 子目录） | Windows: `C:\D\opt\sherpa-onnx\models` |
-| `TTS_FFMPEG_BIN` | ffmpeg 路径（转码 opus/mp3） | Windows: WinGet 路径 / 其他: `ffmpeg` |
-| `TTS_EDGE_VOICE` | Edge TTS 音色 | `zh-CN-XiaoxiaoNeural` |
-| `TTS_XIAOMI_KEY` / `TTS_XIAOMI_BASE_URL` / `TTS_XIAOMI_MODEL` | 小米通道 | - |
-| `TTS_ALI_KEY` / `TTS_ALI_VOICE` | 阿里通道 | - |
-| `TTS_PROVIDER` | 指定通道（auto/xiaomi/edge/melo/matcha/wangwang/ali） | `auto` |
-| `CTI_TTS_PROVIDER` | 同上（agents-to-im 兼容名） | `auto` |
-
-> 非 Windows 部署必须设置 `TTS_SHARPA_BIN` / `TTS_MODEL_DIR`（无默认值）。旧配置兼容：若存在 `openclaw.json` 且未设环境变量，会读取其 `messages.tts.providers`。
-
-### 验证
-
-```bash
-# 本地测试合成（输出 opus 文件路径）
-node src/feishu/tts-wrapper.mjs "测试语音"
-```
-
----
-
-**Dashboard 看不到聊天记录 / 卡住怎么办？**
-检查 OpenClaw Gateway 的 `bind=lan` 配置，以及 `.env` 是否改成 tailnet IP（`b12b61e` 修复）。详见 [openclaw-dashboard-fix.md](https://github.com/oadank/agents-to-im/blob/my-changes/docs/openclaw-dashboard-fix.md)。
-
----
-
-## 特别致谢
-
-特别感谢 [op7418/Claude-to-IM-skill](https://github.com/op7418/Claude-to-IM-skill)。
-
-本项目受该项目启发，并在这个方向上做了面向飞书/Lark 的二次 vibe 和收敛实现。
-
----
-
-## 故障排查
-
-| 症状 | 第一步 |
-|------|--------|
-| bridge 启动失败 | `agents-to-im doctor` |
-| 私聊 Bot 没反应 | 检查应用是否已发布、Bot 是否启用、长连接是否配置 |
-| `/new:*` 建群但绑定失败 | 检查应用权限和本地 runtime 可用性 |
-| 卡片退化为普通文本 | 验证 CardKit 和消息更新权限 |
-| 权限按钮没反应 | 验证 `card.action.trigger` 已配置且应用版本已发布 |
-
-完整排障指南：[references/troubleshooting.md](references/troubleshooting.md)
-
----
-
-## 贡献
-
-欢迎贡献。请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解贡献指南。
-
-```bash
-npm install
-npm run typecheck
-npm test
-npm run build:all
-```
 
 ## License
 
-[MIT](LICENSE)
+MIT

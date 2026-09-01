@@ -1,4 +1,5 @@
 import type { InboundMessage, ChannelBinding } from '../../bridge/types.js';
+import { getBridgeContext } from '../../bridge/context.js';
 import { loadConfig } from '../../config/config.js';
 import { compactConversation, applyCompactResult } from '../../bridge/compact.js';
 import { interruptActiveTask, isSessionBusy } from '../../bridge/bridge-manager.js';
@@ -10,6 +11,7 @@ import type {
 } from '../types.js';
 import { buildRouteKey, parseImageResourceKey, parseTextContent, parseAudioFileKey } from '../utils.js';
 import { pendingInboundImageKey } from '../utils.js';
+import type { MultiplexLLMProvider } from '../../providers/multiplex.js';
 import fs from 'node:fs';
 
 // 实时日志：绕过 NSSM stdout 缓冲，直接写硬盘
@@ -178,7 +180,7 @@ export async function handleIncomingEvent(
           rtLog(`[VOICE-DEBUG] Sending transcription result: "${transcribedText.substring(0, 50)}..."`);
           await ctx.sendAsPost(
             inbound.address,
-            `语音转写：${transcribedText}`,
+            `语音转写：「${transcribedText}」`,
             messageId,
           );
           rtLog(`[VOICE-DEBUG] Transcription message sent successfully`);
@@ -352,15 +354,31 @@ export async function handleDirectMessage(
     await ctx.handleCreateSessionCommand(sender, inbound, 'mimo');
     return;
   }
-  if (command === '/new') {
-    const runtime = ctx.getDefaultRuntime();
+  if (command === '/new:dsh' || command === '/new') {
+    const runtime = command === '/new:dsh' ? 'dsh' : ctx.getDefaultRuntime();
     // 私聊：自动绑定当前对话（不弹卡片、不拉群）
     try {
       await ctx.ensureRuntimeAvailable(runtime);
+      // 2026-08-09 修复：/new 必须真正重置引擎（清 ACP 缓存 + 删磁盘会话文件），
+      // 否则只是换路由 ID，引擎仍 resume 旧会话，上下文不归零（对齐客户端"新建空会话"语义）。
+      // 对所有 runtime 生效：ACP 类（reasonix/mimo/openclaw/opencode/openakita）走 resetSession 删磁盘文件，
+      // 其他 runtime 走 clearCache 或跳过（其会话由 sdkSessionId 清空逻辑接管）。
+      {
+        const multiplex = getBridgeContext().llm as MultiplexLLMProvider;
+        // ⚠️ 2026-08-10 修复：resetSession 不能传 codepilotSessionId/sdkSessionId 单 key——
+        // acpCache 的 key 是 params.sdkSessionId（引擎真实 sessionId），而 codepilotSessionId 是
+        // agents-to-im 内部 ID，两者不匹配会导致缓存里找不到引擎进程、kill 落空、/new 后仍
+        // resume 旧会话、聊天记录不新建（2026-08-10 用户实测：/new 后后端没有新聊天记录文件）。
+        // 正确姿势：不传 key，resetSession 清空整个 acpCache（kill 全部引擎进程 + 归档指针），
+        // 下次消息必然走 session/new 全新空白会话；旧聊天记录文件保留不删。
+        await multiplex.resetProviderCache(runtime);
+        console.log(`[feishu-adapter] /new: ${runtime} provider cache reset done (all keys)`);
+      }
       const store = ctx.getStore();
       const options: Parameters<typeof ctx.createBoundSession>[2] = {
-        // reasonix 用 CTI_REASONIX_ACP_CWD（如 C:\），其他 bot 用 USERPROFILE
-        cwd: process.env.CTI_REASONIX_ACP_CWD
+        // reasonix 用 CTI_REASONIX_ACP_CWD（如 C:\），dsh 用 CTI_DSH_ACP_CWD，其他 bot 用 USERPROFILE
+        cwd: process.env.CTI_DSH_ACP_CWD
+          || process.env.CTI_REASONIX_ACP_CWD
           || (process.platform === 'win32' ? (process.env.USERPROFILE || 'C:\\Users\\oadan') : '/opt'),
         bindingMode: 'code',
         existingChatId: inbound.address.chatId,
@@ -591,6 +609,8 @@ async function maybeOfferInterrupt(
 // ── 自动插队（卡片弹出后 N 秒未操作自动执行"立即插队"）──
 // key = chatId，避免同一会话多条消息的定时器互相干扰；用户手动点"稍后处理"时取消。
 const autoInterruptTimers = new Map<string, ReturnType<typeof setTimeout>>();
+// 自动插队：卡片弹出后 N 秒未操作，自动执行"立即插队"（默认 10s，可用 CTI_AUTO_INTERRUPT_MS 覆盖）
+// 2026-08-09 修复（用户要求）：恢复 10s。原 60s 会让卡片长时间挂着且到点误杀已开始的回复。
 const AUTO_INTERRUPT_MS = parseInt(process.env.CTI_AUTO_INTERRUPT_MS || '10000', 10);
 
 // 插队卡片 messageId 映射：原始消息 messageId → { 卡片 messageId + openMessageId }（用于按钮点击后 patch 卡片状态）
@@ -624,9 +644,35 @@ function scheduleAutoInterrupt(
   if (existing) clearTimeout(existing); // 只保留最新一条消息的自动插队
   const timer = setTimeout(async () => {
     autoInterruptTimers.delete(chatId);
-    // 到点时若任务已不忙（自己完成/已被打断），什么都不做
-    if (!isSessionBusy(sessionId)) {
-      rtLog(`[autoInterrupt] chat=${chatId} session=${sessionId.slice(0, 8)} no longer busy, skip auto interrupt`);
+    // 2026-08-09 修复（误杀 bug）：到点时先判断排队消息是否仍在队列等待。
+    // 若消息已被 consumeOne 取出开始处理（bot 已接手这条消息），则绝不能再 abort——
+    // 否则会把正在回复的新消息打断（这正是"没插队却断开"的根因）。
+    const stillQueued = typeof ctx.isMessageQueued === 'function' && ctx.isMessageQueued(inbound.messageId);
+    if (!isSessionBusy(sessionId) || !stillQueued) {
+      rtLog(`[autoInterrupt] chat=${chatId} session=${sessionId.slice(0, 8)} busy=${isSessionBusy(sessionId)} stillQueued=${stillQueued} -> skip auto interrupt (bot took over or task finished)`);
+      // bot 已接手排队消息或任务已完成：把卡片更新为"已接手"状态，让按钮消失、卡片不再挂着
+      try {
+        const handledCard = buildInterruptCard({
+          chatId,
+          messageId: inbound.messageId,
+          botName: ctx.label,
+          status: 'no', // 无按钮状态："已排队，将在当前任务完成后自动处理"
+        });
+        const cardInfo = getInterruptCardMessageId(inbound.messageId);
+        const attempts = [
+          cardInfo?.messageId ? { id: cardInfo.messageId, messageIdType: 'message_id' as const } : null,
+          cardInfo?.openMessageId ? { id: cardInfo.openMessageId, messageIdType: 'message_id' as const } : null,
+        ].filter((a): a is { id: string; messageIdType: 'message_id' } => !!a);
+        for (const attempt of attempts) {
+          try {
+            await ctx.patchInteractiveCard(attempt.id, handledCard, { messageIdType: attempt.messageIdType });
+            rtLog(`[autoInterrupt] interrupt card updated to handled status: ${attempt.id}`);
+            break;
+          } catch { /* try next */ }
+        }
+      } catch (e) {
+        rtLog(`[autoInterrupt] update handled card failed: ${e}`);
+      }
       return;
     }
     const interrupted = interruptActiveTask(sessionId);
@@ -702,7 +748,7 @@ export async function handleGroupMessage(
   // 群命令（/reset, /new, /stop, /mode, /plan, /compact）不需要 @ bot，所有 bot 各自处理自己的会话
   const isGroupCommand = lower === '/reset' || lower === '/new' || lower.startsWith('/new')
     || lower === '/stop' || lower.startsWith('/mode') || lower === '/plan' || lower.startsWith('/plan ')
-    || lower === '/compact';
+    || lower === '/compact' || lower === '/balance';
 
   if (!isGroupCommand) {
     // 非命令消息必须 @到本 bot 才回复，不 @ 静默忽略
@@ -764,6 +810,62 @@ export async function handleGroupMessage(
     await ctx.handlePlanCommand(binding.id, inbound);
     return;
   }
+  if (lower === '/balance') {
+    // 2026-08-09 新增：查 DeepSeek 直连余额（仅 reasonix 可用，其他走 LiteLLM 的 bot 无此接口）
+    // 只允许用户本人（陈丹）查询，避免群里其他人看到余额
+    const ownerId = process.env.CTI_BOT_OWNER_OPEN_ID || 'ou_a1dec4c18c6ce9030d6330e2dce78949';
+    const senderId = inbound.address.userId || '';
+    if (senderId && senderId !== ownerId) {
+      await ctx.sendAsPost(inbound.address, '仅对话所有者可查询余额。', inbound.messageId);
+      return;
+    }
+    try {
+      const key = process.env.DEEPSEEK_API_KEY
+        || (() => {
+          const envFile = 'C:\\Users\\oadan\\AppData\\Roaming\\reasonix\\.env';
+          try {
+            const line = fs.readFileSync(envFile, 'utf-8').split(/\r?\n/).find((l) => l.startsWith('DEEPSEEK_API_KEY='));
+            return line ? line.slice('DEEPSEEK_API_KEY='.length).trim() : '';
+          } catch { return ''; }
+        })();
+      if (!key) {
+        await ctx.sendAsPost(inbound.address, '未找到 DEEPSEEK_API_KEY，无法查询余额。', inbound.messageId);
+        return;
+      }
+      const resp = await fetch('https://api.deepseek.com/user/balance', {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      if (!resp.ok) {
+        await ctx.sendAsPost(inbound.address, `余额查询失败（HTTP ${resp.status}）：${(await resp.text()).slice(0, 120)}`, inbound.messageId);
+        return;
+      }
+      const data = await resp.json() as {
+        is_available?: boolean;
+        balance_infos?: Array<{ currency: string; total_balance: string; granted_balance: string; topped_up_balance: string }>;
+      };
+      const info = data.balance_infos?.[0];
+      if (!info) {
+        await ctx.sendAsPost(inbound.address, '余额接口返回异常（无 balance_infos）。', inbound.messageId);
+        return;
+      }
+      const status = data.is_available === false ? '⚠️ 不可用' : '✅ 可用';
+      const lines = [
+        `💰 DeepSeek 余额`,
+        `━━━━━━━━━━━━━━`,
+        `总额：¥${info.total_balance}`,
+        `其中 赠送：¥${info.granted_balance}`,
+        `　　　充值：¥${info.topped_up_balance}`,
+        `状态：${status}`,
+      ];
+      await ctx.sendAsPost(inbound.address, lines.join('\n'), inbound.messageId);
+      rtLog(`[balance] query done: total=${info.total_balance} ${info.currency}`);
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      rtLog(`[balance] query error: ${errMsg}`);
+      await ctx.sendAsPost(inbound.address, `余额查询出错：${errMsg.slice(0, 150)}`, inbound.messageId);
+    }
+    return;
+  }
   if (lower === '/compact') {
     if (!binding) {
       await ctx.sendAsPost(inbound.address, '当前群尚未绑定会话。', inbound.messageId);
@@ -803,7 +905,8 @@ export async function handleGroupMessage(
       await ctx.ensureRuntimeAvailable(newRuntime);
       const store = ctx.getStore();
       const newOptions: Parameters<typeof ctx.createBoundSession>[2] = {
-        cwd: process.env.CTI_REASONIX_ACP_CWD
+        cwd: process.env.CTI_DSH_ACP_CWD
+          || process.env.CTI_REASONIX_ACP_CWD
           || (process.platform === 'win32' ? (process.env.USERPROFILE || 'C:\\Users\\oadan') : '/opt'),
         bindingMode: 'code',
         existingChatId: inbound.address.chatId,
@@ -836,7 +939,8 @@ export async function handleGroupMessage(
     const autoRuntime = ctx.getDefaultRuntime();
     try {
       const autoOptions: Parameters<typeof ctx.createBoundSession>[2] = {
-        cwd: process.env.CTI_REASONIX_ACP_CWD
+        cwd: process.env.CTI_DSH_ACP_CWD
+          || process.env.CTI_REASONIX_ACP_CWD
           || (process.platform === 'win32' ? (process.env.USERPROFILE || 'C:\\Users\\oadan') : '/opt'),
         bindingMode: 'code',
         existingChatId: inbound.address.chatId,

@@ -14,7 +14,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { LARK_CLI_INSTRUCTIONS, buildAgentPersona } from '../../config/runtime-configs.js';
+import { larkInstructions, buildAgentPersona } from '../../config/runtime-configs.js';
 import type { LLMProvider, StreamChatParams } from '../../bridge/host.js';
 import { emitCanonicalTurnEvent } from '../../infra/sse-utils.js';
 
@@ -36,10 +36,14 @@ function buildSpawnEnv(): NodeJS.ProcessEnv {
   // 继承父进程 PATH（含用户配置）并补充关键系统目录，
   // 否则 reasonix acp 内 powershell.exe（hook）/ git / 其他工具会找不到
   const parentPath = process.env.PATH ? process.env.PATH.split(';').filter(Boolean) : [];
-  return {
+  // 2026-08-18 统一 home：feishu bot 与桌面端共用同一套 home（%APPDATA%/reasonix）。
+  // 配置/记忆/会话/stats 全部一套（用户要求：feishu bot 只是多一套统一注入提示词，其余一致）。
+  // 会话冲突是 reasonix 自身的 bug，已由官方修复，不再需要 .reasonix-bot 隔离。
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     ComSpec: process.env.ComSpec || 'C:\\WINDOWS\\system32\\cmd.exe',
     SystemRoot: process.env.SystemRoot || 'C:\\WINDOWS',
+    REASONIX_HOME: 'C:\\Users\\oadan\\AppData\\Roaming\\reasonix',
     PATH: [
       ...parentPath,
       'C:\\WINDOWS\\system32',
@@ -50,14 +54,86 @@ function buildSpawnEnv(): NodeJS.ProcessEnv {
       'C:\\Users\\oadan\\AppData\\Roaming\\npm',
     ].join(';'),
   };
+  return env;
+}
+
+/**
+ * ⚠️ 2026-08-18：home 已统一（bot 与桌面共用 %APPDATA%/reasonix），本函数不再需要，
+ * 保留仅作历史参考。config.toml 天然同一份，无硬链接需求。
+ */
+function ensureConfigHardlink(): void {
+  if (process.platform !== 'win32') return;
+  const botCfg = 'C:\\Users\\oadan\\.reasonix-bot\\config.toml';
+  const deskCfg = 'C:\\Users\\oadan\\AppData\\Roaming\\reasonix\\config.toml';
+  try {
+    if (!fs.existsSync(deskCfg)) return;
+    const { execSync } = require('node:child_process') as typeof import('node:child_process');
+    const out = execSync(`fsutil hardlink list "${botCfg}"`, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).toString();
+    if (!out.toLowerCase().includes('appdata\\roaming\\reasonix\\config.toml')) {
+      if (fs.existsSync(botCfg)) fs.unlinkSync(botCfg);
+      execSync(`cmd /c mklink /H "${botCfg}" "${deskCfg}"`, { stdio: 'ignore', windowsHide: true });
+      console.log('[reasonix-provider] ensureConfigHardlink: re-linked bot config.toml -> desktop config.toml');
+    }
+  } catch (err) {
+    console.warn('[reasonix-provider] ensureConfigHardlink failed:', err instanceof Error ? err.message : err);
+  }
 }
 
 function resolveReasonixExecutable(): { command: string; args: string[] } {
-  const command = 'C:\\Users\\oadan\\AppData\\Local\\Programs\\Reasonix\\reasonix-cli.exe';
-  if (!fs.existsSync(command)) {
-    console.warn(`[reasonix-provider] reasonix-cli.exe not found at ${command}, spawn may fail`);
+  // 2026-08-18：恢复桌面版优先（用户已给桌面版 reasonix-cli.exe 开管理员权限，权限最大）
+  // 候选路径：桌面版 CLI 优先，npm 全局 exe 兜底
+  const candidates = [
+    // 桌面版安装目录（已开管理员权限，最大权限）
+    'C:\\Users\\oadan\\AppData\\Local\\Programs\\Reasonix\\reasonix-cli.exe',
+    // npm 全局包里的原生二进制（@reasonix/cli-win32-x64）
+    'C:\\Users\\oadan\\AppData\\Roaming\\npm\\node_modules\\reasonix\\node_modules\\@reasonix\\cli-win32-x64\\bin\\reasonix.exe',
+  ];
+  for (const command of candidates) {
+    if (fs.existsSync(command)) {
+      // 2026-08-12：纯 acp。⚠️ --permission-mode yolo 与 acp 冲突（会进 TUI 不走 stdio 协议），
+      // 实测导致 "Failed to initialize ACP session"。yolo 改由 session/set_config_option 设置。
+      return { command, args: ['acp'] };
+    }
   }
-  return { command, args: ['acp'] };
+  const fallback = candidates[0];
+  console.warn(`[reasonix-provider] reasonix-cli.exe not found (tried: ${candidates.join(', ')}), spawn may fail`);
+  return { command: fallback, args: ['acp'] };
+}
+
+/**
+ * 清理遗留的 reasonix-cli acp 进程（2026-08-11 根因修复）
+ * daemon 重启/连挂时旧 ACP 引擎进程可能残留，与新引擎同时 load 同一会话 → diverged → 卡死。
+ * 仅在新 session spawn 前调用（此时无活跃 acp，清的都是残留）。
+ */
+function killStaleAcpProcesses(): void {
+  if (process.platform !== 'win32') return;
+  try {
+    // 2026-08-12 修复：wmic 在 Win11 已移除，改用 PowerShell Get-CimInstance。
+    // ⚠️ 只杀"孤儿" reasonix.exe acp 引擎：父进程不是当前 daemon（node.exe daemon.mjs）的引擎，
+    // 即 daemon 异常退出后残留的旧引擎。绝不碰 node.exe reasonix.js（交互式 CLI / 用户自己的会话）。
+    const myPid = process.pid;
+    const script = [
+      '$daemonPid = ' + myPid,
+      '$me = Get-CimInstance Win32_Process -Filter "ProcessId=$daemonPid" -ErrorAction SilentlyContinue',
+      '$myPpid = if ($me) { $me.ParentProcessId } else { -1 }',
+      '$procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |',
+      '  Where-Object { $_.Name -eq "reasonix.exe" -and $_.CommandLine -match "acp" }',
+      '$stale = $procs | Where-Object { $_.ParentProcessId -ne $daemonPid -and $_.ParentProcessId -ne $myPpid }',
+      '$ids = $stale | ForEach-Object { $_.ProcessId }',
+      'if ($ids) { $ids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }',
+      'Write-Output ("killed:" + ($ids -join ","))',
+    ].join('; ');
+    const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
+    const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 15000,
+    }).toString().trim();
+    console.log(`[reasonix-provider] killStaleAcpProcesses: ${out || 'no stale processes'}`);
+  } catch (err) {
+    // 没有残留进程或 PowerShell 不可用时忽略
+    console.warn('[reasonix-provider] killStaleAcpProcesses failed:', err instanceof Error ? err.message : err);
+  }
 }
 
 // ── Reasonix MCP 配置加载 ──
@@ -152,6 +228,8 @@ interface CachedAcpSession {
   nextId: number;
   currentPromptId: number;
   alive: boolean;
+  /** 该进程/会话是否已注入过人设（buildAgentPersona+larkInstructions()） */
+  personaInjected: boolean;
   sessionRecoveryAttempts: number;
   pendingRetryPrompt: string | null;
   pendingRetrySettle: ((err?: string) => void) | null;
@@ -174,13 +252,8 @@ export class ReasonixProvider implements LLMProvider {
   private static IDLE_TIMEOUT_MS = parseInt(process.env.CTI_REASONIX_IDLE_TIMEOUT_MS || '900000'); // 默认 15 分钟
   // reasonix-cli 真实 session 持久化目录（~/.reasonix/sessions 是错误位置，从未写入成功）
   // 对齐 reasonix-cli：%APPDATA%/reasonix/sessions（Windows）/ ~/.config/reasonix/sessions（Linux）
-  private static SESSION_DIR = path.join(
-    process.platform === 'win32'
-      ? (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'))
-      : path.join(os.homedir(), '.config'),
-    'reasonix',
-    'sessions',
-  );
+  // ⚠️ 2026-08-12 用户定稿：桌面端已卸载，统一回默认 home（%APPDATA%/reasonix），与 CLI 共用会话。
+  private static SESSION_DIR = 'C:\\Users\\oadan\\AppData\\Roaming\\reasonix\\sessions';
 
   constructor() {
     this.startCleanupTimer();
@@ -195,6 +268,38 @@ export class ReasonixProvider implements LLMProvider {
       try { cached.child.kill('SIGTERM'); } catch {}
       this.acpCache.delete(key);
     }
+  }
+
+  /**
+   * 重置 ACP 会话（/new 用）：kill 子进程 + 清内存缓存 + 归档（非删除）持久化 session 指针文件。
+   * 与 clearCache 不同：clearCache 保留磁盘上的 session 文件（下次仍会 session/load 旧会话），
+   * resetSession 归档指针文件（移到 archive/ 子目录，不删除），下次消息必然走 session/new 全新空白会话。
+   * ⚠️ 2026-08-09 用户红线：/new 只新建，绝不删除旧聊天记录文件（*.jsonl / *.events.jsonl / *.context.json），
+   * 旧会话完整保留在磁盘，用户可随时查。指针文件 default.json 也归档而非删除。
+   */
+  resetSession(cacheKey?: string): void {
+    // ⚠️ 2026-08-09 修复：acpCache 的 key 是真实 sdkSessionId（runAcp: cacheKey = sdkSessionId || 'default'），
+    // 旧实现默认 key='default' 找不到缓存 → kill 不生效 → /new 无法真正新建空白会话（旧引擎一直 resume）。
+    // 现在：传入 sessionId 时精确清理该 key；不传时清空整个 acpCache（兼容所有调用方）。
+    const keys = cacheKey ? [cacheKey] : [...this.acpCache.keys()];
+    if (keys.length === 0) keys.push('feishu-reasonix'); // 兜底：与 sessionFilePath 的 default→feishu-reasonix 一致
+    for (const key of keys) {
+      const cached = this.acpCache.get(key);
+      if (cached) {
+        console.log(`[reasonix-provider] Reset ACP session: ${cached.sessionId} (key=${key})`);
+        cached.alive = false;
+        if (cached.currentSettle) {
+          const settle = cached.currentSettle;
+          cached.currentSettle = null;
+          settle('Session reset by /new');
+        }
+        try { cached.child.kill('SIGTERM'); } catch {}
+        this.acpCache.delete(key);
+      }
+      this.archiveSavedSession(key);
+    }
+    console.log(`[reasonix-provider] resetSession: reset ${keys.length} key(s)${cacheKey ? ` (key=${cacheKey.slice(0, 8)})` : ' (all)'}`);
+    rtLog(`[reasonix-provider] resetSession(${cacheKey || '(all)'}) done, keys=${keys.length}`);
   }
 
   async prepare(): Promise<void> {
@@ -284,6 +389,10 @@ export class ReasonixProvider implements LLMProvider {
 
     const saved = this.loadSavedSession(cacheKey);
 
+    // 2026-08-11 根因修复：spawn 前清理残留旧引擎（防双写）
+    // 2026-08-12：不再 ensureConfigHardlink——统一默认 home 后 bot 直接用 %APPDATA%/reasonix/config.toml
+    killStaleAcpProcesses();
+
     const { command, args } = resolveReasonixExecutable();
     rtLog(`[reasonix-provider] ACP resolved: command="${command}" args=${JSON.stringify(args)}`);
     const env = buildSpawnEnv();
@@ -347,7 +456,7 @@ export class ReasonixProvider implements LLMProvider {
           child, sessionId: sid, cwd, env,
           lineBuf: '', lastUsed: Date.now(),
           currentSettle: null, currentController: null, currentText: '', currentThinking: '', _inThinking: false, _textEmitted: false, _firstUpdateLogged: false,
-          nextId: 100, currentPromptId: 0, alive: true,
+          nextId: 100, currentPromptId: 0, alive: true, personaInjected: false,
           sessionRecoveryAttempts: 0, pendingRetryPrompt: null,
           pendingRetrySettle: null, pendingRetryController: null,
           pendingRetrySdkSessionId: undefined, pendingRetryAbortController: undefined,
@@ -387,7 +496,7 @@ export class ReasonixProvider implements LLMProvider {
         sessionId2 = 99;
         child.stdin!.write(JSON.stringify({
           jsonrpc: '2.0', id: sessionId2, method: 'session/new',
-          params: { cwd: sessionNewCwd, mcpServers: [] },
+          params: { cwd: sessionNewCwd, mcpServers: [], toolApprovalMode: 'yolo', agentPreset: 'yolo' },
         }) + '\n');
       };
 
@@ -426,7 +535,7 @@ export class ReasonixProvider implements LLMProvider {
               } else {
                 child.stdin!.write(JSON.stringify({
                   jsonrpc: '2.0', id: sessionId2, method: 'session/new',
-                  params: { cwd: sessionNewCwd, mcpServers: [] },
+                  params: { cwd: sessionNewCwd, mcpServers: [], toolApprovalMode: 'yolo', agentPreset: 'yolo' },
                 }) + '\n');
               }
               continue;
@@ -438,6 +547,16 @@ export class ReasonixProvider implements LLMProvider {
               sessionDone = true;
               const action = resumeAttempted || saved ? 'loaded' : 'new';
               console.log(`[reasonix-provider] ACP session (${action}): ${sessionId}`);
+              // 2026-08-12：ACP 协议官方改权限方式 = session/set_config_option（configId=tool_approval, value=yolo）
+              // 引擎默认 balanced+no-mutation 会拦写操作；这里显式设 yolo 解除
+              try {
+                child.stdin!.write(JSON.stringify({
+                  jsonrpc: '2.0', id: 9001, method: 'session/set_config_option',
+                  params: { sessionId, configId: 'tool_approval', value: 'yolo' },
+                }) + '\n');
+              } catch (e) {
+                console.warn(`[reasonix-provider] set_config_option failed: ${e}`);
+              }
               const cached = createCacheEntry(sessionId);
               done(cached);
               continue;
@@ -515,7 +634,7 @@ export class ReasonixProvider implements LLMProvider {
               const recoverCwd = configCwd;
               cached.child.stdin!.write(JSON.stringify({
                 jsonrpc: '2.0', id: newSessionId, method: 'session/new',
-                params: { cwd: recoverCwd, mcpServers: [] },
+                params: { cwd: recoverCwd, mcpServers: [], toolApprovalMode: 'yolo', agentPreset: 'yolo' },
               }) + '\n');
               continue;
             }
@@ -704,12 +823,19 @@ export class ReasonixProvider implements LLMProvider {
       cached._inThinking = false;
       cached._textEmitted = false;
       cached.lastUsed = Date.now();
-      // 先增强 prompt（加入 LARK_CLI_INSTRUCTIONS），再存入 pendingRetryPrompt 以便重试时携带
-      let enhancedPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${prompt}`;
-      if (!sdkSessionId) {
-        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
-        if (memory) {
-          enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + prompt;
+      // 先增强 prompt：仅在该进程/会话首次发消息时注入人设（buildAgentPersona+larkInstructions()）。
+      // ⚠️ 2026-08-09 修复：之前每轮都拼接人设，而 reasonix 引擎自身通过 session/load 持久化完整
+      // transcript（人设已在第一轮写入引擎历史），每轮重复注入导致上下文线性膨胀（71分钟1.37MB，
+      // 其中~1.2MB是重复人设），最终上下文100%卡死。仅判断不置位：置位统一在下方 fullPrompt 处，
+      // 保证实际发送内容（fullPrompt）与重试内容（enhancedPrompt）都基于同一 personaInjected 状态。
+      let enhancedPrompt = prompt;
+      if (!cached.personaInjected) {
+        enhancedPrompt = `${buildAgentPersona()}${larkInstructions()}\n\n${prompt}`;
+        if (!sdkSessionId) {
+          const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+          if (memory) {
+            enhancedPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${larkInstructions()}\n\n用户消息：` + prompt;
+          }
         }
       }
       cached.pendingRetryPrompt = enhancedPrompt;
@@ -793,26 +919,25 @@ export class ReasonixProvider implements LLMProvider {
         resolve();
       };
 
-      // 记忆注入
+      // 记忆注入：仅首次发消息时注入人设（同 738 处逻辑，保证 pendingRetryPrompt 与实际发送一致）。
+      // ⚠️ 2026-08-09 修复：人设只注入一次（引擎 session/load 已持久化），避免每轮重复导致上下文膨胀。
       const audioPrefix = fromAudio ? '[Audio] ' : '';
-      let fullPrompt = `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n${audioPrefix}${prompt}`;
-      if (!sdkSessionId) {
-        const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
-        if (memory) {
-          fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${LARK_CLI_INSTRUCTIONS}\n\n用户消息：` + audioPrefix + prompt;
+      let fullPrompt = `${audioPrefix}${prompt}`;
+      if (!cached.personaInjected) {
+        fullPrompt = `${buildAgentPersona()}${larkInstructions()}\n\n${audioPrefix}${prompt}`;
+        if (!sdkSessionId) {
+          const memory = getMemoryContent(process.env.CTI_AGENT_NAME);
+          if (memory) {
+            fullPrompt = '以下是你的记忆文件，请在回复时参考这些上下文信息。不要主动提及你读了记忆文件，除非用户问起。\n\n' + memory + '\n---\n\n' + `${buildAgentPersona()}${larkInstructions()}\n\n用户消息：` + audioPrefix + prompt;
+          }
         }
+        cached.personaInjected = true;
       }
 
-      // 对话历史注入
-      const history = conversationHistory;
-      if (history && history.length > 0) {
-        const recentHistory = history.slice(-20);
-        const historyBlock = recentHistory
-          .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-          .join('\n\n');
-        fullPrompt = `[Previous conversation context]\n${historyBlock}\n\n[End of previous context]\n\n[Current message]\n${fullPrompt}`;
-        console.log(`[reasonix-provider] ACP injecting ${recentHistory.length} history messages`);
-      }
+      // 对话历史注入：跳过 —— reasonix 引擎自身通过 session/load 持久化完整 transcript，
+      // 无需像 Claude SDK 那样由外部重放历史；外部注入反而造成历史双份、上下文指数膨胀
+      //（2026-08-09 修复：会话上下文曾因此涨到 650 万 tokens 导致 compaction failed）。
+      // 引擎自动压缩（80% 触发）在 1M 窗口内正常工作。
 
       console.log(`[reasonix-provider] ACP prompt id=${promptId} session=${cached.sessionId}`);
       const promptSentAt = Date.now();
@@ -844,7 +969,8 @@ export class ReasonixProvider implements LLMProvider {
   // ─── Session 持久化 ───
 
   private sessionFilePath(cacheKey: string): string {
-    const safe = cacheKey.replace(/[^a-zA-Z0-9_:-]/g, '_');
+    // 2026-08-11：bot 指针文件不再用 default.json（避免与桌面 reasonix 引擎的 default.json 抢同一文件 → diverged/conflicts）
+    const safe = (cacheKey === 'default' ? 'feishu-reasonix' : cacheKey).replace(/[^a-zA-Z0-9_:-]/g, '_');
     return path.join(ReasonixProvider.SESSION_DIR, `${safe}.json`);
   }
 
@@ -882,6 +1008,27 @@ export class ReasonixProvider implements LLMProvider {
     } catch {}
   }
 
+  /**
+   * 归档（而非删除）session 指针文件：把 <cacheKey>.json 移到 SESSION_DIR/archive/ 子目录。
+   * ⚠️ 2026-08-09 用户红线：/new 绝不删除任何磁盘文件，指针也归档保留，方便用户回溯。
+   * 注意：这只会移动指针（default.json，127B），真正的聊天记录（*.jsonl / *.events.jsonl /
+   * *.context.json）以 sessionId 命名，本方法完全不触碰。
+   */
+  private archiveSavedSession(cacheKey: string): void {
+    try {
+      const filePath = this.sessionFilePath(cacheKey);
+      if (!fs.existsSync(filePath)) return;
+      const archiveDir = path.join(ReasonixProvider.SESSION_DIR, 'archive');
+      fs.mkdirSync(archiveDir, { recursive: true });
+      const safe = cacheKey.replace(/[^a-zA-Z0-9_:-]/g, '_');
+      const dest = path.join(archiveDir, `${safe}-${Date.now()}.json`);
+      fs.renameSync(filePath, dest);
+      console.log(`[reasonix-provider] Session pointer archived: ${filePath} -> ${dest}`);
+    } catch (e) {
+      console.log(`[reasonix-provider] Session pointer archive failed: ${e}`);
+    }
+  }
+
   private startCleanupTimer(): void {
     if (this.cleanupTimer) return;
     this.cleanupTimer = setInterval(() => {
@@ -910,3 +1057,4 @@ export class ReasonixProvider implements LLMProvider {
 export function createReasonixProvider(): ReasonixProvider {
   return new ReasonixProvider();
 }
+

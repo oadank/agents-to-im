@@ -70,7 +70,7 @@ export class LarkClient {
 
   async sendMessage(
     address: ChannelAddress,
-    msgType: 'interactive' | 'post' | 'image',
+    msgType: 'interactive' | 'post' | 'image' | 'media',
     content: string,
     replyToMessageId?: string,
     requestUuid?: string,
@@ -273,6 +273,24 @@ export class LarkClient {
       throw new Error('Feishu image upload succeeded without image_key');
     }
     return imageKey;
+  }
+
+  async uploadFile(filePath: string, fileType: string): Promise<string> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    const file = fs.readFileSync(filePath);
+    const response = await this.client.im.file.create({
+      data: {
+        file_type: fileType,
+        file,
+      },
+    });
+    const fileKey = response?.file_key;
+    if (!fileKey) {
+      throw new Error('Feishu file upload succeeded without file_key');
+    }
+    return fileKey;
   }
 
   async runScopeDiagnostic(): Promise<void> {

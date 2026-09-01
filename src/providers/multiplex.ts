@@ -8,6 +8,7 @@ import { ZCodeProvider, createZCodeProvider } from './zcode/zcode-provider.js';
 import { MiMoProvider } from './mimo/mimo-provider.js';
 import { OpencodeProvider } from './opencode/opencode-provider.js';
 import { ReasonixProvider } from './reasonix/reasonix-provider.js';
+import { DshProvider, createDshProvider } from './dsh/dsh-provider.js';
 import { OpenClawProvider } from './openclaw/openclaw-provider.js';
 import { GeminiProvider, createGeminiProvider } from './gemini/gemini-provider.js';
 import { HermesProvider, createHermesProvider } from './hermes/hermes-provider.js';
@@ -22,6 +23,7 @@ import {
   MiMoRuntimeDriver,
   OpencodeRuntimeDriver,
   ReasonixRuntimeDriver,
+  DshRuntimeDriver,
   OpenClawRuntimeDriver,
   GeminiRuntimeDriver,
   HermesRuntimeDriver,
@@ -45,6 +47,7 @@ export class MultiplexLLMProvider implements LLMProvider {
   private mimoProvider: MiMoProvider | null = null;
   private opencodeProvider: OpencodeProvider | null = null;
   private reasonixProvider: ReasonixProvider | null = null;
+  private dshProvider: DshProvider | null = null;
   private openclawProvider: OpenClawProvider | null = null;
   private geminiProvider: GeminiProvider | null = null;
   private hermesProvider: HermesProvider | null = null;
@@ -56,6 +59,7 @@ export class MultiplexLLMProvider implements LLMProvider {
   private mimoDriver: MiMoRuntimeDriver | null = null;
   private opencodeDriver: OpencodeRuntimeDriver | null = null;
   private reasonixDriver: ReasonixRuntimeDriver | null = null;
+  private dshDriver: DshRuntimeDriver | null = null;
   private openclawDriver: OpenClawRuntimeDriver | null = null;
   private geminiDriver: GeminiRuntimeDriver | null = null;
   private hermesDriver: HermesRuntimeDriver | null = null;
@@ -162,6 +166,12 @@ export class MultiplexLLMProvider implements LLMProvider {
     return this.reasonixProvider;
   }
 
+  private async getDshProvider(): Promise<DshProvider> {
+    if (this.dshProvider) return this.dshProvider;
+    this.dshProvider = createDshProvider();
+    return this.dshProvider;
+  }
+
   private async getOpenClawProvider(): Promise<OpenClawProvider> {
     if (this.openclawProvider) return this.openclawProvider;
     this.openclawProvider = new OpenClawProvider();
@@ -186,6 +196,24 @@ export class MultiplexLLMProvider implements LLMProvider {
     return this.openakitaProvider;
   }
 
+  /** 重置指定 runtime 的 provider 缓存（/new 用）：清 ACP 会话 + 删持久化 session 文件，下次消息必然全新空白会话 */
+  async resetProviderCache(runtime: RuntimeName, sessionId?: string): Promise<void> {
+    const provider = await this.getProvider(runtime);
+    // ACP 类 runtime 提供 resetSession（kill + 清缓存 + 删磁盘 session 文件）
+    const acp = provider as unknown as { resetSession?: (key?: string) => void; clearCache?: () => void };
+    if (typeof acp.resetSession === 'function') {
+      // ⚠️ 2026-08-09 修复：必须传真实 sessionId（acpCache 的 key 是 sdkSessionId 而非 'default'），
+      // 否则 resetSession 找不到缓存的引擎进程，kill 不生效，/new 无法真正新建空白会话。
+      acp.resetSession(sessionId);
+      console.log(`[multiplex] resetProviderCache: ${runtime} session reset done${sessionId ? ` (key=${sessionId.slice(0, 8)})` : ''}`);
+    } else if (typeof acp.clearCache === 'function') {
+      acp.clearCache();
+      console.log(`[multiplex] resetProviderCache: ${runtime} cache cleared (no disk session reset)`);
+    } else {
+      console.log(`[multiplex] resetProviderCache: ${runtime} has no reset/clear method, skipped`);
+    }
+  }
+
   protected async getProvider(runtime: RuntimeName): Promise<LLMProvider> {
     if (runtime === 'codex') return this.getCodexProvider();
     if (runtime === 'openhuman') return this.getOpenHumanProvider();
@@ -193,6 +221,7 @@ export class MultiplexLLMProvider implements LLMProvider {
     if (runtime === 'mimo') return this.getMiMoProvider();
     if (runtime === 'opencode') return this.getOpencodeProvider();
     if (runtime === 'reasonix') return this.getReasonixProvider();
+    if (runtime === 'dsh') return this.getDshProvider();
     if (runtime === 'openclaw') return this.getOpenClawProvider();
     if (runtime === 'gemini') return this.getGeminiProvider();
     if (runtime === 'hermes') return this.getHermesProvider();
@@ -260,6 +289,16 @@ export class MultiplexLLMProvider implements LLMProvider {
         );
       }
       return this.reasonixDriver;
+    }
+    if (runtime === 'dsh') {
+      if (!this.dshDriver) {
+        this.dshDriver = new DshRuntimeDriver(
+          this.store,
+          this.config,
+          () => this.getProvider('dsh') as Promise<DshProvider>,
+        );
+      }
+      return this.dshDriver;
     }
     if (runtime === 'openclaw') {
       if (!this.openclawDriver) {
